@@ -10,9 +10,14 @@ enum M0Files {
         return url
     }()
 
+    /// `-PiRunId` from the launching script; stamped on every report so it can tell this run's from the last.
+    static let runId = UserDefaults.standard.string(forKey: "PiRunId") ?? "manual"
+
     static func url(_ name: String) -> URL { directory.appendingPathComponent(name) }
 
     static func writeJSON(_ name: String, _ object: [String: Any]) throws {
+        var object = object
+        object["runId"] = runId
         let data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .fragmentsAllowed])
         try data.write(to: url(name), options: .atomic)
     }

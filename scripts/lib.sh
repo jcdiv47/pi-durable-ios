@@ -43,15 +43,17 @@ pi_install() {
 }
 
 # pi_launch <mode> [launch arguments...]. Simulator env vars pass through as SIMCTL_CHILD_*.
+# Sets RUN_ID, which the app stamps on its reports (launch returns before the app clears old ones).
 pi_launch() {
 	local mode=$1
 	shift
+	RUN_ID="$mode-$(date +%s)-$RANDOM"
 	log "Launching -PiMode $mode"
 	if [[ $TARGET == simulator ]]; then
-		xcrun simctl launch --terminate-running-process "$UDID" "$BUNDLE_ID" -PiMode "$mode" "$@" >/dev/null
+		xcrun simctl launch --terminate-running-process "$UDID" "$BUNDLE_ID" -PiMode "$mode" -PiRunId "$RUN_ID" "$@" >/dev/null
 	else
 		xcrun devicectl device process launch --device "$UDID" --terminate-existing \
-			--json-output "$OUT/launch.json" "$BUNDLE_ID" -PiMode "$mode" "$@" >/dev/null
+			--json-output "$OUT/launch.json" "$BUNDLE_ID" -PiMode "$mode" -PiRunId "$RUN_ID" "$@" >/dev/null
 		python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["result"]["process"]["processIdentifier"])' "$OUT/launch.json" >"$OUT/pid"
 	fi
 }
@@ -81,11 +83,16 @@ pi_fetch() {
 	fi
 }
 
-# pi_wait_for <name> <timeout seconds>: polls until Documents/m0/<name> exists, copying it to $OUT/<name>.
+# pi_fetch_current <name> <destination>: like pi_fetch, but only succeeds for this run's file.
+pi_fetch_current() {
+	pi_fetch "$1" "$2" && grep -q "$RUN_ID" "$2"
+}
+
+# pi_wait_for <name> <timeout seconds>: polls until this run's Documents/m0/<name> exists, copying it to $OUT/<name>.
 pi_wait_for() {
 	local name=$1 deadline=$((SECONDS + $2))
-	until pi_fetch "$name" "$OUT/$name"; do
-		if pi_fetch "${MODE_ERROR:-none}" "$OUT/error.json"; then fail "app reported: $(cat "$OUT/error.json")"; fi
+	until pi_fetch_current "$name" "$OUT/$name"; do
+		if pi_fetch_current "${MODE_ERROR:-none}" "$OUT/error.json"; then fail "app reported: $(cat "$OUT/error.json")"; fi
 		((SECONDS < deadline)) || fail "timed out waiting for $name"
 		sleep 0.5
 	done

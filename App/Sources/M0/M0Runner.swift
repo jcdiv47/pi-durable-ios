@@ -25,6 +25,7 @@ enum M0Runner {
         let database = try killDatabase()
         M0Files.removeDatabase(database)
         let log = try LineLog(M0Files.url("killtest-start.jsonl"))
+        log.append(#"{"type":"launched","runId":"\#(M0Files.runId)"}"#)
         let harness = try await PiHarness.load(bundle: AppModel.bundleURL, options: .init(
             onEvent: { log.append($0) },
             onLog: AppModel.forwardLog

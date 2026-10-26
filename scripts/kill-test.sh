@@ -16,8 +16,8 @@ MODE_ERROR=killtest-start-error.json
 pi_launch killtest-start
 log "Waiting for both tools to start"
 deadline=$((SECONDS + 60))
-until pi_fetch killtest-start.jsonl "$OUT/start.jsonl" && [[ $(grep -c '"event":"start"' "$OUT/start.jsonl") -ge 2 ]]; do
-	if pi_fetch "$MODE_ERROR" "$OUT/error.json"; then fail "start phase: $(cat "$OUT/error.json")"; fi
+until pi_fetch_current killtest-start.jsonl "$OUT/start.jsonl" && [[ $(grep -c '"event":"start"' "$OUT/start.jsonl") -ge 2 ]]; do
+	if pi_fetch_current "$MODE_ERROR" "$OUT/error.json"; then fail "start phase: $(cat "$OUT/error.json")"; fi
 	((SECONDS < deadline)) || fail "tools did not start within 60 s"
 	sleep 0.5
 done
