@@ -19,7 +19,7 @@ struct ConformanceReport: Decodable {
 
 func bundledScript(_ name: String) throws -> (String, URL) {
     let url = try #require(
-        Bundle.module.url(forResource: name, withExtension: "js", subdirectory: "Resources"),
+        Bundle.module.url(forResource: name, withExtension: "js", subdirectory: "JS"),
         "Missing \(name).js; run `bun js/build.ts` first"
     )
     return (try String(contentsOf: url, encoding: .utf8), url)

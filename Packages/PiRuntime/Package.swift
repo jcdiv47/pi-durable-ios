@@ -17,7 +17,7 @@ let package = Package(
             name: "PiRuntimeTests",
             dependencies: ["PiRuntime"],
             // Bundles produced by `js/build.ts` (git-ignored).
-            resources: [.copy("Resources")]
+            resources: [.copy("JS")]
         ),
     ]
 )

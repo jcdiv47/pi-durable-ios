@@ -1,0 +1,112 @@
+# XcodeGen: `xcodegen generate` writes PiDurable.xcodeproj (git-ignored), plus the Info.plist
+# and .entitlements files below (also generated from this file).
+name: PiDurable
+options:
+  bundleIdPrefix: dev.jcdiv47
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    DEVELOPMENT_TEAM: P8FR4R7GEN # personal team; see docs/notes/m0-capabilities.md
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "6.0"
+    TARGETED_DEVICE_FAMILY: "1"
+    SUPPORTS_MACCATALYST: NO
+    SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
+    MARKETING_VERSION: "0.1"
+    CURRENT_PROJECT_VERSION: "1"
+
+packages:
+  PiRuntime:
+    path: Packages/PiRuntime
+  PiUI:
+    path: Packages/PiUI
+  PiAppleTools:
+    path: Packages/PiAppleTools
+
+targets:
+  PiApp:
+    type: application
+    platform: iOS
+    sources:
+      - App/Sources
+      # Built by the "Bundle JS" phase; optional so a fresh clone can generate the project.
+      - path: App/Resources/pi-runtime.js
+        optional: true
+        buildPhase: resources
+      - path: App/Resources/pi-conformance.js
+        optional: true
+        buildPhase: resources
+    dependencies:
+      - package: PiRuntime
+      - package: PiUI
+      - package: PiAppleTools
+      - target: PiWidgets
+      - sdk: JavaScriptCore.framework
+    preBuildScripts:
+      - name: Bundle JS
+        basedOnDependencyAnalysis: false
+        script: |
+          export PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+          cd "$SRCROOT/js"
+          [ -d node_modules ] || bun install --frozen-lockfile
+          bun build.ts
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.jcdiv47.pidurable
+        PRODUCT_NAME: PiDurable
+        ENABLE_USER_SCRIPT_SANDBOXING: NO # "Bundle JS" writes into the source tree
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Pi
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UIBackgroundModes: [fetch, processing]
+        BGTaskSchedulerPermittedIdentifiers:
+          - dev.jcdiv47.pidurable.refresh
+          - dev.jcdiv47.pidurable.processing
+          - dev.jcdiv47.pidurable.run.*
+        NSSupportsLiveActivities: true
+        NSHealthShareUsageDescription: Pi reads the health data you ask it about.
+        NSHealthUpdateUsageDescription: Pi saves health data only when you ask it to.
+    entitlements:
+      path: App/PiApp.entitlements
+      properties:
+        com.apple.security.application-groups: [group.dev.jcdiv47.pidurable]
+        com.apple.developer.healthkit: true
+        com.apple.developer.healthkit.access: []
+        keychain-access-groups: [$(AppIdentifierPrefix)dev.jcdiv47.pidurable.shared]
+
+  PiWidgets:
+    type: app-extension
+    platform: iOS
+    sources: [Widgets/Sources]
+    dependencies:
+      - package: PiUI
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.jcdiv47.pidurable.widgets
+        PRODUCT_NAME: PiWidgets
+    info:
+      path: Widgets/Info.plist
+      properties:
+        CFBundleDisplayName: Pi Widgets
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: Widgets/PiWidgets.entitlements
+      properties:
+        com.apple.security.application-groups: [group.dev.jcdiv47.pidurable]
+
+schemes:
+  PiApp:
+    build:
+      targets:
+        PiApp: all
+    run:
+      config: Debug

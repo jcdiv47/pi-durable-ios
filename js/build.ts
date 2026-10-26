@@ -1,6 +1,7 @@
 // Bundles the JS that runs inside JavaScriptCore:
-//   src/runtime.ts      → App/Resources/pi-runtime.js                         (the app's harness bootstrap)
-//   src/conformance.ts  → Packages/PiRuntime/Tests/PiRuntimeTests/Resources/  (storage conformance, test-only)
+//   src/runtime.ts      → App/Resources/pi-runtime.js      (the app's harness bootstrap)
+//   src/conformance.ts  → App/Resources/pi-conformance.js  (conformance suites, run by `-PiMode conformance`)
+//   both                → Packages/PiRuntime/Tests/PiRuntimeTests/JS/ (for `swift test`)
 // Usage: bun build.ts [--minify=false] [--sourcemap]
 
 import { mkdirSync, statSync, writeFileSync } from "node:fs";
@@ -13,8 +14,9 @@ const sourcemap = process.argv.includes("--sourcemap");
 
 const targets = [
 	{ entry: "src/runtime.ts", out: join(root, "App/Resources/pi-runtime.js") },
-	{ entry: "src/conformance.ts", out: join(root, "Packages/PiRuntime/Tests/PiRuntimeTests/Resources/pi-conformance.js") },
-	{ entry: "src/runtime.ts", out: join(root, "Packages/PiRuntime/Tests/PiRuntimeTests/Resources/pi-runtime.js") },
+	{ entry: "src/conformance.ts", out: join(root, "App/Resources/pi-conformance.js") },
+	{ entry: "src/conformance.ts", out: join(root, "Packages/PiRuntime/Tests/PiRuntimeTests/JS/pi-conformance.js") },
+	{ entry: "src/runtime.ts", out: join(root, "Packages/PiRuntime/Tests/PiRuntimeTests/JS/pi-runtime.js") },
 ];
 
 for (const target of targets) {
