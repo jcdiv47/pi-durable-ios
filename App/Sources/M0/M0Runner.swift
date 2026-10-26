@@ -279,14 +279,14 @@ enum M0Runner {
         report["evaluateMs"] = harness.evaluateMs
         report["footprintAfterEvaluateMB"] = ProcessMetrics.footprintMB()
 
-        let useAnthropic = model.hasKey && UserDefaults.standard.string(forKey: "PiMeasureProvider") != "faux"
+        let useProvider = model.hasKey && UserDefaults.standard.string(forKey: "PiMeasureProvider") != "faux"
         let database = M0Files.url("measure.sqlite")
         M0Files.removeDatabase(database)
         let opened = try await harness.open(.init(
             dbPath: database.path,
-            provider: useAnthropic ? "anthropic" : "faux",
-            modelId: useAnthropic ? model.modelId : "killtest",
-            keyedProviders: ["anthropic"],
+            provider: useProvider ? model.provider : "faux",
+            modelId: useProvider ? model.modelId : "killtest",
+            keyedProviders: Array(AppModel.defaultModels.keys),
             toolMs: 50
         ))
         report["openMs"] = opened.openMs
@@ -299,11 +299,18 @@ enum M0Runner {
 
         model.status = "Measuring: run…"
         let sampler = FootprintSampler()
+        let busyBefore = harness.runtime.busyTime
         sampler.start()
         let prompt = "Write about 300 words on why on-device AI agents must survive being killed by the OS. Plain prose, no lists."
         let json = try await harness.runtime.callAsync("PiRuntime.ask", [prompt, "measure-1"])
         let (peak, samples) = sampler.stop()
-        report["runProvider"] = useAnthropic ? "anthropic/\(model.modelId)" : "faux/killtest (no key)"
+        let jsBusyMs = (harness.runtime.busyTime - busyBefore).milliseconds
+        report["jsBusyDuringRunMs"] = jsBusyMs
+        if let run = try? JSONDecoder().decode(PiHarness.AskResult.self, from: Data(json.utf8)), let tokens = run.outputTokens, tokens > 0 {
+            report["jsBusyMsPerToken"] = jsBusyMs / Double(tokens)
+            report["jsBusyShareOfRun"] = jsBusyMs / run.totalMs
+        }
+        report["runProvider"] = useProvider ? "\(model.provider)/\(model.modelId)" : "faux/killtest (no key)"
         report["run"] = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) ?? json
         report["footprintPeakDuringRunMB"] = peak
         report["footprintSamples"] = samples

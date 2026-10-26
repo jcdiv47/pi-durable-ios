@@ -5,6 +5,7 @@ import "./host/polyfills.ts";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
+import { deepseekProvider } from "@earendil-works/pi-ai/providers/deepseek";
 import {
 	AssistantEntry,
 	type Conversation,
@@ -16,6 +17,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
 import { createKillTestFaux, KillTestTools } from "./killtest.ts";
+import { fetchStats } from "./host/fetch.ts";
 import { native } from "./host/native.ts";
 import { openIOSSqliteDatabase } from "./host/sqlite.ts";
 
@@ -24,13 +26,19 @@ const context = BACKGROUND_CONTEXT;
 /** Header value Swift's fetch replaces with the Keychain key; must match `ProviderKeys.placeholder(for:)`. */
 const keyPlaceholder = (provider: string) => `pi-host-key:${provider}`;
 
+/** The env variable pi-ai reads each keyed provider's API key from. */
+const keyEnvironment: Record<string, string> = {
+	ANTHROPIC_API_KEY: "anthropic",
+	DEEPSEEK_API_KEY: "deepseek",
+};
+
 function emit(event: Record<string, unknown>): void {
 	native.emit(JSON.stringify(event));
 }
 
 export interface OpenOptions {
 	readonly dbPath: string;
-	readonly provider: "anthropic" | "faux";
+	readonly provider: "anthropic" | "deepseek" | "faux";
 	readonly modelId: string;
 	/** Providers whose keys Swift holds; only these get a placeholder key. */
 	readonly keyedProviders?: readonly string[];
@@ -47,12 +55,16 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 	const keyed = new Set(options.keyedProviders ?? []);
 	const models = createModels({
 		authContext: {
-			env: async (name) => (name === "ANTHROPIC_API_KEY" && keyed.has("anthropic") ? keyPlaceholder("anthropic") : undefined),
+			env: async (name) => {
+				const provider = keyEnvironment[name];
+				return provider !== undefined && keyed.has(provider) ? keyPlaceholder(provider) : undefined;
+			},
 			fileExists: async () => false,
 		},
 		identity: { attribution: { name: "pi-durable-ios", url: "https://github.com/earendil-works/pi" } },
 	});
 	models.setProvider(anthropicProvider());
+	models.setProvider(deepseekProvider());
 	models.setProvider(createKillTestFaux().provider);
 
 	const registry = createRegistry();
@@ -109,26 +121,41 @@ function answerText(entry: EntryRecord | undefined): string {
 		.join("");
 }
 
-/** Submits one input and waits for its answer, timing the first streamed delta. */
+/**
+ * Submits one input and waits for its answer, timing the stream. Reasoning models (DeepSeek) stream
+ * thinking before text, and their output token count includes it, so time per token spans both.
+ */
 async function ask(text: string, requestId: string): Promise<Record<string, unknown>> {
 	const { harness, root } = requireOpen();
 	const t0 = performance.now();
+	const network0 = { ...fetchStats };
+	// Measure network timing from this call's chunks only.
+	fetchStats.chunks = 0;
 	let firstDeltaMs: number | undefined;
+	let firstTextMs: number | undefined;
 	let lastDeltaMs: number | undefined;
-	let deltas = 0;
-	let deltaChars = 0;
+	let textDeltas = 0;
+	let thinkingDeltas = 0;
+	let textChars = 0;
+	let thinkingChars = 0;
 	const stream = await watchEvents(harness, root.id, context);
 	stream.start(async (events) => {
 		for (const event of events) {
 			if (event.type !== "message_update") continue;
 			for (const change of event.changes) {
-				if (change.type !== "text_delta") continue;
+				if (change.type !== "text_delta" && change.type !== "thinking_delta") continue;
 				const now = performance.now() - t0;
 				firstDeltaMs ??= now;
 				lastDeltaMs = now;
-				deltas++;
-				deltaChars += change.delta.length;
-				emit({ type: "delta", text: change.delta, ms: now });
+				if (change.type === "text_delta") {
+					firstTextMs ??= now;
+					textDeltas++;
+					textChars += change.delta.length;
+				} else {
+					thinkingDeltas++;
+					thinkingChars += change.delta.length;
+				}
+				emit({ type: "delta", kind: change.type === "text_delta" ? "text" : "thinking", text: change.delta, ms: now });
 			}
 		}
 	});
@@ -137,22 +164,34 @@ async function ask(text: string, requestId: string): Promise<Record<string, unkn
 		const settled = await submission.wait(context);
 		const totalMs = performance.now() - t0;
 		if (settled.status !== "done" || settled.type !== "input") {
-			return { status: settled.status, settled, totalMs };
+			return { status: settled.status, detail: JSON.stringify(settled).slice(0, 2000), totalMs };
 		}
 		const answer = await root.commit((tx) => tx.entry(AssistantEntry, settled.answer), context);
-		const message = (answer?.model as { usage?: { output?: number } }[] | undefined)?.[0];
+		const message = (answer?.model as { usage?: { output?: number }; stopReason?: string; errorMessage?: string }[] | undefined)?.[0];
 		const outputTokens = message?.usage?.output;
 		const streamMs = firstDeltaMs !== undefined && lastDeltaMs !== undefined ? lastDeltaMs - firstDeltaMs : undefined;
 		return {
 			status: "done",
 			text: answerText(answer),
+			stopReason: message?.stopReason,
+			errorMessage: message?.errorMessage,
 			totalMs,
 			firstDeltaMs,
+			firstTextMs,
 			streamMs,
-			deltas,
-			deltaChars,
+			deltas: textDeltas + thinkingDeltas,
+			textDeltas,
+			thinkingDeltas,
+			textChars,
+			thinkingChars,
 			outputTokens,
 			msPerToken: outputTokens && streamMs !== undefined ? streamMs / outputTokens : undefined,
+			// Network chunks vs. deltas: Pi emits deltas from its throttled durable partial, not per chunk.
+			networkChunks: fetchStats.chunks,
+			networkBytes: fetchStats.bytes - network0.bytes,
+			// Time per token as the network delivered it (first to last body chunk of the call).
+			networkMsPerToken:
+				outputTokens && fetchStats.chunks > 1 ? (fetchStats.lastChunkAt - fetchStats.firstChunkAt) / outputTokens : undefined,
 		};
 	} finally {
 		await stream.stop();

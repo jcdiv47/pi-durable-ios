@@ -9,6 +9,12 @@ type FetchEventHandler = (type: "response" | "chunk" | "end" | "error", payload:
 export const fetchHandlers = new Map<number, FetchEventHandler>();
 let nextFetchId = 1;
 
+/**
+ * Network counters, so measurements can tell network chunking apart from Pi's throttled partials.
+ * `requests` and `bytes` only grow; `chunks` and the chunk times restart when a caller zeroes `chunks`.
+ */
+export const fetchStats = { requests: 0, chunks: 0, bytes: 0, firstChunkAt: 0, lastChunkAt: 0 };
+
 type HeadersInit = Headers | Record<string, string> | Iterable<readonly [string, string]>;
 
 function normalizeName(name: string): string {
@@ -419,6 +425,7 @@ async function fetchPolyfill(input: string | URL | RequestPolyfill, init?: Reque
 	}
 	const bodyBytes = request.body === null ? null : await readAll(request.body);
 	const id = nextFetchId++;
+	fetchStats.requests++;
 
 	return new Promise<ResponsePolyfill>((resolve, reject) => {
 		let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
@@ -470,6 +477,9 @@ async function fetchPolyfill(input: string | URL | RequestPolyfill, init?: Reque
 					break;
 				}
 				case "chunk":
+					fetchStats.lastChunkAt = performance.now();
+					if (fetchStats.chunks++ === 0) fetchStats.firstChunkAt = fetchStats.lastChunkAt;
+					fetchStats.bytes += (payload as Uint8Array).byteLength;
 					controller?.enqueue(payload as Uint8Array);
 					break;
 				case "end":

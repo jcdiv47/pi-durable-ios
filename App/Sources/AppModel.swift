@@ -8,7 +8,9 @@ import PiUI
 @Observable
 final class AppModel {
     let mode = LaunchMode.current
-    let modelId = UserDefaults.standard.string(forKey: "PiModel") ?? "claude-sonnet-5-5"
+    /// `-PiProvider` / `-PiModel` override the chat provider; DeepSeek by default.
+    let provider = UserDefaults.standard.string(forKey: "PiProvider") ?? "deepseek"
+    let modelId: String
     let keys = KeychainKeys()
 
     var status = "Starting…"
@@ -16,11 +18,21 @@ final class AppModel {
     var busy = false
     var hasKey = false
     var streamed = ""
+    var thinkingChars = 0
     var lastResult: String?
 
     /// Kept alive for the life of the process (the kill test waits here to be terminated).
     private(set) var harness: PiHarness?
     private let launchedAt = ProcessMetrics.msSinceProcessStart()
+
+    /// Providers whose keys can live in the Keychain, with their default models.
+    static let defaultModels = ["deepseek": "deepseek-flash", "anthropic": "claude-sonnet-5-5"]
+
+    init() {
+        modelId = UserDefaults.standard.string(forKey: "PiModel") ?? Self.defaultModels[provider] ?? "deepseek-flash"
+    }
+
+    var providerName: String { provider == "deepseek" ? "DeepSeek" : provider.capitalized }
 
     nonisolated static let logger = Logger(subsystem: "dev.pi.durable", category: "app")
 
@@ -37,8 +49,8 @@ final class AppModel {
         for name in mode.reports + ["\(mode.rawValue)-error.json"] {
             try? FileManager.default.removeItem(at: M0Files.url(name))
         }
-        importKeyIfRequested()
-        hasKey = keys.hasKey(for: "anthropic")
+        importKeysIfPresent()
+        hasKey = keys.hasKey(for: provider)
         do {
             switch mode {
             case .chat: try await openChat()
@@ -70,20 +82,22 @@ final class AppModel {
         ))
         let opened = try await harness.open(.init(
             dbPath: directory.appendingPathComponent("session.sqlite").path,
-            provider: "anthropic",
+            provider: provider,
             modelId: modelId,
-            keyedProviders: ["anthropic"]
+            keyedProviders: Array(Self.defaultModels.keys)
         ))
         self.harness = harness
         ready = true
         status = "Ready · \(modelId) · open \(Int(opened.openMs)) ms"
-        if let prompt = UserDefaults.standard.string(forKey: "PiPrompt") { await send(prompt) }
+        // Scripts set PI_PROMPT to send one prompt right away (scripts/m0-check.sh stream).
+        if let prompt = ProcessInfo.processInfo.environment["PI_PROMPT"] { await send(prompt) }
     }
 
     func send(_ prompt: String) async {
         guard let harness, !busy else { return }
         busy = true
         streamed = ""
+        thinkingChars = 0
         lastResult = nil
         defer { busy = false }
         do {
@@ -92,20 +106,27 @@ final class AppModel {
             if let text = result.text, result.status == "done" { streamed = text }
             lastResult = [
                 "status \(result.status)",
+                result.errorMessage ?? result.detail,
                 result.firstDeltaMs.map { "first delta \(Int($0)) ms" },
+                result.firstTextMs.map { "first text \(Int($0)) ms" },
                 result.outputTokens.map { "\($0) output tokens" },
                 result.msPerToken.map { String(format: "%.1f ms/token", $0) },
                 "total \(Int(result.totalMs)) ms",
             ].compactMap(\.self).joined(separator: " · ")
-            try? Data(json.utf8).write(to: M0Files.url("stream.json"), options: .atomic)
+            if var report = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] {
+                report["model"] = "\(provider)/\(modelId)"
+                try? M0Files.writeJSON("stream.json", report)
+            }
         } catch {
             lastResult = "Error: \(error)"
+            try? M0Files.writeJSON("chat-error.json", ["error": String(describing: error)])
         }
     }
 
     private func handle(_ json: String) {
         guard let event = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] else { return }
-        if event["type"] as? String == "delta", let text = event["text"] as? String { streamed += text }
+        guard event["type"] as? String == "delta", let text = event["text"] as? String else { return }
+        if event["kind"] as? String == "thinking" { thinkingChars += text.count } else { streamed += text }
     }
 
     // MARK: Keys
@@ -114,7 +135,7 @@ final class AppModel {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         do {
-            try keys.setKey(trimmed, for: "anthropic")
+            try keys.setKey(trimmed, for: provider)
             hasKey = true
         } catch {
             status = "Could not save key: \(error)"
@@ -122,19 +143,22 @@ final class AppModel {
     }
 
     func removeKey() {
-        try? keys.removeKey(for: "anthropic")
+        try? keys.removeKey(for: provider)
         hasKey = false
     }
 
-    /// Debug builds only: `PI_ANTHROPIC_KEY_FILE=<path>` (simulator: `SIMCTL_CHILD_PI_ANTHROPIC_KEY_FILE`)
-    /// moves a key from a file on the Mac into the Keychain, so scripts never pass it as an argument.
-    private func importKeyIfRequested() {
+    /// Debug builds only: `scripts/push-key.sh` copies a key file to `Documents/m0/import-<provider>.key`
+    /// (simulator or device); it moves into the Keychain here and the file is deleted.
+    private func importKeysIfPresent() {
         #if DEBUG
-        guard let path = ProcessInfo.processInfo.environment["PI_ANTHROPIC_KEY_FILE"],
-              let key = try? String(contentsOfFile: path, encoding: .utf8)
-        else { return }
-        saveKey(key)
-        Self.logger.info("Imported the Anthropic key into the Keychain")
+        for provider in Self.defaultModels.keys {
+            let url = M0Files.url("import-\(provider).key")
+            guard let key = try? String(contentsOf: url, encoding: .utf8) else { continue }
+            try? FileManager.default.removeItem(at: url)
+            let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, (try? keys.setKey(trimmed, for: provider)) != nil else { continue }
+            Self.logger.info("Imported the \(provider, privacy: .public) key into the Keychain")
+        }
         #endif
     }
 

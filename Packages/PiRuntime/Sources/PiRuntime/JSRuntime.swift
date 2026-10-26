@@ -28,6 +28,11 @@ public final class JSRuntime: @unchecked Sendable {
     private let logger = Logger(subsystem: "dev.pi.durable", category: "js")
     private let options: Options
     private let started = ContinuousClock.now
+    private let busy = OSAllocatedUnfairLock(initialState: Duration.zero)
+
+    /// Total time the JS queue has spent running JS (including the microtasks each call drains).
+    /// Divided by output tokens it gives JS CPU per token, the cost the missing JIT adds.
+    public var busyTime: Duration { busy.withLock { $0 } }
 
     // Confined to `queue`.
     private var context: JSContext!
@@ -64,7 +69,7 @@ public final class JSRuntime: @unchecked Sendable {
     public func perform<T: Sendable>(_ body: @escaping @Sendable (JSContext) throws -> T) async throws -> T {
         try await withCheckedThrowingContinuation { continuation in
             queue.async {
-                continuation.resume(with: Result { try body(self.context) })
+                continuation.resume(with: Result { try self.timed { try body(self.context) } })
             }
         }
     }
@@ -79,7 +84,7 @@ public final class JSRuntime: @unchecked Sendable {
                 guard let function = self.resolve(path, in: context), !function.isUndefined else {
                     return continuation.resume(throwing: JSRuntimeError("\(path) is not defined"))
                 }
-                let result = function.call(withArguments: arguments)
+                let result = self.timed { function.call(withArguments: arguments) }
                 if let exception = context.exception {
                     context.exception = nil
                     return continuation.resume(throwing: JSRuntimeError(Self.describe(exception)))
@@ -102,6 +107,12 @@ public final class JSRuntime: @unchecked Sendable {
                 ])
             }
         }
+    }
+
+    private func timed<T>(_ body: () throws -> T) rethrows -> T {
+        let start = ContinuousClock.now
+        defer { busy.withLock { $0 += ContinuousClock.now - start } }
+        return try body()
     }
 
     private func resolve(_ path: String, in context: JSContext) -> JSValue? {
@@ -340,7 +351,7 @@ public final class JSRuntime: @unchecked Sendable {
     private func callHost(_ method: String, _ arguments: [Any]) {
         guard let host = context.objectForKeyedSubscript("__piHost"), !host.isUndefined else { return }
         context.exception = nil
-        host.invokeMethod(method, withArguments: arguments)
+        timed { _ = host.invokeMethod(method, withArguments: arguments) }
         if let exception = context.exception {
             context.exception = nil
             log("error", "__piHost.\(method) threw: \(Self.describe(exception))")

@@ -28,11 +28,19 @@ public final class PiHarness: Sendable {
         public let status: String
         public let text: String?
         public let totalMs: Double
+        /// First streamed delta of any kind (thinking or text).
         public let firstDeltaMs: Double?
+        public let firstTextMs: Double?
         public let streamMs: Double?
         public let deltas: Int?
+        public let thinkingDeltas: Int?
+        /// Usage output tokens; for reasoning models this includes thinking.
         public let outputTokens: Int?
         public let msPerToken: Double?
+        public let stopReason: String?
+        public let errorMessage: String?
+        /// The settled submission, when it did not finish with an answer.
+        public let detail: String?
     }
 
     public struct SettleResult: Decodable, Sendable {

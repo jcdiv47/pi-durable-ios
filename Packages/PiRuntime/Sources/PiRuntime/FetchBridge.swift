@@ -17,6 +17,7 @@ public enum ProviderKeys {
     /// Hosts each provider's key may be sent to.
     public static let allowedHosts: [String: Set<String>] = [
         "anthropic": ["api.anthropic.com"],
+        "deepseek": ["api.deepseek.com"],
         "openai": ["api.openai.com"],
         "openrouter": ["openrouter.ai"],
     ]

@@ -22,6 +22,9 @@ struct ContentView: View {
                         .disabled(model.busy || !model.ready || !model.hasKey || prompt.isEmpty)
                     }
                     Section("Response") {
+                        if model.thinkingChars > 0 {
+                            Text("Thought for \(model.thinkingChars) characters").font(.caption).foregroundStyle(.secondary)
+                        }
                         Text(model.streamed.isEmpty ? "—" : model.streamed)
                             .textSelection(.enabled)
                             .accessibilityIdentifier("response")
@@ -36,12 +39,12 @@ struct ContentView: View {
     }
 
     @ViewBuilder private var keySection: some View {
-        Section("Anthropic API key") {
+        Section("\(model.providerName) API key") {
             if model.hasKey {
                 Label("Stored in the Keychain", systemImage: "key.fill")
                 Button("Remove key", role: .destructive) { model.removeKey() }
             } else {
-                SecureField("sk-ant-…", text: $keyDraft)
+                SecureField("sk-…", text: $keyDraft)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                 Button("Save to Keychain") {

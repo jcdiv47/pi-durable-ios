@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Shared helpers for driving PiApp from scripts. Targets the booted simulator by default,
 # a specific simulator with PI_SIMULATOR=<udid>, or a physical iPhone with PI_DEVICE=<udid>.
+# PI_CONFIGURATION=Release builds Release (keys must already be in the Keychain: import is debug-only).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUNDLE_ID=dev.jcdiv47.pidurable
 OUT="$ROOT/scripts/.out"
 DERIVED="$ROOT/build/DerivedData"
+CONFIGURATION="${PI_CONFIGURATION:-Debug}"
 mkdir -p "$OUT"
 
 log() { printf '\033[1m==> %s\033[0m\n' "$*" >&2; }
@@ -15,21 +17,21 @@ fail() { printf '\033[31mFAIL: %s\033[0m\n' "$*" >&2; exit 1; }
 if [[ -n "${PI_DEVICE:-}" ]]; then
 	TARGET=device
 	UDID="$PI_DEVICE"
-	PRODUCTS=Debug-iphoneos
+	PRODUCTS=$CONFIGURATION-iphoneos
 	DESTINATION="id=$UDID"
 else
 	TARGET=simulator
 	UDID="${PI_SIMULATOR:-$(xcrun simctl list devices booted -j | python3 -c 'import json,sys; d=[x["udid"] for r in json.load(sys.stdin)["devices"].values() for x in r]; print(d[0] if d else "")')}"
 	[[ -n "$UDID" ]] || fail "no booted simulator; boot one or set PI_SIMULATOR"
-	PRODUCTS=Debug-iphonesimulator
+	PRODUCTS=$CONFIGURATION-iphonesimulator
 	DESTINATION="platform=iOS Simulator,id=$UDID"
 fi
 APP="$DERIVED/Build/Products/$PRODUCTS/PiDurable.app"
 
 pi_build() {
-	log "Building PiApp for $TARGET $UDID"
+	log "Building PiApp ($CONFIGURATION) for $TARGET $UDID"
 	(cd "$ROOT" && xcodegen generate --quiet)
-	xcodebuild -project "$ROOT/PiDurable.xcodeproj" -scheme PiApp -destination "$DESTINATION" \
+	xcodebuild -project "$ROOT/PiDurable.xcodeproj" -scheme PiApp -configuration "$CONFIGURATION" -destination "$DESTINATION" \
 		-derivedDataPath "$DERIVED" -allowProvisioningUpdates -quiet build
 }
 
@@ -42,7 +44,8 @@ pi_install() {
 	fi
 }
 
-# pi_launch <mode> [launch arguments...]. Simulator env vars pass through as SIMCTL_CHILD_*.
+# pi_launch <mode> [NAME=value...]: launches with -PiMode/-PiRunId and the given environment variables.
+# (Free text goes in the environment: devicectl reads some app arguments as its own short flags.)
 # Sets RUN_ID, which the app stamps on its reports (launch returns before the app clears old ones).
 pi_launch() {
 	local mode=$1
@@ -50,10 +53,17 @@ pi_launch() {
 	RUN_ID="$mode-$(date +%s)-$RANDOM"
 	log "Launching -PiMode $mode"
 	if [[ $TARGET == simulator ]]; then
-		xcrun simctl launch --terminate-running-process "$UDID" "$BUNDLE_ID" -PiMode "$mode" -PiRunId "$RUN_ID" "$@" >/dev/null
+		local assignments=() assignment
+		for assignment in "$@"; do assignments+=("SIMCTL_CHILD_$assignment"); done
+		env ${assignments[@]+"${assignments[@]}"} xcrun simctl launch --terminate-running-process "$UDID" "$BUNDLE_ID" \
+			-PiMode "$mode" -PiRunId "$RUN_ID" >/dev/null
 	else
-		xcrun devicectl device process launch --device "$UDID" --terminate-existing \
-			--json-output "$OUT/launch.json" "$BUNDLE_ID" -PiMode "$mode" -PiRunId "$RUN_ID" "$@" >/dev/null
+		local environment=()
+		if (($# > 0)); then
+			environment=(--environment-variables "$(python3 -c 'import json,sys; print(json.dumps(dict(a.split("=", 1) for a in sys.argv[1:])))' "$@")")
+		fi
+		xcrun devicectl device process launch --device "$UDID" --terminate-existing ${environment[@]+"${environment[@]}"} \
+			--json-output "$OUT/launch.json" "$BUNDLE_ID" -PiMode "$mode" -PiRunId "$RUN_ID" >/dev/null
 		python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["result"]["process"]["processIdentifier"])' "$OUT/launch.json" >"$OUT/pid"
 	fi
 }
