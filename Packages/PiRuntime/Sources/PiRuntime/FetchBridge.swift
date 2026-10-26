@@ -126,6 +126,14 @@ final class FetchBridge: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         task?.cancel()
     }
 
+    func cancelAll() {
+        let tasks = lock.withLock { state -> [URLSessionDataTask] in
+            defer { state = State() }
+            return Array(state.tasks.values)
+        }
+        for task in tasks { task.cancel() }
+    }
+
     private func fetchID(_ task: URLSessionTask) -> Int? {
         lock.withLock { $0.ids[task.taskIdentifier] }
     }

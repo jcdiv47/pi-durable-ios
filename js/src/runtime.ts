@@ -167,7 +167,7 @@ async function submit(text: string, requestId: string): Promise<{ submissionId: 
 }
 
 /** After a relaunch: waits for the run `requestId` started and reports what the transcript holds. */
-async function settle(requestId: string, text: string): Promise<Record<string, unknown>> {
+async function settle(text: string, requestId: string): Promise<Record<string, unknown>> {
 	const { harness, root } = requireOpen();
 	// The same requestId finds the submission the killed process admitted instead of submitting twice.
 	const submission = await root.submit({ type: "input", content: text, requestId }, context);
@@ -208,6 +208,16 @@ function summarizeInspection(inspection: unknown): unknown {
 	}
 }
 
+/** Debugging aid: entry kinds and texts of the root transcript, after the conversation is idle. */
+async function entries(): Promise<unknown> {
+	const { harness, root } = requireOpen();
+	await harness.waitForIdle(context);
+	const view = await root.viewState(context);
+	const list = (view.value.entries as unknown as EntryRecord[]).map((e) => ({ id: e.id, kind: e.kind, model: JSON.stringify(e.model).slice(0, 160) }));
+	view.dispose();
+	return list;
+}
+
 async function close(): Promise<void> {
 	const current = harness;
 	harness = undefined;
@@ -215,4 +225,4 @@ async function close(): Promise<void> {
 	await current?.close(context);
 }
 
-(globalThis as Record<string, unknown>).PiRuntime = { open, watch, ask, submit, settle, close };
+(globalThis as Record<string, unknown>).PiRuntime = { open, watch, ask, submit, settle, entries, close };

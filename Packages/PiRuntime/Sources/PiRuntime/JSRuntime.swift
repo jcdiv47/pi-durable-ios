@@ -124,6 +124,19 @@ public final class JSRuntime: @unchecked Sendable {
         return message
     }
 
+    /// Stops the runtime abruptly, as if the process died: timers and requests are dropped and sqlite
+    /// connections closed without letting JS clean up. Used by in-process crash tests.
+    public func terminate() {
+        queue.sync {
+            for item in timers.values { item.cancel() }
+            timers.removeAll()
+            for connection in databases.values { connection.close() }
+            databases.removeAll()
+            fetch.cancelAll()
+            context.globalObject.setValue(nil, forProperty: "__piHost")
+        }
+    }
+
     // MARK: - Setup (on queue)
 
     private func setUp() {
