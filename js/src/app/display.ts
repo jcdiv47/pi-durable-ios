@@ -192,7 +192,7 @@ export class FrameBuilder {
 			items,
 			live: displayLive(docs["pi.live"] as LiveDoc | undefined),
 			queue: (inbox?.items ?? []).flatMap((item) =>
-				item.mode === "write" ? [] : [{ id: item.id as number, text: clip(textOf(item.content)), mode: item.mode }],
+				item.mode === "write" ? [] : [{ id: item.id as number, text: textOf(item.content), mode: item.mode }],
 			),
 			model: agent?.model,
 			usage: displayUsage(docs["pi.usage"] as UsageDoc | undefined),
