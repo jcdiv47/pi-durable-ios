@@ -274,7 +274,7 @@ struct RemindersCard: View {
             .disabled(row.id == nil)
             .accessibilityLabel(done ? "Mark not done" : "Mark done")
             VStack(alignment: .leading, spacing: 2) {
-                (priorityMarks(row.priority) + Text(row.title))
+                Text("\(priorityMarks(row.priority))\(row.title)")
                     .strikethrough(done)
                     .foregroundStyle(done ? .secondary : .primary)
                 if let due = due(row) {
