@@ -61,10 +61,11 @@ public final class SurfaceHost: Sendable {
         let keys = docKeys?.array.map { Set($0.compactMap(\.string)) }
         let dial = dial()
         let report = SurfaceValidator(dial: dial, docKeys: keys).validate(spec)
-        let families = SurfaceSpec(spec).families
+        let parsed = SurfaceSpec(spec)
+        let custom = parsed.families.filter { parsed.visibleSlots($0).contains { $0.component == "Custom" } }
         tuning(TuningEvent(
-            kind: .validated, families: families.map(\.rawValue), levels: dial.record(families),
-            errors: report.errors.map { "\($0.path): \($0.message)" }, customTrees: report.customTrees
+            kind: .validated, families: parsed.families.map(\.rawValue), levels: dial.record(parsed.families),
+            errors: report.errors.map { "\($0.path): \($0.message)" }, customTrees: report.customTrees, customFamilies: custom.map(\.rawValue)
         ))
         return report
     }

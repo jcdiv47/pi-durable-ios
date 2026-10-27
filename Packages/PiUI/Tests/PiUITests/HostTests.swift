@@ -56,6 +56,9 @@ struct HostTests {
         #expect(tuning.value == 1)
         _ = try await host.handle("ui.validate", #"{"spec":{"slots":[]}}"#)
         #expect(tuning.value == 2)
+        // A family listed twice is only a warning; logging it must not trap.
+        _ = try await host.handle("ui.validate", #"{"spec":{"families":["systemMedium","systemMedium"],"slots":[{"c":"Quote","text":"Hi"}]}}"#)
+        #expect(tuning.value == 3)
     }
 
     @Test("Previews return a PNG per family and appearance, accessories once")

@@ -18,16 +18,19 @@ public struct TuningEvent: Codable, Sendable, Hashable {
     public var errors: [String] = []
     /// `Custom` trees as JSON.
     public var customTrees: [String] = []
+    /// Families that show a `Custom` slot (a slot may be limited to some families); nil means all of `families`.
+    public var customFamilies: [String]?
     /// What was published (`c3-s1 v2`).
     public var detail: String?
 
-    public init(date: Date = .now, kind: Kind, families: [String], levels: [String: Int], errors: [String] = [], customTrees: [String] = [], detail: String? = nil) {
+    public init(date: Date = .now, kind: Kind, families: [String], levels: [String: Int], errors: [String] = [], customTrees: [String] = [], customFamilies: [String]? = nil, detail: String? = nil) {
         self.date = date
         self.kind = kind
         self.families = families
         self.levels = levels
         self.errors = errors
         self.customTrees = customTrees
+        self.customFamilies = customFamilies
         self.detail = detail
     }
 }
@@ -165,16 +168,18 @@ public struct TuningSummary: Sendable, Hashable {
         var failures: [String: Failure] = [:]
         for event in events {
             let families = event.families.compactMap(SurfaceFamily.init(rawValue:))
-            for family in families {
+            // Per-family numbers count only events at the family's current level: suggestions are about that level.
+            for family in families where event.levels[family.rawValue] ?? dial.level(family).rawValue == dial.level(family).rawValue {
                 var entry = stats[family] ?? FamilyStats(family: family)
                 switch event.kind {
                 case .published:
                     entry.publishes += 1
                 case .validated:
                     entry.validations += 1
-                    if !event.errors.isEmpty { entry.failures += 1 }
-                    if !event.customTrees.isEmpty { entry.custom += 1 }
-                    entry.customRejected += event.errors.filter { Self.isCustomRejection($0, family: family) }.count
+                    let errors = event.errors.filter { Self.applies($0, to: family) }
+                    if !errors.isEmpty { entry.failures += 1 }
+                    if !event.customTrees.isEmpty, (event.customFamilies ?? event.families).contains(family.rawValue) { entry.custom += 1 }
+                    entry.customRejected += errors.filter { Self.isCustomRejection($0, family: family) }.count
                 }
                 stats[family] = entry
             }
@@ -227,6 +232,12 @@ public struct TuningSummary: Sendable, Hashable {
             suggestions.append("A Custom layout came up \(shape.count) times: \(shape.signature). Make it a Layer 1 component or a preset.")
         }
         return suggestions
+    }
+
+    /// An error that names a family is that family's; any other error is the whole spec's.
+    static func applies(_ error: String, to family: SurfaceFamily) -> Bool {
+        let named = SurfaceFamily.allCases.filter { error.contains($0.rawValue) }
+        return named.isEmpty || named.contains(family)
     }
 
     static func isCustomRejection(_ error: String, family: SurfaceFamily) -> Bool {

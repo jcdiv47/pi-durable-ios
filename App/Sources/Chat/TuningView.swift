@@ -64,7 +64,7 @@ struct TuningView: View {
             }
         }
 
-        Section("Families") {
+        Section {
             ForEach(summary.families) { stats in
                 VStack(alignment: .leading, spacing: 6) {
                     Picker(stats.family.displayName, selection: Binding(get: { store.dial.level(stats.family) }, set: { store.dial.set($0, for: stats.family) })) {
@@ -73,6 +73,10 @@ struct TuningView: View {
                     Text(numbers(stats)).font(.caption.monospacedDigit()).foregroundStyle(stats.failingOften ? .orange : .secondary)
                 }
             }
+        } header: {
+            Text("Families")
+        } footer: {
+            Text("Numbers count designs made at each family's current level; changing a level starts its count again.")
         }
 
         if !summary.shapes.isEmpty {

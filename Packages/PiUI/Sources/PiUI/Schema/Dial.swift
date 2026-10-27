@@ -66,7 +66,8 @@ public struct GenerativityDial: Codable, Sendable, Hashable {
 
     /// The level of each family, as recorded with a published spec.
     public func record(_ families: [SurfaceFamily]) -> [String: Int] {
-        Dictionary(uniqueKeysWithValues: families.map { ($0.rawValue, level($0).rawValue) })
+        // Specs may list a family twice (the validator only warns), so duplicates must not trap.
+        Dictionary(families.map { ($0.rawValue, level($0).rawValue) }) { first, _ in first }
     }
 
     /// Level 0 arrangements: the component of each visible slot, in order.
