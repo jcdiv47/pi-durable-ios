@@ -80,6 +80,7 @@ final class ChatStore {
     @ObservationIgnored private(set) var background: BackgroundWork!
     @ObservationIgnored private(set) var notifications: Notifications!
     @ObservationIgnored private(set) var activities: RunActivities!
+    @ObservationIgnored private let spotlight = SpotlightIndex()
     nonisolated static let logger = Logger(subsystem: "dev.pi.durable", category: "chat")
 
     init() {
@@ -95,7 +96,13 @@ final class ChatStore {
             },
             tuning: { [weak self] kind, detail in
                 // The tuning log (spec "Generativity dial"): Custom trees and failed validations, reviewed later.
-                DispatchQueue.main.async { MainActor.assumeIsolated { self?.diagnostics.record(kind == "invalid" ? "warn" : "info", "ui.\(kind)", detail) } }
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        self.diagnostics.record(kind == "invalid" ? "warn" : "info", "ui.\(kind)", detail)
+                        if kind == "published" { self.spotlight.sync(self) }
+                    }
+                }
             }
         )
         background = BackgroundWork(store: self)
@@ -163,6 +170,7 @@ final class ChatStore {
             await refreshSchedules()
             phase = .ready
             diagnostics.record("info", "app", "Opened Pi storage; \(conversations.count) conversations")
+            spotlight.sync(self)
             // Conversations that were busy when the process died resume on open; watch them so their
             // progress shows in the list.
             let resuming = Set(tasks.compactMap(\.conversationId))
@@ -194,9 +202,15 @@ final class ChatStore {
             updateBackgroundTime()
             activities.update(conversation, approval: approvals.first { $0.conversationId == conversation.id })
             background.progress(busy: busyConversations.count, status: activities.statusText(conversation.id))
-            if wasBusy, !conversation.live.busy { runEnded(conversation) }
+            if wasBusy, !conversation.live.busy {
+                runEnded(conversation)
+                spotlight.sync(self, refresh: [conversation.id])
+            }
         case "conversations":
-            if let event = try? decoder.decode(ConversationsEvent.self, from: data) { conversations = event.items }
+            if let event = try? decoder.decode(ConversationsEvent.self, from: data) {
+                conversations = event.items
+                if phase == .ready { spotlight.sync(self) }
+            }
         case "approvals":
             if let event = try? decoder.decode(ApprovalsEvent.self, from: data) {
                 let previous = Set(approvals.map(\.id))
@@ -234,6 +248,12 @@ final class ChatStore {
         Task {
             do { try await harness.perform("PiRuntime.watchConversation", [id]) } catch { report("watch", error) }
         }
+    }
+
+    /// A conversation's messages as plain text, for Spotlight.
+    func searchText(_ id: Int) async -> String? {
+        guard let harness else { return nil }
+        return try? await harness.call("PiRuntime.searchText", [id])
     }
 
     func newConversation() async -> ConversationMeta? {
@@ -449,6 +469,7 @@ final class ChatStore {
     func refreshPublished() async {
         guard let harness else { return }
         do { published = try await harness.call("PiRuntime.publishedSurfaces") } catch { report("published surfaces", error) }
+        spotlight.sync(self)
     }
 
     func surfaces(of conversationId: Int) async -> [SurfaceRef] {

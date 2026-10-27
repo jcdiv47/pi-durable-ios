@@ -158,6 +158,18 @@ export class Chat {
 		send(view.value);
 	}
 
+	/** Spotlight's text for a conversation: its messages from the start, user and assistant text only, cut at `limit`. */
+	async searchText(id: number, limit = 4000): Promise<string> {
+		const frame = await this.transcript(id);
+		let text = "";
+		for (const item of frame.items) {
+			if ((item.kind !== "user" && item.kind !== "assistant") || item.text.trim() === "") continue;
+			text += `${item.text.trim()}\n`;
+			if (text.length >= limit) break;
+		}
+		return text.slice(0, limit).trimEnd();
+	}
+
 	/** The whole transcript and live state once, as one frame (headless checks read this). */
 	async transcript(id: number) {
 		const view = await (await this.#conversation(id)).viewState(context);

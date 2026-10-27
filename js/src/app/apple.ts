@@ -110,6 +110,18 @@ const healthQuery = defineTool({
 	execute: async (args, _api, context) => json(await hostCall("health.query", args, context.abortSignal)),
 });
 
+const locationCurrent = defineTool({
+	name: "location_current",
+	description:
+		"The iPhone's current location: coordinates, accuracy and, unless placeName is false, the address and city. " +
+		"Only when the user's request needs it (weather, nearby places, travel time). The first call asks the user for permission.",
+	parameters: Type.Object({
+		placeName: Type.Optional(Type.Boolean({ description: "Look up the address too (default true)" })),
+	}),
+	replay: "safe",
+	execute: async (args, _api, context) => json(await hostCall("location.current", args, context.abortSignal)),
+});
+
 const currentTime = defineTool({
 	name: "current_time",
 	description: "The current local date and time, with the time zone.",
@@ -146,7 +158,7 @@ const contextSection = section("context", () => {
 export const AppleTools = defineExtension({
 	name: "apple",
 	sections: [contextSection],
-	tools: [currentTime, calendarQuery, remindersQuery, calendarCreateEvent, remindersCreate, remindersComplete, healthQuery],
+	tools: [currentTime, locationCurrent, calendarQuery, remindersQuery, calendarCreateEvent, remindersCreate, remindersComplete, healthQuery],
 });
 
 /** Tool names with what they do, for the approval settings screen. */
