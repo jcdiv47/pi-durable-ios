@@ -268,6 +268,21 @@ final class ChatStore {
         do { try await harness.perform("PiRuntime.abort", [id]) } catch { report("abort", error) }
     }
 
+    /// Takes a queued message back; false when it was already sent.
+    func withdraw(_ message: QueuedMessage, from id: Int) async -> Bool {
+        guard let harness else { return false }
+        do { return try await harness.call("PiRuntime.withdraw", [id, message.id]) } catch {
+            report("withdraw", error)
+            return false
+        }
+    }
+
+    /// Sends a queued message before the answer ends: after the running tools, or now, stopping streamed text.
+    func steer(_ message: QueuedMessage, in id: Int) async {
+        guard let harness else { return }
+        do { try await harness.perform("PiRuntime.steer", [id, message.id]) } catch { report("steer", error) }
+    }
+
     func fork(_ id: Int, at entryId: Int) async -> ConversationMeta? {
         guard let harness else { return nil }
         do {

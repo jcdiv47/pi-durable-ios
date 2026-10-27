@@ -2,7 +2,7 @@
 // transcript renders. Entries are immutable, so frames carry only the entries appended since the last
 // frame, plus the whole live state (streamed partial, running tools), which is small.
 
-import type { EntryRecord } from "@earendil-works/pi-durable";
+import type { EntryRecord, InboxState } from "@earendil-works/pi-durable";
 
 export type DisplayToolCall = { id: string; name: string; arguments: string };
 
@@ -23,6 +23,9 @@ export type DisplayItem =
 	| { id: number; kind: "toolResult"; callId: string; toolName: string; text: string; isError: boolean; surface?: DisplaySurface }
 	| { id: number; kind: "notice"; text: string };
 
+/** A queued user message, by submission ID. */
+export type DisplayQueued = { id: number; text: string; mode: "steer" | "followUp" };
+
 /** A surface a UI tool made or changed; the chat draws it under the call. */
 export type DisplaySurface = { conversationId: number; id: string; version: number; spec: unknown };
 
@@ -40,7 +43,8 @@ export type DisplayFrame = {
 	reset: boolean;
 	items: DisplayItem[];
 	live: DisplayLive;
-	queued: number;
+	/** Messages waiting in the inbox, oldest first; a `steer` lands at the next tool boundary. */
+	queue: DisplayQueued[];
 	model?: { provider: string; modelId: string };
 	usage: { input: number; output: number; cost: number };
 };
@@ -181,13 +185,15 @@ export class FrameBuilder {
 		this.#sent = ids;
 		const docs = value.docs;
 		const agent = docs["pi.agent"] as { model?: { provider: string; modelId: string } } | undefined;
-		const inbox = docs["pi.inbox"] as { items?: { mode: string }[] } | undefined;
+		const inbox = docs["pi.inbox"] as InboxState | undefined;
 		return {
 			conversationId: this.conversationId,
 			reset: !appends,
 			items,
 			live: displayLive(docs["pi.live"] as LiveDoc | undefined),
-			queued: (inbox?.items ?? []).filter((item) => item.mode !== "write").length,
+			queue: (inbox?.items ?? []).flatMap((item) =>
+				item.mode === "write" ? [] : [{ id: item.id as number, text: clip(textOf(item.content)), mode: item.mode }],
+			),
 			model: agent?.model,
 			usage: displayUsage(docs["pi.usage"] as UsageDoc | undefined),
 		};

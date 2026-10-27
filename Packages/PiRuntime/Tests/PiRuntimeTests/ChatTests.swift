@@ -7,6 +7,7 @@ final class ChatLog: @unchecked Sendable {
     private let lock = NSLock()
     private var items: [Int: [[String: Any]]] = [:]
     private var live: [Int: [String: Any]] = [:]
+    private var queues: [Int: [[String: Any]]] = [:]
     private var pending: [[String: Any]] = []
     private var calls: [(String, [String: Any])] = []
     private var conversationTitles: [String] = []
@@ -22,6 +23,7 @@ final class ChatLog: @unchecked Sendable {
                 let new = frame["items"] as! [[String: Any]]
                 items[id] = (frame["reset"] as! Bool) ? new : (items[id] ?? []) + new
                 live[id] = frame["live"] as? [String: Any]
+                queues[id] = frame["queue"] as? [[String: Any]]
             case "approvals":
                 pending = event["pending"] as! [[String: Any]]
             case "conversations":
@@ -42,6 +44,7 @@ final class ChatLog: @unchecked Sendable {
 
     func items(_ id: Int) -> [[String: Any]] { lock.withLock { items[id] ?? [] } }
     func busy(_ id: Int) -> Bool { lock.withLock { live[id]?["busy"] as? Bool ?? false } }
+    func queue(_ id: Int) -> [[String: Any]] { lock.withLock { queues[id] ?? [] } }
     func liveText(_ id: Int) -> String { lock.withLock { (live[id]?["generation"] as? [String: Any])?["text"] as? String ?? "" } }
     var approvals: [[String: Any]] { lock.withLock { pending } }
     var titles: [String] { lock.withLock { conversationTitles } }
@@ -189,6 +192,60 @@ struct ChatTests {
         let aborted = log.last(meta.id, kind: "assistant")
         #expect(aborted?["stopReason"] as? String == "aborted")
         #expect((aborted?["text"] as? String ?? "").count < 3000, "stopped before the whole answer streamed")
+        try await harness.close()
+    }
+
+    @Test("A queued message can be withdrawn; steering one while text streams stops the answer and sends it first", .timeLimit(.minutes(1)))
+    func withdrawAndSteerStreaming() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let log = ChatLog()
+        let harness = try await openChat(log, db: directory.appendingPathComponent("chat.sqlite").path)
+        let meta: Meta = try await harness.call("PiRuntime.createConversation", ["scripted", "assistant"])
+        try await harness.perform("PiRuntime.watchConversation", [meta.id])
+        try await harness.perform("PiRuntime.send", [meta.id, "slow please", "r1"])
+        try await until { log.liveText(meta.id).count > 20 }
+        for (text, request) in [("dropped", "r2"), ("first", "r3"), ("second", "r4")] {
+            try await harness.perform("PiRuntime.send", [meta.id, text, request])
+        }
+        try await until { log.queue(meta.id).count == 3 }
+        #expect(log.queue(meta.id).map { $0["text"] as! String } == ["dropped", "first", "second"])
+        #expect(log.queue(meta.id).allSatisfy { $0["mode"] as? String == "followUp" })
+
+        let withdrawn: Bool = try await harness.call("PiRuntime.withdraw", [meta.id, log.queue(meta.id)[0]["id"] as! Int])
+        #expect(withdrawn)
+        try await until { log.queue(meta.id).count == 2 }
+
+        try await harness.perform("PiRuntime.steer", [meta.id, log.queue(meta.id)[1]["id"] as! Int])
+        try await until { !log.busy(meta.id) && log.queue(meta.id).isEmpty && log.items(meta.id).count == 6 }
+        let texts = log.items(meta.id).map { $0["text"] as? String ?? "" }
+        #expect(log.items(meta.id)[1]["stopReason"] as? String == "aborted", "the streaming answer stopped")
+        #expect(Array(texts[2...]) == ["second", "You said: second", "first", "You said: first"])
+        #expect(!texts.contains("dropped"))
+        try await harness.close()
+    }
+
+    @Test("Steering during a tool round lands after the tool, before the model's next request", .timeLimit(.minutes(1)))
+    func steerDuringTools() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let log = ChatLog()
+        let harness = try await openChat(log, db: directory.appendingPathComponent("chat.sqlite").path)
+        let meta: Meta = try await harness.call("PiRuntime.createConversation", ["scripted", "assistant"])
+        try await harness.perform("PiRuntime.watchConversation", [meta.id])
+        try await harness.perform("PiRuntime.send", [meta.id, "event Dentist", "r1"])
+        try await until { log.approvals.count == 1 }
+        try await harness.perform("PiRuntime.send", [meta.id, "make it Friday", "r2"])
+        try await until { log.queue(meta.id).count == 1 }
+        try await harness.perform("PiRuntime.steer", [meta.id, log.queue(meta.id)[0]["id"] as! Int])
+        try await until { log.queue(meta.id).first?["mode"] as? String == "steer" }
+        #expect(log.busy(meta.id), "the tool round keeps going")
+
+        let _: Bool = try await harness.call("PiRuntime.answerApproval", [log.approvals[0]["id"] as! Int, "allow"])
+        try await until { !log.busy(meta.id) && log.queue(meta.id).isEmpty && log.items(meta.id).count == 5 }
+        #expect(log.items(meta.id).map { $0["kind"] as! String } == ["user", "assistant", "toolResult", "user", "assistant"])
+        #expect(log.items(meta.id)[3]["text"] as? String == "make it Friday")
+        #expect(log.calls("calendar.createEvent") == 1, "the tool was not interrupted")
         try await harness.close()
     }
 }

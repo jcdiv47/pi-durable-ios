@@ -159,12 +159,21 @@ struct UsageTotals: Decodable, Hashable {
     var cost: Double = 0
 }
 
+/// A message waiting for a boundary, by submission ID. A steer lands when the current tool round finishes.
+struct QueuedMessage: Decodable, Identifiable, Hashable {
+    let id: Int
+    let text: String
+    let mode: String
+
+    var steering: Bool { mode == "steer" }
+}
+
 struct DisplayFrame: Decodable {
     let conversationId: Int
     let reset: Bool
     let items: [DisplayItem]
     let live: DisplayLive
-    let queued: Int
+    let queue: [QueuedMessage]
     let model: ModelRef?
     let usage: UsageTotals
 }
@@ -178,7 +187,7 @@ final class ConversationState {
     /// Tool results by call ID, so each call renders with its result.
     private(set) var results: [String: DisplayItem] = [:]
     private(set) var live = DisplayLive()
-    private(set) var queued = 0
+    private(set) var queue: [QueuedMessage] = []
     private(set) var model: ModelRef?
     private(set) var usage = UsageTotals()
     private(set) var loaded = false
@@ -200,7 +209,7 @@ final class ConversationState {
             if let surface = item.surface, let callId = item.callId { latestSurfaceCall[surface.id] = callId }
         }
         live = frame.live
-        queued = frame.queued
+        queue = frame.queue
         model = frame.model
         usage = frame.usage
         loaded = true

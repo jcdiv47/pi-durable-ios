@@ -12,6 +12,7 @@ import {
 	defineDoc,
 	type Extension,
 	type Harness,
+	type InboxState,
 	type Submission,
 } from "@earendil-works/pi-durable";
 import type { Approvals, Decision, ToolPolicy } from "./approvals.ts";
@@ -302,6 +303,46 @@ export class Chat {
 	/** Stops the run and withdraws queued messages; resolves once the conversation is idle. */
 	async abort(id: number): Promise<void> {
 		await (await this.#conversation(id)).abort(context);
+	}
+
+	/** Withdraws one queued message; false when a boundary already placed it. */
+	async withdraw(id: number, submissionId: number): Promise<boolean> {
+		return (await this.harness.abortSubmission(submissionId as never, context, id as never)) === "aborted";
+	}
+
+	/**
+	 * Sends a queued message before the current answer ends. While the round's tools run, it becomes a steer, which Pi
+	 * places once they finish, before the model's next request. While the model writes, the next boundary would be the
+	 * end of the answer, so the answer stops instead (its partial text stays, marked aborted), the message goes next, and
+	 * the other queued messages follow it in order. Between withdrawing them and submitting them again they live only
+	 * here: a crash in that window drops them.
+	 */
+	async steer(id: number, submissionId: number): Promise<void> {
+		const conversation = await this.#conversation(id);
+		const view = await conversation.viewState(context);
+		const docs = view.value.docs;
+		view.dispose();
+		const inputs = ((docs["pi.inbox"] as InboxState | undefined)?.items ?? []).filter((item) => item.mode !== "write");
+		const target = inputs.find((item) => item.id === submissionId);
+		if (target === undefined || !(await this.withdraw(id, submissionId))) return;
+		const live = docs["pi.live"] as { run?: unknown; tools?: { status: string }[] } | undefined;
+		// The entry keeps where a message came from (Siri, a widget, a notification reply).
+		const submit = ({ content, entry }: (typeof inputs)[number], whenBusy?: "steer" | "followUp") =>
+			conversation.submit(
+				{ type: "input", content: content as never, whenBusy, requestId: crypto.randomUUID(), ...(entry === undefined ? {} : { entry: entry as never }) },
+				context,
+			);
+		if (live?.run === undefined || live.tools?.some((tool) => tool.status !== "done")) {
+			await submit(target, "steer");
+			return;
+		}
+		const rest: typeof inputs = [];
+		for (const item of inputs) {
+			if (item !== target && (await this.withdraw(id, item.id))) rest.push(item);
+		}
+		await conversation.abort(context);
+		await submit(target);
+		for (const item of rest) await submit(item, item.mode);
 	}
 
 	/** A new conversation that sees `id`'s transcript through `entryId` and continues on its own. */
