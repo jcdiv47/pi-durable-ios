@@ -125,4 +125,38 @@ struct ValidatorTests {
         #expect(!small.contains("- Custom"))
         #expect(!small.contains("ActionRow"))
     }
+
+    @Test("A button does exactly one thing; set needs a value")
+    func actions() {
+        let spec: JSONValue = ["families": ["systemMedium"], "slots": [["c": "ActionRow", "actions": [
+            ["title": "Both", "url": "https://example.com", "prompt": "hi"],
+            ["title": "None"],
+            ["title": "Set", "set": "done"],
+            ["title": "Bad key", "set": "a-b", "value": 1],
+        ]]]]
+        let errors = validator.validate(spec).errors.map(\.path)
+        // Four buttons is also one too many.
+        #expect(errors == ["/slots/0/actions", "/slots/0/actions/0", "/slots/0/actions/1", "/slots/0/actions/2/value", "/slots/0/actions/3/set"])
+    }
+
+    @Test("Action IDs resolve to the published spec's buttons and $doc checklist rows")
+    func actionIds() {
+        let spec = SurfaceSpec(["families": ["systemLarge"], "slots": [
+            ["c": "Checklist", "items": "$doc.todo"],
+            ["c": "ActionRow", "actions": [
+                ["title": "Link", "url": "https://example.com"],
+                ["title": "Ask", "prompt": "Plan my day"],
+                ["title": "Done", "set": "walked", "value": true],
+            ]],
+            ["c": "Checklist", "items": "$reminders.open"],
+        ]])
+        #expect(spec.action("t0.2") == .toggle(key: "todo", index: 2))
+        #expect(spec.action("a1.0") == nil, "a link opens in place; it is not an action")
+        #expect(spec.action("a1.1") == .prompt(title: "Ask", prompt: "Plan my day"))
+        #expect(spec.action("a1.2") == .set(key: "walked", value: true))
+        #expect(spec.action("t2.0") == nil, "reminder rows are read-only")
+        #expect(spec.action("a5.0") == nil)
+        #expect(spec.action("x") == nil)
+        #expect(SurfaceAction.toggle(key: "todo", index: 2).json == ["kind": "toggle", "key": "todo", "index": 2])
+    }
 }

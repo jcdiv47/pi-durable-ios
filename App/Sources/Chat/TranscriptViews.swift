@@ -11,14 +11,19 @@ struct TranscriptItemView: View {
     var body: some View {
         switch item.kind {
         case .user:
-            HStack {
-                Spacer(minLength: 48)
-                Text(item.text ?? "")
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 9)
-                    .background(Color.accentColor, in: .rect(cornerRadius: 18))
-                    .foregroundStyle(.white)
-                    .textSelection(.enabled)
+            VStack(alignment: .trailing, spacing: 3) {
+                if let origin = item.origin {
+                    Label(origin, systemImage: originSymbol(origin)).font(.caption2).foregroundStyle(.secondary)
+                }
+                HStack {
+                    Spacer(minLength: 48)
+                    Text(item.text ?? "")
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 9)
+                        .background(item.origin == nil ? Color.accentColor : Color.indigo, in: .rect(cornerRadius: 18))
+                        .foregroundStyle(.white)
+                        .textSelection(.enabled)
+                }
             }
         case .assistant:
             AssistantView(
@@ -52,6 +57,13 @@ struct TranscriptItemView: View {
                 .frame(maxWidth: .infinity)
         }
     }
+}
+
+private func originSymbol(_ origin: String) -> String {
+    if origin.hasPrefix("Widget") { return "square.grid.2x2" }
+    if origin.hasPrefix("Scheduled") || origin.hasPrefix("Run now") { return "clock.arrow.circlepath" }
+    if origin.hasPrefix("Notification") { return "bell" }
+    return "waveform"
 }
 
 /// The streamed partial answer and running tools of the current run.

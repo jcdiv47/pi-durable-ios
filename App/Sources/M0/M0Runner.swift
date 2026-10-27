@@ -181,10 +181,10 @@ enum M0Runner {
                 result[name] = String(describing: error)
             }
         }
-        submit("appRefresh", BGAppRefreshTaskRequest(identifier: BackgroundIdentifiers.refresh))
-        submit("processing", BGProcessingTaskRequest(identifier: BackgroundIdentifiers.processing))
+        submit("appRefresh", BGAppRefreshTaskRequest(identifier: BackgroundWork.refresh))
+        submit("processing", BGProcessingTaskRequest(identifier: BackgroundWork.processing))
         // iOS 26 continued processing: registered on demand, runs right away with system UI.
-        let identifier = BackgroundIdentifiers.continuedPrefix + "m0"
+        let identifier = BackgroundWork.runPrefix + "m0"
         let registered = BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: nil) { task in
             guard let task = task as? BGContinuedProcessingTask else { return task.setTaskCompleted(success: false) }
             task.progress.totalUnitCount = 1
@@ -335,11 +335,6 @@ enum M0Runner {
             return (ContinuousClock.now - start).milliseconds
         }
     }
-}
-
-extension BackgroundIdentifiers {
-    /// `BGTaskSchedulerPermittedIdentifiers` lists this prefix with a `*` wildcard.
-    static let continuedPrefix = "dev.jcdiv47.pidurable.run."
 }
 
 /// Counts tool markers emitted by `js/src/killtest.ts`.

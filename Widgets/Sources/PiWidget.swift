@@ -124,11 +124,25 @@ struct PiWidgetView: View {
         let family = SurfaceFamily(widgetFamily)
         if let surface = entry.surface, let family, surface.parsed.families.contains(family) {
             SurfaceView(spec: surface.parsed, family: family, data: entry.data, tinted: renderingMode != .fullColor, inWidget: true)
+                .environment(\.surfaceActions, entry.sample ? nil : actions(surface))
                 .widgetURL(tapURL(surface))
         } else if let surface = entry.surface {
             message("\(surface.parsed.title) has no \(family?.displayName ?? "layout for this size"). Ask Pi to add it, or choose another surface.")
         } else {
             message("Ask Pi to design a widget, then choose it here.")
+        }
+    }
+
+    /// Buttons and checklist rows run `RunWidgetActionIntent` in the app; the entry date makes a repeated delivery
+    /// of the same tap one request.
+    private func actions(_ surface: PublishedSurface) -> SurfaceActionHandler {
+        let publishedId = surface.publishedId
+        let renderedAt = entry.date
+        return SurfaceActionHandler { actionId, label in
+            AnyView(
+                Button(intent: RunWidgetActionIntent(publishedId: publishedId, actionId: actionId, renderedAt: renderedAt)) { label }
+                    .buttonStyle(.plain)
+            )
         }
     }
 

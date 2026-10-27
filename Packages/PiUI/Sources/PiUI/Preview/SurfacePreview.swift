@@ -45,6 +45,7 @@ public struct FramedSurface: View {
             }
         }
         .environment(\.colorScheme, appearance == .light && !tinted ? .light : .dark)
+        .environment(\.surfaceIsStill, true)
     }
 
     private var background: AnyShapeStyle {
@@ -78,6 +79,7 @@ public enum SurfacePreview {
         let width = size.width - 2 * inset
         let available = size.height - 2 * inset
         let natural = SurfaceView(spec: spec, family: family, data: data, tinted: family.isAccessory)
+            .environment(\.surfaceIsStill, true)
             .frame(width: width)
             .fixedSize(horizontal: false, vertical: true)
         let renderer = ImageRenderer(content: natural)

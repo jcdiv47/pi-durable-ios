@@ -10,8 +10,13 @@ decisions that change the spec go in `docs/adr/`.
 - `project.yml`: XcodeGen spec (PiApp + PiWidgets). `PiDurable.xcodeproj`, `Info.plist` and
   `.entitlements` files are generated and git-ignored; edit `project.yml` instead.
 - `App/`, `Widgets/`: app and WidgetKit extension.
-- `App/Sources/Chat/`: the chat app (`ChatStore` owns the Harness; conversation list, transcript,
-  approval sheet, settings, diagnostics). `App/Sources/M0/`: the headless check modes.
+- `App/Sources/Chat/`: the chat app (`ChatStore.shared` owns the Harness; conversation list, transcript,
+  approval sheet, settings, diagnostics, scheduled tasks). `App/Sources/M0/`: the headless check modes.
+- `App/Sources/System/`: M3's system integration: App Intents, entities, Siri phrases and snippets
+  (`PiAppIntents`), BackgroundTasks from `onWake` (`BackgroundWork`), notifications with actions (`Notifications`),
+  the run Live Activity (`RunActivities`).
+- `Shared/Sources/`: compiled into the app and the widget: the `LiveActivityIntent`s behind widget and Live Activity
+  buttons, which iOS performs in the app's process.
 - `Packages/PiRuntime`: JSContext host, polyfill natives, the sqlite3 facade, the URLSession fetch
   bridge, the Keychain key source and the async host-call bridge (`JSRuntime.Options.hostCall`).
 - `Packages/PiAppleTools`: EventKit and HealthKit handlers behind the JS Apple tools
@@ -20,12 +25,14 @@ decisions that change the spec go in `docs/adr/`.
   native data sources (`NativeData`), the App Group files (`SurfaceStore`) and `SurfaceHost`, which answers the
   JS UI tools. Shared by the app and the widget. The catalog lives only here ([ADR 0001](docs/adr/0001-surface-validation-in-swift.md)).
 - `Widgets/`: the configurable Pi Widget (`PiWidget.swift`): shows a published surface, resolves native data on
-  its timeline.
+  its timeline, runs its buttons through `RunWidgetActionIntent`. The run Live Activity (`PiRunLiveActivity.swift`).
 - `js/`: TypeScript run inside JSC. `bun build.ts` bundles `src/runtime.ts` (the app's harness
   bootstrap) and `src/conformance.ts` (test suites) into `App/Resources/` and the PiRuntime test
   resources. `src/app/` is the chat API Swift calls (`PiRuntime.*`): conversations, display frames,
-  providers, the Apple tool stubs, the UI tools (`surfaces.ts`: specs in Pi documents, JSON Patch), the approval
-  gate and the offline `scripted/assistant` model.
+  providers, the Apple tool stubs, the UI tools (`surfaces.ts`: specs in Pi documents, JSON Patch), scheduled tasks
+  and `notify_schedule` (`schedule.ts`), the approval gate and the offline `scripted/assistant` model. `chat.ts`
+  also has the entry points outside the chat (`ask` from intents and notification replies, `widgetAction`,
+  `runSchedule`).
   pi-durable, pi-ai and chord stay pinned to the **same exact version** (1.4.0).
 - `scripts/`: simulator and device drivers.
 
@@ -62,6 +69,10 @@ build and install. `PI_CONFIGURATION=Release` builds Release.
 
 The app's modes are launch arguments (`-PiMode <mode>`); see `LaunchMode` in `App/Sources/PiApp.swift`.
 
+The simulator has no BGTaskScheduler (submits fail with code 1, logged in Diagnostics); background launches can
+only be checked on the iPhone. App Shortcuts run from Spotlight on the simulator (Home Screen › Search › "Ask Pi");
+there is no Shortcuts app. A notification's actions: swipe it left in Notification Center, tap View.
+
 Driving the chat UI on the simulator: Xcode 27 beta ships no Simulator.app and XCTest-based tap
 tools fail, but `axe` (Homebrew) works: `axe describe-ui`, `axe tap -x … -y … --tap-style physical`
 (the default tap style does not reach SwiftUI buttons), and `axe type` in chunks of a few characters
@@ -81,6 +92,11 @@ intended rendering change, re-record with `PI_RECORD_SNAPSHOTS=1 swift test` and
   handler in `AppleToolHost`. Reads are `replay: "safe"`; a write is safe only with an idempotency
   key (see `calendar_create_event`), and gets an approval policy in `defaultPolicies` if the user
   should see it first. Ask for OS permission inside the handler, on first use.
+- Every entry point outside the chat (intent, widget or Live Activity button, notification action, schedule) carries
+  a request ID derived from its invocation and payload, never a fresh UUID, so a repeated delivery is one request.
+  Notification identifiers are idempotency keys too.
+- Entry points that may run while the app is away call `ChatStore.ready()` (Pi may not be open yet) and wait for
+  idle before returning, or iOS suspends the app mid-run.
 - The `SqliteDatabase` facade must keep passing both Pi's storage conformance suite and
   `js/test/facade-cases.ts` (Pi's suite does not exercise rollback).
 - A new component, prop, family rule or data source goes in PiUI's catalog (`Schema/`), with a fixture slot in

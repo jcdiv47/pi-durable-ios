@@ -10,6 +10,7 @@ final class ChatLog: @unchecked Sendable {
     private var pending: [[String: Any]] = []
     private var calls: [(String, [String: Any])] = []
     private var conversationTitles: [String] = []
+    private var wakeEvents: [(active: Bool, at: Double?)] = []
 
     func handle(_ json: String) {
         guard let event = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] else { return }
@@ -25,6 +26,9 @@ final class ChatLog: @unchecked Sendable {
                 pending = event["pending"] as! [[String: Any]]
             case "conversations":
                 conversationTitles = (event["items"] as! [[String: Any]]).map { $0["title"] as! String }
+            case "wake":
+                let wake = event["wake"] as! [String: Any]
+                wakeEvents.append((wake["active"] as! Bool, wake["at"] as? Double))
             default:
                 break
             }
@@ -41,6 +45,7 @@ final class ChatLog: @unchecked Sendable {
     func liveText(_ id: Int) -> String { lock.withLock { (live[id]?["generation"] as? [String: Any])?["text"] as? String ?? "" } }
     var approvals: [[String: Any]] { lock.withLock { pending } }
     var titles: [String] { lock.withLock { conversationTitles } }
+    var wakes: [(active: Bool, at: Double?)] { lock.withLock { wakeEvents } }
     func calls(_ name: String) -> Int { lock.withLock { calls.filter { $0.0 == name }.count } }
 
     func last(_ id: Int, kind: String) -> [String: Any]? { items(id).last { $0["kind"] as? String == kind } }

@@ -4,9 +4,19 @@
 
 import type { AttachedReplicatedState } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { type Conversation, type ConversationView, defineDoc, type Extension, type Harness } from "@earendil-works/pi-durable";
+import type { JsonValue } from "@earendil-works/chord";
+import {
+	AssistantEntry,
+	type Conversation,
+	type ConversationView,
+	defineDoc,
+	type Extension,
+	type Harness,
+	type Submission,
+} from "@earendil-works/pi-durable";
 import type { Approvals, Decision, ToolPolicy } from "./approvals.ts";
-import { FrameBuilder } from "./display.ts";
+import { type DisplaySurface, FrameBuilder } from "./display.ts";
+import { answerText, OriginInput, SchedulesDoc } from "./schedule.ts";
 import { PublishedDoc, SurfacesDoc, ValuesDoc } from "./surfaces.ts";
 import { hostCall } from "../host/hostcall.ts";
 
@@ -29,6 +39,55 @@ export const ConversationIndex = defineDoc<{ items: ConversationMeta[] }>({
 	initial: () => ({ items: [] }),
 	checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 50,
 });
+
+/**
+ * Requests from outside the chat (Siri, Shortcuts, widget buttons, notification actions), by request ID: the
+ * conversation a request started, so a retried intent finds it, and whether a direct action already ran. The
+ * newest 500 are kept.
+ */
+export const RequestsDoc = defineDoc<{ items: Record<string, { conversationId?: number; at: number }> }>({
+	kind: "app.requests",
+	version: 1,
+	scope: "session",
+	initial: () => ({ items: {} }),
+	checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 50,
+});
+
+const keptRequests = 500;
+
+function trimRequests(items: Record<string, { at: number }>): void {
+	const keys = Object.keys(items);
+	if (keys.length <= keptRequests) return;
+	keys.sort((a, b) => items[a]!.at - items[b]!.at);
+	for (const key of keys.slice(0, keys.length - keptRequests)) delete items[key];
+}
+
+/** An input from outside the chat: `origin` labels it in the transcript ("Siri", "Widget: Morning"). */
+export type OutsideInput = {
+	text: string;
+	requestId: string;
+	origin: string;
+	/** Omitted: a new conversation, titled from the text. */
+	conversationId?: number;
+	/** How long to wait for the answer; 0 returns once the input is admitted. */
+	waitMs: number;
+	model: { provider: string; modelId: string };
+};
+
+export type OutsideAnswer = {
+	conversationId: number;
+	/** `running` when the answer did not come within `waitMs`. */
+	status: "done" | "running" | "unanswered";
+	text?: string;
+	/** The newest card the run made or changed, for a Siri snippet. */
+	surface?: DisplaySurface;
+};
+
+/** A widget button's effect, resolved by PiUI from the published spec (`SurfaceAction` in Swift). */
+export type WidgetAction =
+	| { kind: "prompt"; prompt: string; title: string }
+	| { kind: "set"; key: string; value: JsonValue }
+	| { kind: "toggle"; key: string; index: number };
 
 const untitled = "New conversation";
 
@@ -56,7 +115,8 @@ export class Chat {
 		this.emit({ type: "conversations", items: await this.conversations() });
 	}
 
-	async create(model: { provider: string; modelId: string }): Promise<ConversationMeta> {
+	/** `requestId`: an outside request that starts this conversation, recorded in the same commit. */
+	async create(model: { provider: string; modelId: string }, requestId?: string): Promise<ConversationMeta> {
 		const now = Date.now();
 		let meta: ConversationMeta | undefined;
 		await this.harness.createConversation(
@@ -66,6 +126,11 @@ export class Chat {
 				init: async (tx, id) => {
 					meta = { id, title: untitled, createdAt: now, updatedAt: now };
 					(await tx.doc(ConversationIndex)).items.push(meta);
+					if (requestId !== undefined) {
+						const requests = await tx.doc(RequestsDoc);
+						requests.items[requestId] = { conversationId: id, at: now };
+						trimRequests(requests.items);
+					}
 				},
 			},
 			context,
@@ -111,9 +176,22 @@ export class Chat {
 	}
 
 	/** Admits a user message; while a run is going it queues as a follow-up. Never waits for the answer. */
-	async send(id: number, text: string, requestId: string): Promise<{ submissionId: number }> {
+	async send(id: number, text: string, requestId: string, origin?: string): Promise<{ submissionId: number }> {
+		const submission = await this.#submit(id, text, requestId, origin);
+		return { submissionId: submission.id };
+	}
+
+	async #submit(id: number, text: string, requestId: string, origin?: string): Promise<Submission> {
 		const conversation = await this.#conversation(id);
-		const submission = await conversation.submit({ type: "input", content: text, requestId }, context);
+		const submission = await conversation.submit(
+			{
+				type: "input",
+				content: text,
+				requestId,
+				...(origin === undefined ? {} : { entry: { kind: OriginInput, data: { origin } } }),
+			},
+			context,
+		);
 		const now = Date.now();
 		await this.harness.commit(async (tx) => {
 			const meta = (await tx.doc(ConversationIndex)).items.find((item) => item.id === id);
@@ -122,7 +200,103 @@ export class Chat {
 			if (meta.title === untitled) meta.title = titleFrom(text);
 		}, context);
 		await this.#changed();
-		return { submissionId: submission.id };
+		return submission;
+	}
+
+	/**
+	 * Siri, Shortcuts, widget buttons and notification replies: submits `text` and waits up to `waitMs` for the
+	 * answer. Without a conversation it starts one; the request ID maps to it, so a retried intent finds the same
+	 * conversation and the same submission instead of asking twice.
+	 */
+	async ask(input: OutsideInput): Promise<OutsideAnswer> {
+		let id = input.conversationId;
+		if (id === undefined) {
+			id = (await this.harness.snapshot(RequestsDoc, context))?.items[input.requestId]?.conversationId;
+			id ??= (await this.create(input.model, input.requestId)).id;
+		}
+		const startedAt = Date.now();
+		const submission = await this.#submit(id, input.text, input.requestId, input.origin);
+		if (input.waitMs <= 0) return { conversationId: id, status: "running" };
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const timeout = new Promise<undefined>((resolve) => {
+			timer = setTimeout(() => resolve(undefined), input.waitMs);
+		});
+		const settled = await Promise.race([submission.wait(context), timeout]);
+		clearTimeout(timer);
+		if (settled === undefined) return { conversationId: id, status: "running" };
+		if (settled.status !== "done" || settled.type !== "input") return { conversationId: id, status: "unanswered" };
+		const conversation = await this.#conversation(id);
+		const answer = await conversation.commit((tx) => tx.entry(AssistantEntry, settled.answer), context);
+		const card = (await this.surfaces(id)).find((item) => item.updatedAt >= startedAt && item.spec.surface === "card");
+		return {
+			conversationId: id,
+			status: "done",
+			text: answerText(answer),
+			surface: card === undefined ? undefined : { conversationId: id, id: card.id, version: card.version, spec: card.spec },
+		};
+	}
+
+	/** A widget button (`RunWidgetAction`): a prompt to the surface's conversation, or a direct `$doc` change. */
+	async widgetAction(publishedId: string, action: WidgetAction, requestId: string, model: OutsideInput["model"]): Promise<OutsideAnswer | { done: boolean }> {
+		const entry = ((await this.harness.snapshot(PublishedDoc, context))?.items ?? []).find((item) => item.publishedId === publishedId);
+		if (entry === undefined) throw new Error(`No published surface ${publishedId}`);
+		if (action.kind === "prompt") {
+			return this.ask({ text: action.prompt, requestId, origin: `Widget: ${entry.title} › ${action.title}`, conversationId: entry.conversationId, waitMs: 0, model });
+		}
+		const values = await this.harness.commit(async (tx) => {
+			const requests = await tx.doc(RequestsDoc);
+			// A repeated request (a double tap on the same widget timeline entry) changes nothing again.
+			if (requests.items[requestId] !== undefined) return undefined;
+			requests.items[requestId] = { at: Date.now() };
+			trimRequests(requests.items);
+			const doc = await tx.doc(ValuesDoc);
+			if (action.kind === "set") {
+				doc.values[action.key] = action.value;
+			} else {
+				const list = doc.values[action.key];
+				const item = Array.isArray(list) ? list[action.index] : undefined;
+				if (item !== null && typeof item === "object" && !Array.isArray(item)) item.done = item.done !== true;
+			}
+			return structuredClone(doc.values) as Record<string, JsonValue>;
+		}, context);
+		if (values !== undefined) await hostCall("ui.values", { values });
+		return { done: values !== undefined };
+	}
+
+	/** Every scheduled task, soonest first. */
+	async schedules() {
+		const items = (await this.harness.snapshot(SchedulesDoc, context))?.items ?? [];
+		return [...items].sort((a, b) => (a.nextAt ?? Infinity) - (b.nextAt ?? Infinity));
+	}
+
+	/** `RunPiTask`: one run of a schedule now, in its conversation; its timetable stays as it is. */
+	async runSchedule(name: string, requestId: string, waitMs: number, model: OutsideInput["model"]): Promise<OutsideAnswer> {
+		const matches = (await this.schedules()).filter((item) => item.name.toLowerCase() === name.trim().toLowerCase());
+		const entry = matches.sort((a, b) => b.createdAt - a.createdAt)[0];
+		if (entry === undefined) throw new Error(`No scheduled task named ${name}`);
+		return this.ask({
+			text: `[Scheduled task "${entry.name}"] ${entry.prompt}`,
+			requestId,
+			origin: `Run now: ${entry.name}`,
+			conversationId: entry.conversationId,
+			waitMs,
+			model,
+		});
+	}
+
+	async cancelSchedule(taskId: number): Promise<void> {
+		await this.harness.abortTask(taskId as never, context);
+	}
+
+	/** Conversations created before an extension existed get it added, so their agent sees its tools. */
+	async upgrade(): Promise<void> {
+		for (const meta of await this.conversations()) {
+			const conversation = await this.harness.conversation(meta.id as never, context);
+			if (conversation === undefined) continue;
+			const selected = new Set((await conversation.agent(context)).extensions.map((extension) => extension.name));
+			const missing = this.extensions.filter((extension) => !selected.has(extension.name));
+			if (missing.length > 0) await conversation.configure({ extensions: { add: missing } }, context);
+		}
 	}
 
 	/** Stops the run and withdraws queued messages; resolves once the conversation is idle. */
@@ -168,6 +342,9 @@ export class Chat {
 	async remove(id: number): Promise<void> {
 		this.unwatch(id);
 		await this.abort(id);
+		for (const schedule of await this.schedules()) {
+			if (schedule.conversationId === id) await this.cancelSchedule(schedule.taskId);
+		}
 		await this.harness.commit(async (tx) => {
 			const index = await tx.doc(ConversationIndex);
 			const at = index.items.findIndex((item) => item.id === id);

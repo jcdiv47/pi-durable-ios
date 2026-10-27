@@ -40,8 +40,8 @@
     "Header": { "c": "Header", "title": "Morning", "subtitle": "Tuesday", "symbol": "sun.max.fill", "tint": "orange" },
     "Badge": { "c": "Badge", "text": "On track", "tone": "positive", "symbol": "checkmark.seal.fill" },
     "ActionRow": { "c": "ActionRow", "actions": [
-      { "title": "Plan day", "url": "pidurable://ask", "symbol": "calendar" },
-      { "title": "Log walk", "url": "pidurable://ask", "symbol": "figure.walk" }
+      { "title": "Plan day", "prompt": "Plan my day around my calendar.", "symbol": "calendar" },
+      { "title": "Log walk", "set": "walked", "value": true, "symbol": "figure.walk" }
     ] },
     "ImageCard": { "c": "ImageCard", "symbol": "mountain.2.fill", "caption": "Hike on Saturday", "tint": "teal" },
     "Custom": { "c": "Custom", "tree": { "t": "HStack", "spacing": 8, "children": [

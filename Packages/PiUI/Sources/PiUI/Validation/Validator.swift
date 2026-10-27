@@ -138,7 +138,7 @@ public struct SurfaceValidator: Sendable {
                 error("/refresh/native", "native is a duration like \"15m\" or \"2h\" (at least 5 minutes)")
             }
             if fields["agent"] != nil {
-                warn("/refresh/agent", "Scheduled agent refreshes are not available yet; update values with set_value instead")
+                warn("/refresh/agent", "refresh.agent is not read; to refresh $doc values on a timetable, call schedule_task with a prompt that calls set_value")
             }
         }
 
@@ -171,7 +171,24 @@ public struct SurfaceValidator: Sendable {
                 checkValue(props[key]!, def, path: "\(path)/\(key)")
             }
             if name == "Ring", let goal = props["goal"]?.number, goal <= 0 { error("\(path)/goal", "goal must be greater than 0") }
+            if name == "ActionRow" { checkActions(props["actions"]?.array ?? [], path: "\(path)/actions") }
             if name == "Custom", let tree = props["tree"] { report.customTrees.append(tree.jsonText) }
+        }
+
+        /// Each button does exactly one thing.
+        mutating func checkActions(_ actions: [JSONValue], path: String) {
+            for (index, action) in actions.enumerated() {
+                let effects = ["url", "prompt", "set"].filter { action[$0] != nil }
+                if effects.count != 1 {
+                    error("\(path)/\(index)", "A button needs exactly one of url, prompt or set, got \(effects.isEmpty ? "none" : effects.joined(separator: ", "))")
+                }
+                if let key = action["set"]?.string {
+                    if key.range(of: "^[A-Za-z0-9_]+$", options: .regularExpression) == nil { error("\(path)/\(index)/set", "set is a $doc key: letters, digits and _") }
+                    if action["value"] == nil { error("\(path)/\(index)/value", "A set button needs the value to store") }
+                } else if action["value"] != nil {
+                    warn("\(path)/\(index)/value", "value is only used by set buttons")
+                }
+            }
         }
 
         mutating func checkValue(_ value: JSONValue, _ def: PropDef, path: String) {
@@ -267,6 +284,8 @@ public struct SurfaceValidator: Sendable {
                 }
             case .node:
                 _ = checkNode(value, path: path, depth: 0)
+            case .json:
+                break
             }
         }
 

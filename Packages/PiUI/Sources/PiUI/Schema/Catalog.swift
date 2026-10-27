@@ -22,6 +22,8 @@ public indirect enum PropType: Sendable, Hashable {
     case list([PropDef], min: Int, max: Int)
     /// A Layer 0 primitive tree (`Custom` only).
     case node
+    /// Any JSON value.
+    case json
 
     var summary: String {
         switch self {
@@ -39,6 +41,7 @@ public indirect enum PropType: Sendable, Hashable {
         case .stringList: "array of strings"
         case let .list(fields, min, max): "\(min)–\(max) × {\(fields.map { $0.required ? $0.name : "\($0.name)?" }.joined(separator: ", "))}"
         case .node: "Layer 0 node"
+        case .json: "any JSON value"
         }
     }
 }
@@ -136,8 +139,8 @@ public enum Catalog {
         ),
         ComponentDef(
             name: "Checklist",
-            purpose: "Reminders or to-dos with check marks (toggling them comes with M3).",
-            props: [PropDef("items", .items, required: true, "Usually $reminders.open"), PropDef("title", .string), PropDef("maxItems", .number, bindable: false), tint],
+            purpose: "Reminders or to-dos with check marks. Bound to a $doc list, each row is a toggle in the widget that flips the item's done.",
+            props: [PropDef("items", .items, required: true, "Usually $reminders.open, or a $doc list you keep with set_value"), PropDef("title", .string), PropDef("maxItems", .number, bindable: false), tint],
             families: system.union([.accessoryRectangular]),
             textBudget: [:]
         ),
@@ -184,9 +187,13 @@ public enum Catalog {
         ),
         ComponentDef(
             name: "ActionRow",
-            purpose: "One to three buttons that open a link (in-widget actions come with M3).",
+            purpose: "One to three buttons. Each does one thing: `url` opens a link; `prompt` sends you that prompt in this conversation " +
+                "(you run in the background); `set` stores `value` under that $doc key at once, with no model run.",
             props: [
-                PropDef("actions", .list([PropDef("title", .string, required: true), PropDef("url", .url, required: true, bindable: false), PropDef("symbol", .symbol, bindable: false)], min: 1, max: 3), required: true, bindable: false),
+                PropDef("actions", .list([
+                    PropDef("title", .string, required: true), PropDef("url", .url, bindable: false), PropDef("prompt", .string, bindable: false),
+                    PropDef("set", .string, bindable: false, "A $doc key"), PropDef("value", .json, bindable: false), PropDef("symbol", .symbol, bindable: false),
+                ], min: 1, max: 3), required: true, bindable: false),
                 tint,
             ],
             families: [.systemMedium, .systemLarge, .card],

@@ -4,13 +4,23 @@ import os
 import PiAppleTools
 import PiRuntime
 import PiUI
+import SwiftUI
 import UIKit
 
 /// The chat app's state and the only owner of the Harness in chat mode. JS events arrive on the main
-/// actor as JSON; calls into JS go through `PiHarness.call`.
+/// actor as JSON; calls into JS go through `PiHarness.call`. One per process (`shared`): the scene, App Intents,
+/// notification actions and background tasks all reach Pi through it, and whichever comes first opens it.
 @MainActor
 @Observable
 final class ChatStore {
+    static let shared = ChatStore()
+
+    /// The store once Pi is open, for entry points that may have launched the app in the background.
+    static func ready() async -> ChatStore {
+        await shared.ensureStarted()
+        return shared
+    }
+
     enum Phase: Equatable {
         case starting
         case ready
@@ -33,6 +43,9 @@ final class ChatStore {
     private(set) var keyedProviders: Set<String> = []
     /// Surfaces on the Home Screen and Lock Screen.
     private(set) var published: [PublishedEntry] = []
+    private(set) var schedules: [ScheduleEntry] = []
+    /// A screen to show, from a notification, a deep link or an intent; the root view takes it.
+    var pendingRoute: Route?
     /// Native and `$doc` values for drawing surfaces in the app (chat cards, the Widgets screen).
     private(set) var surfaceData = SurfaceData()
     let diagnostics = DiagnosticsLog()
@@ -63,6 +76,10 @@ final class ChatStore {
     private let settings = UserDefaults.standard
     private var watched: Set<Int> = []
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+    private var startTask: Task<Void, Never>?
+    @ObservationIgnored private(set) var background: BackgroundWork!
+    @ObservationIgnored private(set) var notifications: Notifications!
+    @ObservationIgnored private(set) var activities: RunActivities!
     nonisolated static let logger = Logger(subsystem: "dev.pi.durable", category: "chat")
 
     init() {
@@ -81,6 +98,10 @@ final class ChatStore {
                 DispatchQueue.main.async { MainActor.assumeIsolated { self?.diagnostics.record(kind == "invalid" ? "warn" : "info", "ui.\(kind)", detail) } }
             }
         )
+        background = BackgroundWork(store: self)
+        notifications = Notifications(store: self)
+        activities = RunActivities(store: self)
+        SharedIntents.perform = { request in await ChatStore.ready().perform(request) }
     }
 
     var busyConversations: [Int] { states.values.filter(\.live.busy).map(\.id) }
@@ -94,13 +115,21 @@ final class ChatStore {
 
     // MARK: Start
 
-    func start() async {
+    /// Opens Pi once per process, whoever asks first; later callers wait for the same start.
+    func ensureStarted() async {
+        guard LaunchMode.current == .chat else { return }
+        if startTask == nil { startTask = Task { await start() } }
+        await startTask?.value
+    }
+
+    private func start() async {
         importKeysIfPresent()
         keyedProviders = Set(Self.providers.map(\.id).filter { keys.hasKey(for: $0) })
         do {
             let directory = try SharedContainer.directory("pi")
             let tools = appleTools
             let surfaces = surfaceHost!
+            let notifications = notifications!
             let harness = try await PiHarness.load(bundle: AppModel.bundleURL, options: .init(
                 keys: keys,
                 onEvent: { [weak self] json in
@@ -108,7 +137,12 @@ final class ChatStore {
                 },
                 onLog: AppModel.forwardLog,
                 hostCall: { name, json in
-                    SurfaceHost.handlers.contains(name) ? try await surfaces.handle(name, json) : try await tools.handle(name, json)
+                    if SurfaceHost.handlers.contains(name) { return try await surfaces.handle(name, json) }
+                    if name == "notify.post" || name == "notify.schedule" {
+                        let args = try JSONDecoder().decode(Notifications.NotifyArguments.self, from: Data(json.utf8))
+                        return try await notifications.post(args)
+                    }
+                    return try await tools.handle(name, json)
                 }
             ))
             _ = try await harness.open(.init(
@@ -126,13 +160,16 @@ final class ChatStore {
             await refreshTasks()
             approvals = try await harness.call("PiRuntime.approvals")
             await syncSurfaces()
+            await refreshSchedules()
             phase = .ready
             diagnostics.record("info", "app", "Opened Pi storage; \(conversations.count) conversations")
             // Conversations that were busy when the process died resume on open; watch them so their
             // progress shows in the list.
-            for task in tasks where task.conversationId != nil {
-                watch(task.conversationId!)
-            }
+            let resuming = Set(tasks.compactMap(\.conversationId))
+            for id in resuming { watch(id) }
+            activities.adopt(busy: resuming)
+            // Widget and Live Activity taps that could not reach the app while it was not running.
+            for request in PendingIntents.drain() { await perform(request) }
         } catch {
             phase = .failed(String(describing: error))
             diagnostics.record("error", "app", "Open failed: \(error)")
@@ -151,14 +188,21 @@ final class ChatStore {
                 diagnostics.record("error", "app", "Undecodable frame: \(json.prefix(300))")
                 return
             }
-            state(frame.conversationId).apply(frame)
+            let conversation = state(frame.conversationId)
+            let wasBusy = conversation.loaded && conversation.live.busy
+            conversation.apply(frame)
             updateBackgroundTime()
+            activities.update(conversation, approval: approvals.first { $0.conversationId == conversation.id })
+            background.progress(busy: busyConversations.count, status: activities.statusText(conversation.id))
+            if wasBusy, !conversation.live.busy { runEnded(conversation) }
         case "conversations":
             if let event = try? decoder.decode(ConversationsEvent.self, from: data) { conversations = event.items }
         case "approvals":
             if let event = try? decoder.decode(ApprovalsEvent.self, from: data) {
+                let previous = Set(approvals.map(\.id))
                 approvals = event.pending
                 if !event.pending.isEmpty { diagnostics.record("info", "approval", "Waiting for approval: \(event.pending.map(\.tool).joined(separator: ", "))") }
+                approvalsChanged(new: event.pending.filter { !previous.contains($0.id) })
             }
         case "report":
             let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
@@ -166,8 +210,10 @@ final class ChatStore {
             diagnostics.record("warn", "report", "\(object?["error"] as? String ?? "?") \(info)")
             Task { await refreshTasks() }
         case "wake":
-            // Active/idle flips are constant; a sleep deadline is what M3's BackgroundTasks will arm from.
-            if json.contains("\"at\"") { diagnostics.record("info", "wake", String(json.prefix(300))) }
+            guard let wake = try? decoder.decode(WakeEvent.self, from: data).wake else { return }
+            // Active/idle flips with every run; only sleep deadlines are worth a line.
+            if wake.at != nil, wake.at != background.wake.at { diagnostics.record("info", "wake", "Next sleep ends \(wake.date!.formatted(date: .abbreviated, time: .shortened))") }
+            background.update(wake)
         default:
             break
         }
@@ -177,6 +223,7 @@ final class ChatStore {
     private struct FrameEvent: Decodable { let frame: DisplayFrame }
     private struct ConversationsEvent: Decodable { let items: [ConversationMeta] }
     private struct ApprovalsEvent: Decodable { let pending: [ApprovalRequest] }
+    private struct WakeEvent: Decodable { let wake: BackgroundWork.Wake }
 
     // MARK: Conversations
 
@@ -207,6 +254,10 @@ final class ChatStore {
         watch(id)
         do {
             try await harness.perform("PiRuntime.send", [id, trimmed, UUID().uuidString])
+            let title = conversations.first { $0.id == id }?.title ?? "Pi"
+            activities.start(conversationId: id, title: title)
+            // The first run asks for notification permission: answers and approvals may arrive while away.
+            Task { await notifications.authorize() }
         } catch {
             report("send", error)
         }
@@ -259,12 +310,36 @@ final class ChatStore {
     // MARK: Approvals
 
     func answer(_ request: ApprovalRequest, allow: Bool) async {
+        await answerApproval(request.id, allow: allow, tool: request.tool)
+    }
+
+    /// By ID, for notification and Live Activity buttons: the request may not be waiting yet in a process the
+    /// button just launched, so JS keeps the answer for when the hook asks again.
+    func answerApproval(_ id: Int, allow: Bool, tool: String? = nil) async {
         guard let harness else { return }
         do {
-            let _: Bool = try await harness.call("PiRuntime.answerApproval", [request.id, allow ? "allow" : "deny"])
-            diagnostics.record("info", "approval", "\(allow ? "Allowed" : "Denied") \(request.tool) (task \(request.id))")
+            let waiting: Bool = try await harness.call("PiRuntime.answerApproval", [id, allow ? "allow" : "deny"])
+            diagnostics.record("info", "approval", "\(allow ? "Allowed" : "Denied") \(tool ?? "a tool") (task \(id))\(waiting ? "" : ", before it asked again")")
         } catch {
             report("approval", error)
+        }
+    }
+
+    /// New requests while the app is away become notifications with Allow and Deny; answered ones are removed.
+    private func approvalsChanged(new: [ApprovalRequest]) {
+        for request in Set(approvals.map(\.conversationId)).union(new.map(\.conversationId)) {
+            if let state = states[request] { activities.update(state, approval: approvals.first { $0.conversationId == request }) }
+        }
+        let away = UIApplication.shared.applicationState != .active
+        let pending = Set(approvals.map(\.id))
+        Task {
+            if away {
+                for request in new {
+                    let title = conversations.first { $0.id == request.conversationId }?.title ?? "Pi"
+                    await notifications.postApproval(request, conversation: title)
+                }
+            }
+            await notifications.removeApprovals(except: pending)
         }
     }
 
@@ -401,6 +476,152 @@ final class ChatStore {
         } catch {
             report("sync surfaces", error)
         }
+    }
+
+    // MARK: Entry points outside the chat
+
+    /// Siri, Shortcuts and notification replies: sends `text` (to a new conversation when `conversationId` is nil) and
+    /// waits up to `waitMs` for the answer. A run still going then notifies when it ends.
+    func askFromOutside(_ text: String, conversationId: Int?, requestId: String, origin: String, waitMs: Int = 20_000) async throws -> OutsideAnswer {
+        guard let harness else { throw PiIntentError("Pi could not open its storage.") }
+        if let conversationId { watch(conversationId) }
+        let input = OutsideInput(text: text, requestId: requestId, origin: origin, conversationId: conversationId, waitMs: waitMs, model: defaultModel)
+        let answer: OutsideAnswer = try await harness.call("PiRuntime.askFromOutside", [try harness.jsonArgument(input)])
+        watch(answer.conversationId)
+        diagnostics.record("info", "entry", "\(origin): \(answer.status) in conversation \(answer.conversationId) (\(requestId))")
+        return answer
+    }
+
+    /// Widget and Live Activity buttons (`SharedIntents`).
+    func perform(_ request: SharedIntentRequest) async {
+        guard let harness else { return }
+        switch request {
+        case let .widgetAction(publishedId, actionId, _):
+            guard let action = SurfaceStore.shared?.surface(publishedId)?.parsed.action(actionId) else {
+                return diagnostics.record("warn", "entry", "Widget action \(actionId) is not in \(publishedId) any more")
+            }
+            do {
+                let result: WidgetActionResult = try await harness.call("PiRuntime.widgetAction", [
+                    publishedId, try harness.jsonArgument(action.json), request.requestId, defaultModel.provider, defaultModel.modelId,
+                ])
+                if let conversationId = result.conversationId { watch(conversationId) }
+                diagnostics.record("info", "entry", "Widget action \(actionId) of \(publishedId) (\(request.requestId))")
+                await refreshSurfaceData(force: true)
+                if UIApplication.shared.applicationState != .active { await background.waitForIdle(timeout: .seconds(25)) }
+            } catch {
+                report("widget action", error)
+            }
+        case let .answerApproval(id, allow):
+            await answerApproval(id, allow: allow)
+            if UIApplication.shared.applicationState != .active { await background.waitForIdle(timeout: .seconds(25)) }
+        case let .stopRun(conversationId):
+            await abort(conversationId)
+        }
+    }
+
+    private struct WidgetActionResult: Decodable { let conversationId: Int? }
+
+    func notificationResponse(identifier: String, action: String, conversationId: Int?, approvalId: Int?, reply: String?) async {
+        await ensureStarted()
+        switch action {
+        case Notifications.allowAction, Notifications.denyAction:
+            guard let approvalId else { return }
+            await answerApproval(approvalId, allow: action == Notifications.allowAction)
+            await resumeWork()
+            await background.waitForIdle(timeout: .seconds(25))
+        case Notifications.replyAction:
+            guard let conversationId, let reply, !reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            _ = try? await askFromOutside(
+                reply, conversationId: conversationId, requestId: IntentRequest.id("reply", identifier, reply), origin: "Notification reply", waitMs: 25_000
+            )
+        default:
+            if let conversationId { open(.conversation(conversationId)) }
+        }
+    }
+
+    func open(_ route: Route) {
+        pendingRoute = route
+    }
+
+    /// Runs due sleeps and work a lost process left (BackgroundTasks, coming back to the foreground).
+    func resumeWork() async {
+        guard let harness else { return }
+        do {
+            let wake: BackgroundWork.Wake = try await harness.call("PiRuntime.resume")
+            background.update(wake)
+        } catch {
+            report("resume", error)
+        }
+    }
+
+    /// A watched run ended. While the app is away, its answer becomes a notification.
+    private func runEnded(_ conversation: ConversationState) {
+        guard UIApplication.shared.applicationState != .active,
+              let answer = conversation.items.last(where: { $0.kind == .assistant }), answer.stopReason != "aborted"
+        else { return }
+        let title = conversations.first { $0.id == conversation.id }?.title ?? "Pi"
+        let text = answer.stopReason == "error" ? "The run failed: \(answer.error ?? "model error")" : answer.text ?? ""
+        Task { await notifications.postAnswer(conversationId: conversation.id, entryId: answer.id, title: title, text: text) }
+    }
+
+    func scenePhaseChanged(from old: ScenePhase, to new: ScenePhase) {
+        switch new {
+        case .inactive where old == .active:
+            let titles = busyConversations.map { id in conversations.first { $0.id == id }?.title ?? "Conversation \(id)" }
+            background.continueRuns(titles: titles)
+        case .background:
+            background.enteredBackground()
+            // Requests the user left unanswered in the app follow them out as notifications (same identifiers).
+            let pending = approvals
+            Task {
+                for request in pending {
+                    await notifications.postApproval(request, conversation: conversations.first { $0.id == request.conversationId }?.title ?? "Pi")
+                }
+            }
+        case .active:
+            background.enteredForeground()
+            Task {
+                guard phase == .ready else { return }
+                await resumeWork()
+                for request in PendingIntents.drain() { await perform(request) }
+                await refreshSchedules()
+            }
+        default:
+            break
+        }
+    }
+
+    // MARK: Schedules
+
+    func refreshSchedules() async {
+        schedules = await scheduleList()
+    }
+
+    func scheduleList() async -> [ScheduleEntry] {
+        guard let harness else { return [] }
+        do { return try await harness.call("PiRuntime.schedules") } catch {
+            report("schedules", error)
+            return []
+        }
+    }
+
+    func runSchedule(_ name: String, requestId: String) async throws -> OutsideAnswer {
+        guard let harness else { throw PiIntentError("Pi could not open its storage.") }
+        let answer: OutsideAnswer = try await harness.call("PiRuntime.runSchedule", [name, requestId, 20_000, defaultModel.provider, defaultModel.modelId])
+        watch(answer.conversationId)
+        diagnostics.record("info", "entry", "Ran \(name) now (\(requestId))")
+        return answer
+    }
+
+    func cancelSchedule(_ schedule: ScheduleEntry) async {
+        guard let harness else { return }
+        do {
+            try await harness.perform("PiRuntime.cancelSchedule", [schedule.taskId])
+            diagnostics.record("info", "task", "Cancelled scheduled task \(schedule.name)")
+        } catch {
+            report("cancel schedule", error)
+        }
+        await refreshSchedules()
     }
 
     // MARK: Background time
