@@ -17,12 +17,24 @@ public final class JSRuntime: @unchecked Sendable {
         public var keys: ProviderKeySource?
         public var onEvent: (@Sendable (String) -> Void)?
         public var onLog: (@Sendable (String, String) -> Void)?
-        public init(keys: ProviderKeySource? = nil, onEvent: (@Sendable (String) -> Void)? = nil, onLog: (@Sendable (String, String) -> Void)? = nil) {
+        /// Answers `hostCall(name, json)` from JS (Apple tools and the like) with JSON text, off the JS queue.
+        public var hostCall: HostCallHandler?
+        public init(
+            keys: ProviderKeySource? = nil,
+            onEvent: (@Sendable (String) -> Void)? = nil,
+            onLog: (@Sendable (String, String) -> Void)? = nil,
+            hostCall: HostCallHandler? = nil
+        ) {
             self.keys = keys
             self.onEvent = onEvent
             self.onLog = onLog
+            self.hostCall = hostCall
         }
     }
+
+    /// Handles one JS host call: a handler name and its JSON arguments, returning JSON text. A throw
+    /// rejects the JS promise with the error's description.
+    public typealias HostCallHandler = @Sendable (_ name: String, _ json: String) async throws -> String
 
     public let queue = DispatchQueue(label: "pi.js", qos: .userInitiated)
     private let logger = Logger(subsystem: "dev.pi.durable", category: "js")
@@ -285,6 +297,24 @@ public final class JSRuntime: @unchecked Sendable {
             self?.fetch.cancel(id)
         }
         set("fetchCancel", fetchCancel)
+
+        let hostCall: @convention(block) (Int, String, String) -> Void = { [weak self] id, name, json in
+            guard let self else { return }
+            guard let handler = self.options.hostCall else {
+                self.queue.async { self.callHost("hostResult", [id, false, "No host handler for \(name)"]) }
+                return
+            }
+            Task {
+                let result: (Bool, String)
+                do {
+                    result = (true, try await handler(name, json))
+                } catch {
+                    result = (false, String(describing: error))
+                }
+                self.queue.async { self.callHost("hostResult", [id, result.0, result.1]) }
+            }
+        }
+        set("hostCall", hostCall)
 
         installSQLite(set)
     }

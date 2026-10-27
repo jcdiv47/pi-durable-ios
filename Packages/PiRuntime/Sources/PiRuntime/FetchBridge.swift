@@ -22,11 +22,23 @@ public enum ProviderKeys {
         "openrouter": ["openrouter.ai"],
     ]
 
+    private static let customHost = OSAllocatedUnfairLock<String?>(initialState: nil)
+
+    /// The host of the user's OpenAI-compatible endpoint, the only host the `custom` key may be sent to.
+    public static func setCustomHost(_ host: String?) {
+        customHost.withLock { $0 = host?.lowercased() }
+    }
+
+    static func hosts(for provider: String) -> Set<String> {
+        if provider == "custom" { return customHost.withLock { $0.map { [$0] } ?? [] } }
+        return allowedHosts[provider] ?? []
+    }
+
     /// Replaces placeholders in header values. Throws when a placeholder targets a host it is not allowed for.
     static func substitute(_ value: String, host: String?, keys: ProviderKeySource?) throws -> String {
         guard let range = value.range(of: prefix) else { return value }
         let provider = String(value[range.upperBound...].prefix { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" })
-        guard let host, allowedHosts[provider]?.contains(host) == true else {
+        guard let host, hosts(for: provider).contains(host.lowercased()) else {
             throw FetchBridgeError.keyNotAllowed(provider: provider, host: host ?? "?")
         }
         guard let key = keys?.apiKey(for: provider), !key.isEmpty else {

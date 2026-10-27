@@ -10,9 +10,9 @@ struct ContentView: View {
             Form {
                 Section("Status") {
                     Text(model.status).accessibilityIdentifier("status")
-                    if model.mode != .chat { Text("Mode: \(model.mode.rawValue)").foregroundStyle(.secondary) }
+                    if model.mode != .stream { Text("Mode: \(model.mode.rawValue)").foregroundStyle(.secondary) }
                 }
-                if model.mode == .chat {
+                if model.mode == .stream {
                     keySection
                     Section("Prompt") {
                         TextField("Prompt", text: $prompt, axis: .vertical)

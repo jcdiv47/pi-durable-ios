@@ -11,6 +11,7 @@ import {
 	WritableStream,
 } from "web-streams-polyfill";
 import { fetchHandlers, installFetch } from "./fetch.ts";
+import { settleHostCall } from "./hostcall.ts";
 import { type HostCallbacks, native } from "./native.ts";
 
 const g = globalThis as Record<string, unknown>;
@@ -587,6 +588,9 @@ const host: HostCallbacks = {
 	},
 	fetchEvent(id, type, payload) {
 		fetchHandlers.get(id)?.(type, payload);
+	},
+	hostResult(id, ok, json) {
+		settleHostCall(id, ok, json);
 	},
 };
 g.__piHost = host;

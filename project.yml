@@ -70,6 +70,8 @@ targets:
           - dev.jcdiv47.pidurable.processing
           - dev.jcdiv47.pidurable.run.*
         NSSupportsLiveActivities: true
+        NSCalendarsFullAccessUsageDescription: Pi reads your calendar when you ask about your schedule, and adds events you approve.
+        NSRemindersFullAccessUsageDescription: Pi reads your reminders when you ask about them.
         NSHealthShareUsageDescription: Pi reads the health data you ask it about.
         NSHealthUpdateUsageDescription: Pi saves health data only when you ask it to.
     entitlements:

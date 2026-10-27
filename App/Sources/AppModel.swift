@@ -51,13 +51,17 @@ final class AppModel {
         }
         importKeysIfPresent()
         hasKey = keys.hasKey(for: provider)
+        guard mode != .chat else { return }
         do {
             switch mode {
-            case .chat: try await openChat()
+            case .chat: break // ChatStore runs the app
+            case .stream: try await openChat()
             case .capabilities: try await M0Runner.capabilities(self)
             case .conformance: try await M0Runner.conformance(self)
             case .killTestStart: try await M0Runner.killTestStart(self)
             case .killTestResume: try await M0Runner.killTestResume(self)
+            case .streamKillStart: try await StreamKill.start(self)
+            case .streamKillResume: try await StreamKill.resume(self)
             case .measure: try await M0Runner.measure(self, launchedAtMs: launchedAt)
             }
         } catch {

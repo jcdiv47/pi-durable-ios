@@ -3,9 +3,6 @@
 
 import "./host/polyfills.ts";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { createModels } from "@earendil-works/pi-ai/models";
-import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
-import { deepseekProvider } from "@earendil-works/pi-ai/providers/deepseek";
 import {
 	AssistantEntry,
 	type Conversation,
@@ -16,6 +13,10 @@ import {
 	watchEvents,
 } from "@earendil-works/pi-durable";
 import { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
+import { AppleTools, appleToolInfo } from "./app/apple.ts";
+import { Approvals, type Decision, type ToolPolicy } from "./app/approvals.ts";
+import { Chat } from "./app/chat.ts";
+import { type CustomProvider, ModelSetup } from "./app/models.ts";
 import { createKillTestFaux, KillTestTools } from "./killtest.ts";
 import { fetchStats } from "./host/fetch.ts";
 import { native } from "./host/native.ts";
@@ -23,52 +24,42 @@ import { openIOSSqliteDatabase } from "./host/sqlite.ts";
 
 const context = BACKGROUND_CONTEXT;
 
-/** Header value Swift's fetch replaces with the Keychain key; must match `ProviderKeys.placeholder(for:)`. */
-const keyPlaceholder = (provider: string) => `pi-host-key:${provider}`;
-
-/** The env variable pi-ai reads each keyed provider's API key from. */
-const keyEnvironment: Record<string, string> = {
-	ANTHROPIC_API_KEY: "anthropic",
-	DEEPSEEK_API_KEY: "deepseek",
-};
-
 function emit(event: Record<string, unknown>): void {
 	native.emit(JSON.stringify(event));
 }
 
 export interface OpenOptions {
 	readonly dbPath: string;
-	readonly provider: "anthropic" | "deepseek" | "faux";
+	/** The root conversation's model (M0 modes and scripts use the root). */
+	readonly provider: string;
 	readonly modelId: string;
 	/** Providers whose keys Swift holds; only these get a placeholder key. */
 	readonly keyedProviders?: readonly string[];
+	readonly customProvider?: CustomProvider;
+	readonly policies?: Record<string, ToolPolicy>;
 	/** Milliseconds the kill test's tools take. */
 	readonly toolMs?: number;
 }
 
 let harness: Harness | undefined;
 let root: Conversation | undefined;
+let chat: Chat | undefined;
+const setup = new ModelSetup();
+const approvals = new Approvals((pending) => emit({ type: "approvals", pending }));
 
 async function open(options: OpenOptions): Promise<{ openMs: number; rootId: number; wake: Wake }> {
 	if (harness !== undefined) throw new Error("PiRuntime is already open");
 	const t0 = performance.now();
-	const keyed = new Set(options.keyedProviders ?? []);
-	const models = createModels({
-		authContext: {
-			env: async (name) => {
-				const provider = keyEnvironment[name];
-				return provider !== undefined && keyed.has(provider) ? keyPlaceholder(provider) : undefined;
-			},
-			fileExists: async () => false,
-		},
-		identity: { attribution: { name: "pi-durable-ios", url: "https://github.com/earendil-works/pi" } },
-	});
-	models.setProvider(anthropicProvider());
-	models.setProvider(deepseekProvider());
+	configureProviders(options.keyedProviders ?? [], options.customProvider);
+	if (options.policies !== undefined) approvals.policies = { ...options.policies };
+	const models = setup.models;
 	models.setProvider(createKillTestFaux().provider);
 
 	const registry = createRegistry();
 	registry.install(KillTestTools(options.toolMs ?? 6000));
+	const approvalGate = approvals.extension();
+	registry.install(AppleTools);
+	registry.install(approvalGate);
 
 	const storage = await SqliteStorage.open(openIOSSqliteDatabase(options.dbPath), { prefix: "pi_" });
 	const tStorage = performance.now();
@@ -86,7 +77,10 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 		context,
 	);
 	const tHarness = performance.now();
-	root = await harness.root(context, { agent: { model: { provider: options.provider, modelId: options.modelId } } });
+	root = await harness.root(context, {
+		agent: { model: { provider: options.provider, modelId: options.modelId }, extensions: [KillTestTools(0)] },
+	});
+	chat = new Chat(harness, approvals, [AppleTools, approvalGate], emit);
 	const wake = harness.wake();
 	emit({
 		type: "opened",
@@ -96,6 +90,17 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 	});
 	harness.resume();
 	return { openMs: performance.now() - t0, rootId: root.id, wake };
+}
+
+/** Keys or the custom endpoint changed in Settings; applies from the next request. */
+function configureProviders(keyedProviders: readonly string[], custom?: CustomProvider): void {
+	setup.keyed = new Set(keyedProviders);
+	setup.setCustom(custom);
+}
+
+function requireChat(): Chat {
+	if (chat === undefined) throw new Error("PiRuntime is not open");
+	return chat;
 }
 
 function requireOpen(): { harness: Harness; root: Conversation } {
@@ -261,7 +266,33 @@ async function close(): Promise<void> {
 	const current = harness;
 	harness = undefined;
 	root = undefined;
+	chat = undefined;
 	await current?.close(context);
 }
 
-(globalThis as Record<string, unknown>).PiRuntime = { open, watch, ask, submit, settle, entries, close };
+/** The chat app's API (see app/chat.ts); every method resolves to JSON for Swift. */
+const app = {
+	conversations: () => requireChat().conversations(),
+	createConversation: (provider: string, modelId: string) => requireChat().create({ provider, modelId }),
+	watchConversation: (id: number) => requireChat().watch(id),
+	unwatchConversation: async (id: number) => requireChat().unwatch(id),
+	transcript: (id: number) => requireChat().transcript(id),
+	send: (id: number, text: string, requestId: string) => requireChat().send(id, text, requestId),
+	abort: (id: number) => requireChat().abort(id),
+	fork: (id: number, entryId: number) => requireChat().fork(id, entryId),
+	rename: (id: number, title: string) => requireChat().rename(id, title),
+	removeConversation: (id: number) => requireChat().remove(id),
+	setModel: (id: number, provider: string, modelId: string) => requireChat().setModel(id, provider, modelId),
+	tasks: () => requireChat().tasks(),
+	retryTask: (id: number) => requireChat().retryTask(id),
+	abortTask: (id: number) => requireChat().abortTask(id),
+	approvals: async () => approvals.pending(),
+	answerApproval: async (id: number, decision: Decision) => requireChat().answerApproval(id, decision),
+	setPolicies: async (policies: Record<string, ToolPolicy>) => requireChat().setPolicies(policies),
+	tools: async () => appleToolInfo.map((tool) => ({ ...tool, policy: approvals.policy(tool.name) })),
+	configureProviders: async (keyedProviders: string[], custom?: CustomProvider) => configureProviders(keyedProviders, custom),
+	models: async () => setup.available(),
+	usage: async () => JSON.parse(JSON.stringify(await requireOpen().harness.usage(context))),
+};
+
+(globalThis as Record<string, unknown>).PiRuntime = { open, watch, ask, submit, settle, entries, close, ...app };

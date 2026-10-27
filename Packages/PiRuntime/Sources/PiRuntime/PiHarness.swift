@@ -8,14 +8,41 @@ public final class PiHarness: Sendable {
         public var provider: String
         public var modelId: String
         public var keyedProviders: [String]
+        public var customProvider: CustomProvider?
+        /// Approval policy per tool name: `auto`, `ask` or `deny`.
+        public var policies: [String: String]?
         public var toolMs: Int?
 
-        public init(dbPath: String, provider: String, modelId: String, keyedProviders: [String] = [], toolMs: Int? = nil) {
+        public init(
+            dbPath: String,
+            provider: String,
+            modelId: String,
+            keyedProviders: [String] = [],
+            customProvider: CustomProvider? = nil,
+            policies: [String: String]? = nil,
+            toolMs: Int? = nil
+        ) {
             self.dbPath = dbPath
             self.provider = provider
             self.modelId = modelId
             self.keyedProviders = keyedProviders
+            self.customProvider = customProvider
+            self.policies = policies
             self.toolMs = toolMs
+        }
+    }
+
+    /// An OpenAI-compatible endpoint (provider id `custom`). Its key is the Keychain item `custom`, sent
+    /// only to `baseUrl`'s host.
+    public struct CustomProvider: Codable, Sendable, Equatable {
+        public var name: String
+        public var baseUrl: String
+        public var modelIds: [String]
+
+        public init(name: String, baseUrl: String, modelIds: [String]) {
+            self.name = name
+            self.baseUrl = baseUrl
+            self.modelIds = modelIds
         }
     }
 
@@ -96,9 +123,20 @@ public final class PiHarness: Sendable {
         _ = try await runtime.callAsync("PiRuntime.close")
     }
 
-    private func call<T: Decodable>(_ path: String, _ arguments: [any Sendable]) async throws -> T {
+    /// Calls `globalThis.<path>(...arguments)` and decodes the JSON it resolves to.
+    public func call<T: Decodable>(_ path: String, _ arguments: [any Sendable] = []) async throws -> T {
         let json = try await runtime.callAsync(path, arguments)
         return try JSONDecoder().decode(T.self, from: Data(json.utf8))
+    }
+
+    /// Calls `globalThis.<path>(...arguments)` and ignores what it resolves to.
+    public func perform(_ path: String, _ arguments: [any Sendable] = []) async throws {
+        _ = try await runtime.callAsync(path, arguments)
+    }
+
+    /// An Encodable struct as a JS object argument.
+    public func jsonArgument(_ value: some Encodable) throws -> [String: any Sendable] {
+        try jsonObject(value)
     }
 
     private func jsonObject(_ value: some Encodable) throws -> [String: any Sendable] {

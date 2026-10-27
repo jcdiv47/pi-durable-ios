@@ -16,7 +16,7 @@ case $mode in
 conformance | capabilities) report=$mode.json timeout=120 ;;
 measure) report=metrics.json timeout=300 ;;
 stream)
-	report=stream.json timeout=300 mode=chat
+	report=stream.json timeout=300
 	launch_environment=("PI_PROMPT=In about 150 words, explain why an AI agent running on a phone needs to survive being killed.")
 	;;
 *) fail "unknown mode $mode" ;;

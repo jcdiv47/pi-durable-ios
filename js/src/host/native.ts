@@ -33,11 +33,15 @@ export interface NativeBindings {
 	sqliteClose(handle: number): void;
 	/** Sends one JSON event to the Swift side (UI, test drivers). */
 	emit(json: string): void;
+	/** Calls the Swift handler `name` with JSON arguments; the answer arrives through `__piHost.hostResult(id, ...)`. */
+	hostCall(id: number, name: string, json: string): void;
 }
 
 export interface HostCallbacks {
 	fireTimer(id: number): void;
 	fetchEvent(id: number, type: "response" | "chunk" | "end" | "error", payload: unknown): void;
+	/** Settles a `hostCall`: `json` is the handler's JSON result, or its error message when `ok` is false. */
+	hostResult(id: number, ok: boolean, json: string): void;
 }
 
 declare global {
