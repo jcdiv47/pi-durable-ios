@@ -109,9 +109,10 @@ struct ConversationView: View {
                     Button {
                         Task { await store.abort(conversationId) }
                     } label: {
-                        Image(systemName: "stop.fill").font(.title3).frame(width: 44, height: 44)
+                        Image(systemName: "stop.fill").font(.body).frame(width: 30, height: 30)
                     }
                     .buttonStyle(.glass)
+                    .buttonBorderShape(.circle)
                     .accessibilityLabel("Stop")
                     .accessibilityIdentifier("stop")
                 }
@@ -120,9 +121,10 @@ struct ConversationView: View {
                     draft = ""
                     Task { await store.send(text, to: conversationId) }
                 } label: {
-                    Image(systemName: "arrow.up").font(.title3.weight(.semibold)).frame(width: 44, height: 44)
+                    Image(systemName: "arrow.up").font(.body.weight(.semibold)).frame(width: 30, height: 30)
                 }
                 .buttonStyle(.glassProminent)
+                .buttonBorderShape(.circle)
                 .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .accessibilityLabel("Send")
                 .accessibilityIdentifier("send")
