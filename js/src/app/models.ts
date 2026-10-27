@@ -2,8 +2,9 @@
 // provider resolves to a placeholder that Swift's fetch bridge swaps for the Keychain key, and only on
 // requests to that provider's hosts (`ProviderKeys` in PiRuntime).
 
+import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
-import { createModels, createProvider, type MutableModels } from "@earendil-works/pi-ai/models";
+import { clampThinkingLevel, createModels, createProvider, getSupportedThinkingLevels, type MutableModels } from "@earendil-works/pi-ai/models";
 import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 import { deepseekProvider } from "@earendil-works/pi-ai/providers/deepseek";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
@@ -87,8 +88,25 @@ export class ModelSetup {
 		else this.models.setProvider(customProvider(config));
 	}
 
+	/**
+	 * The nearest level `model` supports, so a request never asks a model for an effort it lacks (not every pi-ai API
+	 * clamps). An unknown model keeps the level.
+	 */
+	clampThinking(model: { provider: string; modelId: string }, level: ModelThinkingLevel): ModelThinkingLevel {
+		const resolved = this.models.getModel(model.provider, model.modelId);
+		return resolved === undefined ? level : clampThinkingLevel(resolved, level);
+	}
+
 	/** Chat models of the providers that have keys (and the keyless offline one), for the model picker. */
-	available(): { provider: string; providerName: string; id: string; name: string; reasoning: boolean; contextWindow: number }[] {
+	available(): {
+		provider: string;
+		providerName: string;
+		id: string;
+		name: string;
+		reasoning: boolean;
+		thinkingLevels: ModelThinkingLevel[];
+		contextWindow: number;
+	}[] {
 		return this.models
 			.getProviders()
 			.filter((provider) => this.keyed.has(provider.id) || provider.id === "scripted")
@@ -99,6 +117,7 @@ export class ModelSetup {
 					id: model.id,
 					name: model.name,
 					reasoning: model.reasoning,
+					thinkingLevels: getSupportedThinkingLevels(model),
 					contextWindow: model.contextWindow,
 				})),
 			);

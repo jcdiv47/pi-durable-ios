@@ -3,6 +3,7 @@
 
 import "./host/polyfills.ts";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import {
 	AssistantEntry,
 	type Conversation,
@@ -96,7 +97,9 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 	root = await harness.root(context, {
 		agent: { model: { provider: options.provider, modelId: options.modelId }, extensions: [KillTestTools(0)] },
 	});
-	chat = new Chat(harness, approvals, [AppleTools, SurfaceTools, scheduleTools, approvalGate], emit);
+	chat = new Chat(harness, approvals, [AppleTools, SurfaceTools, scheduleTools, approvalGate], emit, (model, level) =>
+		setup.clampThinking(model, level),
+	);
 	await chat.upgrade();
 	const wake = harness.wake();
 	onWake(wake);
@@ -284,7 +287,8 @@ async function close(): Promise<void> {
 /** The chat app's API (see app/chat.ts); every method resolves to JSON for Swift. */
 const app = {
 	conversations: () => requireChat().conversations(),
-	createConversation: (provider: string, modelId: string) => requireChat().create({ provider, modelId }),
+	createConversation: (provider: string, modelId: string, thinkingLevel?: ModelThinkingLevel) =>
+		requireChat().create({ provider, modelId }, undefined, thinkingLevel),
 	watchConversation: (id: number) => requireChat().watch(id),
 	unwatchConversation: async (id: number) => requireChat().unwatch(id),
 	transcript: (id: number) => requireChat().transcript(id),
@@ -297,6 +301,7 @@ const app = {
 	rename: (id: number, title: string) => requireChat().rename(id, title),
 	removeConversation: (id: number) => requireChat().remove(id),
 	setModel: (id: number, provider: string, modelId: string) => requireChat().setModel(id, provider, modelId),
+	setThinking: (id: number, level: ModelThinkingLevel) => requireChat().setThinking(id, level),
 	tasks: () => requireChat().tasks(),
 	retryTask: (id: number) => requireChat().retryTask(id),
 	abortTask: (id: number) => requireChat().abortTask(id),

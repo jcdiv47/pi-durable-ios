@@ -23,9 +23,14 @@ struct ConversationView: View {
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity)
                     }
-                    ForEach(Array(state.items.enumerated()), id: \.element.id) { index, item in
-                        TranscriptItemView(item: item, state: state, store: store, resent: resent(at: index))
-                            .contextMenu { itemMenu(item) }
+                    ForEach(TranscriptRow.rows(state.items)) { row in
+                        switch row {
+                        case let .item(item, resent):
+                            TranscriptItemView(item: item, state: state, store: store, resent: resent)
+                                .contextMenu { itemMenu(item) }
+                        case let .work(_, steps):
+                            WorkRow(steps: steps, state: state, store: store)
+                        }
                     }
                     LiveView(state: state, store: store)
                     Color.clear.frame(height: 1).id("bottom")
@@ -50,15 +55,32 @@ struct ConversationView: View {
         .navigationTitle(meta?.title ?? "Conversation")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) { modelMenu }
+            ToolbarItem(placement: .principal) { header }
         }
         .onAppear { store.watch(conversationId) }
     }
 
-    /// An answer cut off by a crash or eviction, which Pi then asked for again: the next entry is another answer.
-    private func resent(at index: Int) -> Bool {
-        let items = state.items
-        return items[index].stopReason == "aborted" && index + 1 < items.count && items[index + 1].kind == .assistant
+    /// The title, and under it the model, or while a run goes how long it has been working, or that it waits for you.
+    private var header: some View {
+        VStack(spacing: 0) {
+            Text(meta?.title ?? "Conversation").font(.headline).lineLimit(1)
+            Group {
+                if store.approvals.contains(where: { $0.conversationId == conversationId }) {
+                    Text("Waiting for you").foregroundStyle(.orange)
+                } else if state.live.busy, let since = state.busySince {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        Text("Working · \(WorkRow.elapsed(context.date.timeIntervalSince(since)))").monospacedDigit()
+                    }
+                } else {
+                    Text(store.modelName(state.model))
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("conversation.header")
     }
 
     @ViewBuilder private func itemMenu(_ item: DisplayItem) -> some View {
@@ -89,28 +111,62 @@ struct ConversationView: View {
             }
         } label: {
             Label(store.modelName(state.model), systemImage: "cpu")
-                .labelStyle(.titleOnly)
-                .font(.footnote)
+                .font(.footnote.weight(.medium))
                 .lineLimit(1)
         }
+        .buttonStyle(.glass)
         .accessibilityIdentifier("model.menu")
+    }
+
+    /// How hard the model thinks, from the levels it supports; hidden for models without reasoning.
+    @ViewBuilder private var effortMenu: some View {
+        let levels = store.model(state.model)?.thinkingLevels ?? []
+        if levels.count > 1 {
+            Menu {
+                Picker("Effort", selection: Binding(
+                    get: { state.thinkingLevel },
+                    set: { level in Task { await store.setThinking(level, for: conversationId) } }
+                )) {
+                    ForEach(levels, id: \.self) { level in
+                        Label(ThinkingLevel.name(level), systemImage: ThinkingLevel.symbol(level)).tag(level)
+                    }
+                }
+            } label: {
+                Label(ThinkingLevel.name(state.thinkingLevel), systemImage: ThinkingLevel.symbol(state.thinkingLevel))
+                    .font(.footnote.weight(.medium))
+                    .lineLimit(1)
+            }
+            .buttonStyle(.glass)
+            .accessibilityLabel("Effort: \(ThinkingLevel.name(state.thinkingLevel))")
+            .accessibilityIdentifier("effort.menu")
+        }
     }
 
     private var hasDraft: Bool { !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
+    /// The field, and under it the model, the effort and Send/Stop, in one glass panel.
     private var composer: some View {
         VStack(spacing: 8) {
             if !state.queue.isEmpty { queue }
-            HStack(alignment: .bottom, spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
                 TextField(state.live.busy ? "Queue a message" : "Message", text: $draft, axis: .vertical)
                     .lineLimit(1...6)
                     .focused($composing)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .glassEffect(.regular, in: .rect(cornerRadius: 22))
+                    .padding(.horizontal, 6)
+                    .padding(.top, 4)
                     .accessibilityIdentifier("composer")
-                primaryButton
+                GlassEffectContainer {
+                    HStack(spacing: 8) {
+                        modelMenu
+                        effortMenu
+                        Spacer(minLength: 0)
+                        primaryButton
+                    }
+                }
+                .controlSize(.small)
             }
+            .padding(10)
+            .glassEffect(.regular, in: .rect(cornerRadius: 26))
         }
         .padding(.horizontal)
         .padding(.bottom, 8)

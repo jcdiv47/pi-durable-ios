@@ -53,6 +53,10 @@ struct DisplayItem: Decodable, Identifiable, Hashable {
     var origin: String?
     /// A surface a UI tool made or changed (`DisplaySurface` in display.ts).
     var surface: SurfaceRef?
+    /// The parsed output of a tool the chat draws a native card for (`cardTools` in display.ts).
+    var data: JSONValue?
+
+    var date: Date? { timestamp.map { Date(timeIntervalSince1970: $0 / 1000) } }
 }
 
 /// One version of a surface, as a UI tool result or `PiRuntime.surfaces` carries it.
@@ -175,6 +179,7 @@ struct DisplayFrame: Decodable {
     let live: DisplayLive
     let queue: [QueuedMessage]
     let model: ModelRef?
+    let thinkingLevel: String
     let usage: UsageTotals
 }
 
@@ -189,8 +194,12 @@ final class ConversationState {
     private(set) var live = DisplayLive()
     private(set) var queue: [QueuedMessage] = []
     private(set) var model: ModelRef?
+    /// pi-ai's `ModelThinkingLevel`: `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`.
+    private(set) var thinkingLevel = "off"
     private(set) var usage = UsageTotals()
     private(set) var loaded = false
+    /// When the current run started: its input's timestamp, or when this process first saw it busy. Nil while idle.
+    private(set) var busySince: Date?
     /// For each surface ID, the call whose result holds its newest version: the transcript draws it there only.
     private(set) var latestSurfaceCall: [String: String] = [:]
 
@@ -208,14 +217,28 @@ final class ConversationState {
             if let callId = item.callId { results[callId] = item }
             if let surface = item.surface, let callId = item.callId { latestSurfaceCall[surface.id] = callId }
         }
+        if !frame.live.busy {
+            busySince = nil
+        } else if busySince == nil || !live.busy {
+            busySince = runStart()
+        }
         live = frame.live
         queue = frame.queue
         model = frame.model
+        thinkingLevel = frame.thinkingLevel
         usage = frame.usage
         loaded = true
     }
 
     func liveTool(_ callId: String) -> LiveTool? { live.tools.first { $0.callId == callId } }
+
+    /// The input after the last finished answer (one that did not stop to call tools), so a run resumed after a relaunch
+    /// keeps its start. Its entry may not be committed yet when the first busy frame comes: then now.
+    private func runStart() -> Date {
+        let answered = items.lastIndex { $0.kind == .assistant && $0.stopReason != "toolUse" } ?? -1
+        let input = items.indices.last { $0 > answered && items[$0].kind == .user }
+        return input.flatMap { items[$0].date }.map { min($0, .now) } ?? .now
+    }
 }
 
 struct ModelInfo: Decodable, Identifiable, Hashable {
@@ -224,9 +247,38 @@ struct ModelInfo: Decodable, Identifiable, Hashable {
     let id: String
     let name: String
     let reasoning: Bool
+    /// The thinking levels it supports, `off` first; just `off` for a model without reasoning.
+    let thinkingLevels: [String]
     let contextWindow: Double
 
     var ref: ModelRef { ModelRef(provider: provider, modelId: id) }
+}
+
+/// pi-ai's thinking levels as the composer's effort menu names them.
+enum ThinkingLevel {
+    static func name(_ level: String) -> String {
+        switch level {
+        case "off": "Off"
+        case "minimal": "Minimal"
+        case "low": "Low"
+        case "medium": "Medium"
+        case "high": "High"
+        case "xhigh": "Extra high"
+        case "max": "Max"
+        default: level.capitalized
+        }
+    }
+
+    /// A gauge that fills with the level.
+    static func symbol(_ level: String) -> String {
+        switch level {
+        case "off": "gauge.with.dots.needle.0percent"
+        case "minimal", "low": "gauge.with.dots.needle.33percent"
+        case "medium": "gauge.with.dots.needle.50percent"
+        case "high": "gauge.with.dots.needle.67percent"
+        default: "gauge.with.dots.needle.100percent"
+        }
+    }
 }
 
 struct ApprovalRequest: Decodable, Identifiable, Hashable {

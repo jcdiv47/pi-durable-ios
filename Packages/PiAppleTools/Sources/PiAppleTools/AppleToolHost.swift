@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// Answers the JS Apple tools (`js/src/app/apple.ts`): one handler per `hostCall` name, JSON in and
@@ -32,6 +33,17 @@ public final class AppleToolHost: Sendable {
         default: throw AppleToolError("No Apple tool handler named \(name)")
         }
         return String(decoding: try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self)
+    }
+
+    /// Reminder lists' and calendars' colors by title, for the chat's cards of tool results. Empty for what Pi may not
+    /// read; never asks for permission.
+    public func listColors() -> (reminders: [String: CGColor], calendars: [String: CGColor]) {
+        (calendar.colors(.reminder), calendar.colors(.event))
+    }
+
+    /// Whether each reminder is done now, by ID, for cards that show an older result. Never asks for permission.
+    public func reminderCompletion(_ ids: [String]) -> [String: Bool] {
+        calendar.completion(ids)
     }
 
     private func decode<T: Decodable>(_ data: Data) throws -> T {
