@@ -164,10 +164,12 @@ public struct TuningSummary: Sendable, Hashable {
         self.events = events.count
         since = events.first?.date
         var stats: [SurfaceFamily: FamilyStats] = [:]
+        var observed: Set<SurfaceFamily> = []
         var shapes: [String: Shape] = [:]
         var failures: [String: Failure] = [:]
         for event in events {
             let families = event.families.compactMap(SurfaceFamily.init(rawValue:))
+            observed.formUnion(families)
             // Per-family numbers count only events at the family's current level: suggestions are about that level.
             for family in families where event.levels[family.rawValue] ?? dial.level(family).rawValue == dial.level(family).rawValue {
                 var entry = stats[family] ?? FamilyStats(family: family)
@@ -199,7 +201,8 @@ public struct TuningSummary: Sendable, Hashable {
                 failures[pattern] = failure
             }
         }
-        families = SurfaceFamily.allCases.compactMap { stats[$0] }
+        // A family keeps its row (and its level picker) after a level change, with zero counts until new designs come.
+        families = SurfaceFamily.allCases.filter(observed.contains).map { stats[$0] ?? FamilyStats(family: $0) }
         self.shapes = shapes.values.sorted { ($0.count, $1.signature) > ($1.count, $0.signature) }
         self.failures = failures.values.sorted { ($0.count, $1.pattern) > ($1.count, $0.pattern) }
         suggestions = Self.suggest(families: families, shapes: self.shapes, dial: dial)
@@ -234,10 +237,19 @@ public struct TuningSummary: Sendable, Hashable {
         return suggestions
     }
 
-    /// An error that names a family is that family's; any other error is the whole spec's.
+    /// The validator's per-family errors (`checkFamily`) are that family's; any other error is the whole spec's, even
+    /// if it mentions families (`surface must be "widget" or "card"`, `… it supports systemSmall, …`).
     static func applies(_ error: String, to family: SurfaceFamily) -> Bool {
-        let named = SurfaceFamily.allCases.filter { error.contains($0.rawValue) }
-        return named.isEmpty || named.contains(family)
+        guard let owner = SurfaceFamily.allCases.first(where: { owns(error, $0) }) else { return true }
+        return owner == family
+    }
+
+    /// `/slots: systemMedium allows 3 slots, got 4`, `… is not allowed in systemMedium at level 1 …`,
+    /// `…; systemLarge at level 2 (Compose+) allows 24`.
+    static func owns(_ error: String, _ family: SurfaceFamily) -> Bool {
+        let message = error.split(separator: ": ", maxSplits: 1).last.map(String.init) ?? error
+        let name = family.rawValue
+        return message.hasPrefix("\(name) ") || message.contains(" in \(name) at level") || message.contains("; \(name) at level")
     }
 
     static func isCustomRejection(_ error: String, family: SurfaceFamily) -> Bool {

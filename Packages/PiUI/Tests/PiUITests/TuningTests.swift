@@ -48,7 +48,7 @@ struct TuningTests {
         var raised = GenerativityDial()
         raised.set(.composePlus, for: .systemMedium)
         let summary = TuningSummary(Array(repeating: refusal, count: 3), dial: raised)
-        #expect(summary.families.isEmpty)
+        #expect(summary.families.map(\.validations) == [0], "the row stays, so its level can be changed back")
         #expect(summary.suggestions.isEmpty, "the refusals were at level 1; level 2 has no events yet")
     }
 
@@ -59,12 +59,13 @@ struct TuningTests {
             errors: ["/slots/1/tree: This Custom tree has 30 nodes; systemLarge at level 2 (Compose+) allows 24"],
             customTrees: [water], customFamilies: ["systemLarge"]
         )
-        let summary = TuningSummary([event, validated(["systemMedium", "systemLarge"], errors: ["/slots/0: Ring needs goal (number)"])], dial: .init())
+        let mentions = validated(["systemMedium", "systemLarge"], errors: [#"/surface: surface must be "widget" or "card""#])
+        let summary = TuningSummary([event, validated(["systemMedium", "systemLarge"], errors: ["/slots/0: Ring needs goal (number)"]), mentions], dial: .init())
         let medium = summary.families.first { $0.family == .systemMedium }
         let large = summary.families.first { $0.family == .systemLarge }
-        #expect(medium?.failures == 1, "only the spec-wide error")
+        #expect(medium?.failures == 2, "only the spec-wide errors, including one that merely mentions a family")
         #expect(medium?.custom == 0)
-        #expect(large?.failures == 2)
+        #expect(large?.failures == 3)
         #expect(large?.custom == 1)
         #expect(large?.customRejected == 1)
     }
