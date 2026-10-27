@@ -137,7 +137,7 @@ struct ConversationListView: View {
                 Button("New conversation") {
                     Task { if let meta = await store.newConversation() { path.append(.conversation(meta.id)) } }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.glassProminent)
             }
         } else {
             List {
