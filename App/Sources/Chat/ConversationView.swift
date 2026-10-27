@@ -15,7 +15,8 @@ struct ConversationView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
+                // Not lazy: a LazyVStack's estimated row heights put the bottom anchor short of the end on open.
+                VStack(alignment: .leading, spacing: 12) {
                     if let fork = meta?.forkOf {
                         Label("Forked from \(store.conversations.first { $0.id == fork.conversationId }?.title ?? "a conversation")", systemImage: "arrow.triangle.branch")
                             .font(.caption)
