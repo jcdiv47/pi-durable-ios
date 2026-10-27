@@ -690,6 +690,9 @@ final class ChatStore {
             }
         case .active:
             background.enteredForeground()
+            // Cards on screen show reminders and colors as they are now: they may have changed, or access been granted.
+            if listColors != nil { listColors = nil; loadListColors() }
+            loadReminderStates(Array(reminderDone.keys))
             Task {
                 guard phase == .ready else { return }
                 await resumeWork()
