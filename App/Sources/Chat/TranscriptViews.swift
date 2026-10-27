@@ -1,3 +1,4 @@
+import PiUI
 import SwiftUI
 
 /// One committed transcript entry.
@@ -158,6 +159,13 @@ struct ToolCallCard: View {
                 }
             }
             .buttonStyle(.plain)
+            if let surface = result?.surface {
+                if state(for: surface) {
+                    SurfaceStrip(surface: surface, store: store)
+                } else {
+                    Text("\(surface.id) version \(surface.version); newer below").font(.caption).foregroundStyle(.secondary)
+                }
+            }
             if let approval {
                 HStack {
                     Button("Allow") { Task { await store.answer(approval, allow: true) } }.buttonStyle(.borderedProminent).tint(.green)
@@ -180,5 +188,36 @@ struct ToolCallCard: View {
         .padding(10)
         .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 12))
         .accessibilityIdentifier("tool.\(call.name)")
+    }
+
+    /// Whether this call holds the surface's newest version in the conversation.
+    private func state(for surface: SurfaceRef) -> Bool {
+        store.states[surface.conversationId]?.latestSurfaceCall[surface.id].map { $0 == call.id } ?? true
+    }
+}
+
+/// A surface drawn in the chat: a card as is, a widget in each of its families, side by side.
+struct SurfaceStrip: View {
+    let surface: SurfaceRef
+    let store: ChatStore
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        let spec = surface.parsed
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .top, spacing: 10) {
+                ForEach(spec.families) { family in
+                    VStack(alignment: .leading, spacing: 4) {
+                        FramedSurface(spec: spec, family: family, appearance: colorScheme == .dark ? .dark : .light, data: store.surfaceData)
+                        if family != .card {
+                            Text(family.displayName).font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        }
+        .scrollClipDisabled()
+        .task { await store.refreshSurfaceData() }
+        .accessibilityIdentifier("surface.\(surface.id)")
     }
 }

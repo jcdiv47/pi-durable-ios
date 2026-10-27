@@ -8,6 +8,8 @@ let package = Package(
     products: [
         .library(name: "PiRuntime", targets: ["PiRuntime"]),
     ],
+    // Tests only: the UI tools run against PiUI's real SurfaceHost.
+    dependencies: [.package(path: "../PiUI")],
     targets: [
         .target(
             name: "PiRuntime",
@@ -15,7 +17,7 @@ let package = Package(
         ),
         .testTarget(
             name: "PiRuntimeTests",
-            dependencies: ["PiRuntime"],
+            dependencies: ["PiRuntime", .product(name: "PiUI", package: "PiUI")],
             // Bundles produced by `js/build.ts` (git-ignored).
             resources: [.copy("JS")]
         ),

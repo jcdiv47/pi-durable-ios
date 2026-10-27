@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "title": "Morning",
+  "surface": "widget",
+  "families": ["systemMedium", "accessoryRectangular"],
+  "layout": "split",
+  "slots": [
+    { "c": "Ring", "value": "$health.stepsToday", "goal": 10000, "symbol": "figure.walk", "label": "Steps" },
+    { "c": "NextUp", "source": "$calendar.next", "showCountdown": false },
+    { "c": "Quote", "text": "$doc.nudge", "emphasis": "secondary", "families": ["systemMedium"] }
+  ],
+  "tapAction": { "open": "conversation" },
+  "refresh": { "native": "15m" }
+}

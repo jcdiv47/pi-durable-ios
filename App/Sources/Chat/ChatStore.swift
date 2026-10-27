@@ -31,7 +31,16 @@ final class ChatStore {
     private(set) var tools: [ToolInfo] = []
     private(set) var tasks: [TaskInfo] = []
     private(set) var keyedProviders: Set<String> = []
+    /// Surfaces on the Home Screen and Lock Screen.
+    private(set) var published: [PublishedEntry] = []
+    /// Native and `$doc` values for drawing surfaces in the app (chat cards, the Widgets screen).
+    private(set) var surfaceData = SurfaceData()
     let diagnostics = DiagnosticsLog()
+
+    /// How much the agent may generate per family (debug Settings). `SurfaceHost` reads it on every tool call.
+    var dial = GenerativityDial() {
+        didSet { settings.set(try? JSONEncoder().encode(dial), forKey: Self.dialKey) }
+    }
 
     var defaultModel: ModelRef {
         didSet { settings.set(defaultModel.key, forKey: "defaultModel") }
@@ -47,6 +56,10 @@ final class ChatStore {
     private var harness: PiHarness?
     private let keys = KeychainKeys()
     private let appleTools = AppleToolHost()
+    private let native = NativeData()
+    private var surfaceHost: SurfaceHost!
+    private var surfaceDataRead = Date.distantPast
+    nonisolated static let dialKey = "generativityDial"
     private let settings = UserDefaults.standard
     private var watched: Set<Int> = []
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
@@ -57,6 +70,17 @@ final class ChatStore {
         defaultModel = stored?.count == 2 ? ModelRef(provider: stored![0], modelId: stored![1]) : Self.offlineModel
         custom = settings.data(forKey: "customProvider").flatMap { try? JSONDecoder().decode(PiHarness.CustomProvider.self, from: $0) }
         ProviderKeys.setCustomHost(custom.flatMap { URL(string: $0.baseUrl)?.host() })
+        dial = settings.data(forKey: Self.dialKey).flatMap { try? JSONDecoder().decode(GenerativityDial.self, from: $0) } ?? GenerativityDial()
+        surfaceHost = SurfaceHost(
+            native: native,
+            dial: {
+                UserDefaults.standard.data(forKey: ChatStore.dialKey).flatMap { try? JSONDecoder().decode(GenerativityDial.self, from: $0) } ?? GenerativityDial()
+            },
+            tuning: { [weak self] kind, detail in
+                // The tuning log (spec "Generativity dial"): Custom trees and failed validations, reviewed later.
+                DispatchQueue.main.async { MainActor.assumeIsolated { self?.diagnostics.record(kind == "invalid" ? "warn" : "info", "ui.\(kind)", detail) } }
+            }
+        )
     }
 
     var busyConversations: [Int] { states.values.filter(\.live.busy).map(\.id) }
@@ -76,13 +100,16 @@ final class ChatStore {
         do {
             let directory = try SharedContainer.directory("pi")
             let tools = appleTools
+            let surfaces = surfaceHost!
             let harness = try await PiHarness.load(bundle: AppModel.bundleURL, options: .init(
                 keys: keys,
                 onEvent: { [weak self] json in
                     DispatchQueue.main.async { MainActor.assumeIsolated { self?.handle(json) } }
                 },
                 onLog: AppModel.forwardLog,
-                hostCall: { name, json in try await tools.handle(name, json) }
+                hostCall: { name, json in
+                    SurfaceHost.handlers.contains(name) ? try await surfaces.handle(name, json) : try await tools.handle(name, json)
+                }
             ))
             _ = try await harness.open(.init(
                 dbPath: directory.appendingPathComponent("session.sqlite").path,
@@ -98,6 +125,7 @@ final class ChatStore {
             await refreshTools()
             await refreshTasks()
             approvals = try await harness.call("PiRuntime.approvals")
+            await syncSurfaces()
             phase = .ready
             diagnostics.record("info", "app", "Opened Pi storage; \(conversations.count) conversations")
             // Conversations that were busy when the process died resume on open; watch them so their
@@ -324,6 +352,55 @@ final class ChatStore {
             report("abort task", error)
         }
         await refreshTasks()
+    }
+
+    // MARK: Surfaces
+
+    func refreshPublished() async {
+        guard let harness else { return }
+        do { published = try await harness.call("PiRuntime.publishedSurfaces") } catch { report("published surfaces", error) }
+    }
+
+    func surfaces(of conversationId: Int) async -> [SurfaceRef] {
+        guard let harness else { return [] }
+        do { return try await harness.call("PiRuntime.surfaces", [conversationId]) } catch {
+            report("surfaces", error)
+            return []
+        }
+    }
+
+    func unpublish(_ publishedId: String) async {
+        guard let harness else { return }
+        do {
+            try await harness.perform("PiRuntime.unpublishSurface", [publishedId])
+            diagnostics.record("info", "ui", "Unpublished \(publishedId)")
+        } catch {
+            report("unpublish", error)
+        }
+        await refreshPublished()
+    }
+
+    /// Re-reads native data and `$doc` values for surfaces drawn in the app, at most once a minute unless forced.
+    func refreshSurfaceData(force: Bool = false) async {
+        guard let harness, force || Date.now.timeIntervalSince(surfaceDataRead) > 60 else { return }
+        surfaceDataRead = .now
+        let doc: [String: JSONValue] = (try? await harness.call("PiRuntime.surfaceValues")) ?? [:]
+        let values = await native.read(Set(DataSources.sources.map(\.name)))
+        surfaceData = SurfaceData(native: values, doc: doc)
+    }
+
+    /// Pi storage is the source of truth: rewrite the widget's copy of the `$doc` values at launch, in case the
+    /// process died between a commit and its export.
+    private func syncSurfaces() async {
+        guard let harness else { return }
+        do {
+            let values: [String: JSONValue] = try await harness.call("PiRuntime.surfaceValues")
+            try SurfaceStore.shared?.writeValues(values)
+            SurfaceStore.reloadWidgets()
+            published = try await harness.call("PiRuntime.publishedSurfaces")
+        } catch {
+            report("sync surfaces", error)
+        }
     }
 
     // MARK: Background time

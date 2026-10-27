@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import PiUI
 
 // Swift mirrors of what `js/src/app/*.ts` emits. Frames follow `DisplayFrame` in js/src/app/display.ts.
 
@@ -48,6 +49,37 @@ struct DisplayItem: Decodable, Identifiable, Hashable {
     var stopReason: String?
     var error: String?
     var timestamp: Double?
+    /// A surface a UI tool made or changed (`DisplaySurface` in display.ts).
+    var surface: SurfaceRef?
+}
+
+/// One version of a surface, as a UI tool result or `PiRuntime.surfaces` carries it.
+struct SurfaceRef: Decodable, Hashable, Identifiable {
+    struct Published: Decodable, Hashable {
+        let publishedId: String
+        let version: Int
+    }
+
+    let conversationId: Int
+    let id: String
+    let version: Int
+    let spec: JSONValue
+    var published: Published?
+
+    var parsed: SurfaceSpec { SurfaceSpec(spec) }
+}
+
+/// A surface on the Home Screen or Lock Screen (`PublishedEntry` in surfaces.ts).
+struct PublishedEntry: Decodable, Hashable, Identifiable {
+    let publishedId: String
+    let conversationId: Int
+    let surfaceId: String
+    let version: Int
+    let title: String
+    let families: [String]
+    let publishedAt: Double
+
+    var id: String { publishedId }
 }
 
 struct LiveGeneration: Decodable, Hashable {
@@ -107,6 +139,8 @@ final class ConversationState {
     private(set) var model: ModelRef?
     private(set) var usage = UsageTotals()
     private(set) var loaded = false
+    /// For each surface ID, the call whose result holds its newest version: the transcript draws it there only.
+    private(set) var latestSurfaceCall: [String: String] = [:]
 
     init(id: Int) { self.id = id }
 
@@ -114,11 +148,13 @@ final class ConversationState {
         if frame.reset {
             items = frame.items
             results = [:]
+            latestSurfaceCall = [:]
         } else {
             items.append(contentsOf: frame.items)
         }
         for item in frame.items where item.kind == .toolResult {
             if let callId = item.callId { results[callId] = item }
+            if let surface = item.surface, let callId = item.callId { latestSurfaceCall[surface.id] = callId }
         }
         live = frame.live
         queued = frame.queued
@@ -169,37 +205,8 @@ struct TaskInfo: Decodable, Identifiable, Hashable {
     var parked: Bool { state == "blocked" && reason == "restart_limit" }
 }
 
-/// Arbitrary JSON, for tool arguments shown to the user.
-enum JSONValue: Decodable, Hashable {
-    case null
-    case bool(Bool)
-    case number(Double)
-    case string(String)
-    case array([JSONValue])
-    case object([String: JSONValue])
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        if container.decodeNil() { self = .null }
-        else if let value = try? container.decode(Bool.self) { self = .bool(value) }
-        else if let value = try? container.decode(Double.self) { self = .number(value) }
-        else if let value = try? container.decode(String.self) { self = .string(value) }
-        else if let value = try? container.decode([JSONValue].self) { self = .array(value) }
-        else { self = .object(try container.decode([String: JSONValue].self)) }
-    }
-
-    /// Short readable text: strings unquoted, numbers without a trailing `.0`.
-    var display: String {
-        switch self {
-        case .null: "null"
-        case let .bool(value): String(value)
-        case let .number(value): value.rounded() == value && abs(value) < 1e15 ? String(Int(value)) : String(value)
-        case let .string(value): value
-        case let .array(values): values.map(\.display).joined(separator: ", ")
-        case let .object(fields): fields.sorted { $0.key < $1.key }.map { "\($0.key): \($0.value.display)" }.joined(separator: ", ")
-        }
-    }
-
+extension JSONValue {
+    /// An object's fields as readable key/value text, for tool arguments shown to the user.
     var fields: [(String, String)] {
         if case let .object(fields) = self { return fields.sorted { $0.key < $1.key }.map { ($0.key, $0.value.display) } }
         return [("value", display)]

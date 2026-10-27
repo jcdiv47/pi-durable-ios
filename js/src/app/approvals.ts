@@ -24,6 +24,7 @@ export type ApprovalRequest = {
 /** Tools that ask by default: writes the user should see first. */
 export const defaultPolicies: Record<string, ToolPolicy> = {
 	calendar_create_event: "ask",
+	publish_surface: "ask",
 };
 
 export class Approvals {

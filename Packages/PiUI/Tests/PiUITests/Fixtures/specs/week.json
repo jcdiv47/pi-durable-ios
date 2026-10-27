@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "title": "This week",
+  "surface": "widget",
+  "families": ["systemLarge", "systemSmall"],
+  "slots": [
+    { "c": "Header", "title": "This week", "subtitle": "Activity", "symbol": "chart.bar.fill", "families": ["systemLarge"] },
+    { "c": "StatGrid", "items": [
+      { "label": "Steps", "value": "$health.stepsToday", "symbol": "figure.walk" },
+      { "label": "Energy", "value": "$health.activeEnergyToday", "unit": "kcal", "symbol": "flame.fill" }
+    ], "families": ["systemLarge"] },
+    { "c": "BarStrip", "series": "$health.stepsWeek", "label": "Steps per day" },
+    { "c": "Timeline", "items": "$calendar.today", "title": "Today", "maxItems": 3 }
+  ],
+  "tint": "indigo"
+}

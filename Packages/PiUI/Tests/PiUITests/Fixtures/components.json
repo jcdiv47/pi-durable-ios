@@ -1,0 +1,56 @@
+{
+  "now": "2026-10-27T09:00:00+08:00",
+  "native": {
+    "health.stepsToday": 6012,
+    "health.activeEnergyToday": 342,
+    "health.distanceToday": 4.6,
+    "health.restingHeartRate": 58,
+    "health.sleepLastNight": 7.2,
+    "health.stepsWeek": { "values": [8123, 10450, 6400, 12010, 7300, 9100, 6012], "labels": ["W", "T", "F", "S", "S", "M", "T"] },
+    "calendar.next": { "title": "Design review", "subtitle": "Room 4", "date": "2026-10-27T10:30:00+08:00", "end": "2026-10-27T11:30:00+08:00" },
+    "calendar.today": [
+      { "title": "Design review", "subtitle": "Room 4", "date": "2026-10-27T10:30:00+08:00", "end": "2026-10-27T11:30:00+08:00" },
+      { "title": "Lunch with Sam", "subtitle": "Noodle bar", "date": "2026-10-27T12:30:00+08:00" },
+      { "title": "Gym", "date": "2026-10-27T18:00:00+08:00" }
+    ],
+    "reminders.open": [
+      { "title": "Buy oat milk", "date": "2026-10-27T17:00:00+08:00" },
+      { "title": "Call the dentist" },
+      { "title": "Renew passport", "done": false },
+      { "title": "Book flights" }
+    ]
+  },
+  "doc": { "nudge": "Two short walks today and you're past 10k.", "focus": "Ship the widget renderer" },
+  "slots": {
+    "MetricTile": { "c": "MetricTile", "value": "$health.stepsToday", "label": "Steps", "trend": "up", "delta": "+8%", "symbol": "figure.walk", "tint": "green" },
+    "Ring": { "c": "Ring", "value": "$health.stepsToday", "goal": 10000, "label": "Steps", "symbol": "figure.walk", "tint": "green" },
+    "Sparkline": { "c": "Sparkline", "series": "$health.stepsWeek", "label": "Steps this week", "highlight": "max", "tint": "blue" },
+    "BarStrip": { "c": "BarStrip", "series": "$health.stepsWeek", "label": "Steps", "tint": "orange" },
+    "NextUp": { "c": "NextUp", "source": "$calendar.today", "title": "Today" },
+    "Countdown": { "c": "Countdown", "date": "$calendar.next.date", "label": "Design review", "style": "time", "symbol": "clock" },
+    "Checklist": { "c": "Checklist", "items": "$reminders.open", "title": "Reminders" },
+    "Timeline": { "c": "Timeline", "items": "$calendar.today", "title": "Schedule" },
+    "Quote": { "c": "Quote", "text": "$doc.nudge", "emphasis": "primary", "symbol": "sparkle" },
+    "StatGrid": { "c": "StatGrid", "items": [
+      { "label": "Steps", "value": "$health.stepsToday", "symbol": "figure.walk" },
+      { "label": "Energy", "value": "$health.activeEnergyToday", "unit": "kcal", "symbol": "flame.fill" },
+      { "label": "Resting", "value": "$health.restingHeartRate", "unit": "bpm", "symbol": "heart.fill" },
+      { "label": "Sleep", "value": "$health.sleepLastNight", "unit": "h", "symbol": "bed.double.fill" }
+    ] },
+    "Header": { "c": "Header", "title": "Morning", "subtitle": "Tuesday", "symbol": "sun.max.fill", "tint": "orange" },
+    "Badge": { "c": "Badge", "text": "On track", "tone": "positive", "symbol": "checkmark.seal.fill" },
+    "ActionRow": { "c": "ActionRow", "actions": [
+      { "title": "Plan day", "url": "pidurable://ask", "symbol": "calendar" },
+      { "title": "Log walk", "url": "pidurable://ask", "symbol": "figure.walk" }
+    ] },
+    "ImageCard": { "c": "ImageCard", "symbol": "mountain.2.fill", "caption": "Hike on Saturday", "tint": "teal" },
+    "Custom": { "c": "Custom", "tree": { "t": "HStack", "spacing": 8, "children": [
+      { "t": "Image", "symbol": "drop.fill", "size": 22, "color": "cyan" },
+      { "t": "VStack", "align": "leading", "spacing": 2, "children": [
+        { "t": "Text", "text": "Water", "font": "caption", "color": "secondary" },
+        { "t": "Text", "text": "5 of 8 glasses", "font": "headline" },
+        { "t": "Progress", "value": 5, "total": 8, "color": "cyan" }
+      ] }
+    ] } }
+  }
+}

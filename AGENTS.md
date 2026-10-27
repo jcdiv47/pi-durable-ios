@@ -15,11 +15,17 @@ decisions that change the spec go in `docs/adr/`.
 - `Packages/PiRuntime`: JSContext host, polyfill natives, the sqlite3 facade, the URLSession fetch
   bridge, the Keychain key source and the async host-call bridge (`JSRuntime.Options.hostCall`).
 - `Packages/PiAppleTools`: EventKit and HealthKit handlers behind the JS Apple tools
-  (`AppleToolHost`). `PiUI` is a stub for M2.
+  (`AppleToolHost`).
+- `Packages/PiUI`: generated UI (M2). The component catalog, validator, renderer (`SurfaceView`), previews,
+  native data sources (`NativeData`), the App Group files (`SurfaceStore`) and `SurfaceHost`, which answers the
+  JS UI tools. Shared by the app and the widget. The catalog lives only here ([ADR 0001](docs/adr/0001-surface-validation-in-swift.md)).
+- `Widgets/`: the configurable Pi Widget (`PiWidget.swift`): shows a published surface, resolves native data on
+  its timeline.
 - `js/`: TypeScript run inside JSC. `bun build.ts` bundles `src/runtime.ts` (the app's harness
   bootstrap) and `src/conformance.ts` (test suites) into `App/Resources/` and the PiRuntime test
   resources. `src/app/` is the chat API Swift calls (`PiRuntime.*`): conversations, display frames,
-  providers, the Apple tool stubs, the approval gate and the offline `scripted/assistant` model.
+  providers, the Apple tool stubs, the UI tools (`surfaces.ts`: specs in Pi documents, JSON Patch), the approval
+  gate and the offline `scripted/assistant` model.
   pi-durable, pi-ai and chord stay pinned to the **same exact version** (1.4.0).
 - `scripts/`: simulator and device drivers.
 
@@ -27,7 +33,8 @@ decisions that change the spec go in `docs/adr/`.
 
 ```sh
 cd js && bun install && bun run build && npx tsc -p .   # bundle + typecheck
-cd Packages/PiRuntime && swift test                      # conformance + harness tests in macOS JSC
+cd Packages/PiRuntime && swift test                      # conformance + harness + UI tool tests in macOS JSC
+cd Packages/PiUI && swift test                           # validator, host and snapshot tests
 xcodegen generate                                        # then open PiDurable.xcodeproj, or:
 scripts/m0-check.sh conformance                          # same suites inside the app's JSC (simulator)
 ```
@@ -60,6 +67,9 @@ tools fail, but `axe` (Homebrew) works: `axe describe-ui`, `axe tap -x â€¦ -y â€
 (the default tap style does not reach SwiftUI buttons), and `axe type` in chunks of a few characters
 with short pauses (fast typing drops characters). Pause after focusing a field before typing.
 
+PiUI snapshot tests compare against `Packages/PiUI/Tests/PiUITests/Snapshots/*.png` (macOS renders). After an
+intended rendering change, re-record with `PI_RECORD_SNAPSHOTS=1 swift test` and look at the changed sheets.
+
 ## Rules of thumb
 
 - Only PiApp opens Pi storage (`<App Group>/pi/*.sqlite`). Extensions never load JS.
@@ -73,3 +83,6 @@ with short pauses (fast typing drops characters). Pause after focusing a field b
   should see it first. Ask for OS permission inside the handler, on first use.
 - The `SqliteDatabase` facade must keep passing both Pi's storage conformance suite and
   `js/test/facade-cases.ts` (Pi's suite does not exercise rollback).
+- A new component, prop, family rule or data source goes in PiUI's catalog (`Schema/`), with a fixture slot in
+  `Tests/PiUITests/Fixtures/components.json` and a re-recorded snapshot sheet. The dial changes validation and
+  `list_components` only, never the renderer. Widgets never ask for permissions; `bind_data` does, in the app.

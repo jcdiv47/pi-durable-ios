@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "title": "Trip check",
+  "surface": "card",
+  "slots": [
+    { "c": "Header", "title": "Lisbon trip", "subtitle": "In 12 days", "symbol": "airplane" },
+    { "c": "Checklist", "items": [
+      { "title": "Passport", "done": true },
+      { "title": "Adapter" },
+      { "title": "Book the airport taxi" }
+    ] },
+    { "c": "Badge", "text": "2 left", "tone": "warning" }
+  ]
+}

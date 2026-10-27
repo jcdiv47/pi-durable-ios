@@ -7,6 +7,8 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { type Conversation, type ConversationView, defineDoc, type Extension, type Harness } from "@earendil-works/pi-durable";
 import type { Approvals, Decision, ToolPolicy } from "./approvals.ts";
 import { FrameBuilder } from "./display.ts";
+import { PublishedDoc, SurfacesDoc, ValuesDoc } from "./surfaces.ts";
+import { hostCall } from "../host/hostcall.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -197,6 +199,35 @@ export class Chat {
 
 	async abortTask(id: number): Promise<string> {
 		return this.harness.abortTask(id as never, context);
+	}
+
+	/** A conversation's surfaces, newest first, as of its latest commit. */
+	async surfaces(conversationId: number) {
+		const doc = await this.harness.snapshot(SurfacesDoc, conversationId as never, context);
+		return Object.values(doc?.items ?? {})
+			.sort((a, b) => b.updatedAt - a.updatedAt)
+			.map(({ id, version, spec, published, updatedAt }) => ({ conversationId, id, version, spec, published, updatedAt }));
+	}
+
+	async published() {
+		return [...((await this.harness.snapshot(PublishedDoc, context))?.items ?? [])].sort((a, b) => b.publishedAt - a.publishedAt);
+	}
+
+	/** Takes a surface off the Home Screen: removes its widget file and its entry. Its spec stays in the conversation. */
+	async unpublish(publishedId: string): Promise<void> {
+		await hostCall("ui.unpublish", { publishedId });
+		await this.harness.commit(async (tx) => {
+			const index = await tx.doc(PublishedDoc);
+			const at = index.items.findIndex((item) => item.publishedId === publishedId);
+			if (at < 0) return;
+			const [entry] = index.items.splice(at, 1);
+			const surface = (await tx.doc(SurfacesDoc, entry!.conversationId as never)).items[entry!.surfaceId];
+			if (surface?.published?.publishedId === publishedId) delete surface.published;
+		}, context);
+	}
+
+	async values() {
+		return (await this.harness.snapshot(ValuesDoc, context))?.values ?? {};
 	}
 
 	answerApproval(id: number, decision: Decision): boolean {

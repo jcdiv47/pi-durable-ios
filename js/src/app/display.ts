@@ -19,8 +19,11 @@ export type DisplayItem =
 			error?: string;
 			timestamp?: number;
 	  }
-	| { id: number; kind: "toolResult"; callId: string; toolName: string; text: string; isError: boolean }
+	| { id: number; kind: "toolResult"; callId: string; toolName: string; text: string; isError: boolean; surface?: DisplaySurface }
 	| { id: number; kind: "notice"; text: string };
+
+/** A surface a UI tool made or changed; the chat draws it under the call. */
+export type DisplaySurface = { conversationId: number; id: string; version: number; spec: unknown };
 
 export type DisplayLive = {
 	busy: boolean;
@@ -96,6 +99,7 @@ export function displayItem(entry: EntryRecord): DisplayItem | undefined {
 				toolName: String(message?.toolName ?? ""),
 				text: clip(textOf(message?.content)),
 				isError: message?.isError === true,
+				surface: (message?.details as { surface?: DisplaySurface } | undefined)?.surface,
 			};
 		case "pi.compaction":
 			return { id: entry.id, kind: "notice", text: "Earlier messages were summarized" };

@@ -17,6 +17,7 @@ import { AppleTools, appleToolInfo } from "./app/apple.ts";
 import { Approvals, type Decision, type ToolPolicy } from "./app/approvals.ts";
 import { Chat } from "./app/chat.ts";
 import { type CustomProvider, ModelSetup } from "./app/models.ts";
+import { SurfaceTools, surfaceToolInfo } from "./app/surfaces.ts";
 import { createKillTestFaux, KillTestTools } from "./killtest.ts";
 import { fetchStats } from "./host/fetch.ts";
 import { native } from "./host/native.ts";
@@ -59,6 +60,7 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 	registry.install(KillTestTools(options.toolMs ?? 6000));
 	const approvalGate = approvals.extension();
 	registry.install(AppleTools);
+	registry.install(SurfaceTools);
 	registry.install(approvalGate);
 
 	const storage = await SqliteStorage.open(openIOSSqliteDatabase(options.dbPath), { prefix: "pi_" });
@@ -80,7 +82,7 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 	root = await harness.root(context, {
 		agent: { model: { provider: options.provider, modelId: options.modelId }, extensions: [KillTestTools(0)] },
 	});
-	chat = new Chat(harness, approvals, [AppleTools, approvalGate], emit);
+	chat = new Chat(harness, approvals, [AppleTools, SurfaceTools, approvalGate], emit);
 	const wake = harness.wake();
 	emit({
 		type: "opened",
@@ -289,7 +291,11 @@ const app = {
 	approvals: async () => approvals.pending(),
 	answerApproval: async (id: number, decision: Decision) => requireChat().answerApproval(id, decision),
 	setPolicies: async (policies: Record<string, ToolPolicy>) => requireChat().setPolicies(policies),
-	tools: async () => appleToolInfo.map((tool) => ({ ...tool, policy: approvals.policy(tool.name) })),
+	tools: async () => [...appleToolInfo, ...surfaceToolInfo].map((tool) => ({ ...tool, policy: approvals.policy(tool.name) })),
+	surfaces: (conversationId: number) => requireChat().surfaces(conversationId),
+	publishedSurfaces: () => requireChat().published(),
+	unpublishSurface: (publishedId: string) => requireChat().unpublish(publishedId),
+	surfaceValues: () => requireChat().values(),
 	configureProviders: async (keyedProviders: string[], custom?: CustomProvider) => configureProviders(keyedProviders, custom),
 	models: async () => setup.available(),
 	usage: async () => JSON.parse(JSON.stringify(await requireOpen().harness.usage(context))),

@@ -4,6 +4,18 @@ enum Route: Hashable {
     case conversation(Int)
     case settings
     case diagnostics
+    case surfaces
+    case surface(String)
+
+    /// `pidurable://conversation/<id>` (widget taps) and `pidurable://widgets`.
+    init?(url: URL) {
+        guard url.scheme == "pidurable" else { return nil }
+        switch url.host() {
+        case "conversation": guard let id = Int(url.lastPathComponent) else { return nil }; self = .conversation(id)
+        case "widgets": self = .surfaces
+        default: return nil
+        }
+    }
 }
 
 struct ChatRootView: View {
@@ -19,8 +31,13 @@ struct ChatRootView: View {
                     case let .conversation(id): ConversationView(store: store, conversationId: id, path: $path)
                     case .settings: SettingsView(store: store)
                     case .diagnostics: DiagnosticsView(store: store)
+                    case .surfaces: SurfacesView(store: store, path: $path)
+                    case let .surface(publishedId): SurfaceDetailView(store: store, publishedId: publishedId, path: $path)
                     }
                 }
+        }
+        .onOpenURL { url in
+            if let route = Route(url: url) { path = [route] }
         }
         .sheet(item: pendingApproval) { request in
             ApprovalSheet(store: store, request: request) {
@@ -65,6 +82,7 @@ struct ConversationListView: View {
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Menu {
+                    Button("Widgets", systemImage: "square.grid.2x2") { path.append(.surfaces) }
                     Button("Settings", systemImage: "gearshape") { path.append(.settings) }
                     Button("Diagnostics", systemImage: "stethoscope") { path.append(.diagnostics) }
                 } label: {
@@ -173,6 +191,8 @@ struct ApprovalSheet: View {
     let request: ApprovalRequest
     let later: () -> Void
     @State private var answering = false
+    /// For publish_surface: the widget that would go on the Home Screen.
+    @State private var surface: SurfaceRef?
 
     var body: some View {
         NavigationStack {
@@ -185,6 +205,12 @@ struct ApprovalSheet: View {
                     }
                     Text(store.conversations.first { $0.id == request.conversationId }?.title ?? "Conversation \(request.conversationId)")
                         .foregroundStyle(.secondary)
+                }
+                if let surface {
+                    Section("Widget") {
+                        SurfaceStrip(surface: surface, store: store)
+                            .listRowInsets(EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12))
+                    }
                 }
                 Section("Details") {
                     ForEach(request.arguments.fields, id: \.0) { key, value in
@@ -217,6 +243,10 @@ struct ApprovalSheet: View {
                 }
                 .disabled(answering)
                 .padding()
+            }
+            .task {
+                guard request.tool == "publish_surface", let id = request.arguments["id"]?.string else { return }
+                surface = await store.surfaces(of: request.conversationId).first { $0.id == id }
             }
             .navigationTitle("Approval")
             .navigationBarTitleDisplayMode(.inline)

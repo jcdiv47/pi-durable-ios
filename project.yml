@@ -70,6 +70,10 @@ targets:
           - dev.jcdiv47.pidurable.processing
           - dev.jcdiv47.pidurable.run.*
         NSSupportsLiveActivities: true
+        # Widget taps: pidurable://conversation/<id>, pidurable://widgets.
+        CFBundleURLTypes:
+          - CFBundleURLName: dev.jcdiv47.pidurable
+            CFBundleURLSchemes: [pidurable]
         NSCalendarsFullAccessUsageDescription: Pi reads your calendar when you ask about your schedule, and adds events you approve.
         NSRemindersFullAccessUsageDescription: Pi reads your reminders when you ask about them.
         NSHealthShareUsageDescription: Pi reads the health data you ask it about.
@@ -100,10 +104,16 @@ targets:
         CFBundleDisplayName: Pi Widgets
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
+        # The widget reads native data sources itself, under the app's permissions; it never asks.
+        NSCalendarsFullAccessUsageDescription: Pi widgets show your upcoming events.
+        NSRemindersFullAccessUsageDescription: Pi widgets show your reminders.
+        NSHealthShareUsageDescription: Pi widgets show the health data you put on them.
     entitlements:
       path: Widgets/PiWidgets.entitlements
       properties:
         com.apple.security.application-groups: [group.dev.jcdiv47.pidurable]
+        com.apple.developer.healthkit: true
+        com.apple.developer.healthkit.access: []
 
 schemes:
   PiApp:
