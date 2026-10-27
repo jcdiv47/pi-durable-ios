@@ -70,7 +70,7 @@ const healthQuery = defineTool({
 	description:
 		"Read Apple Health data for a time range. Cumulative metrics (steps, activeEnergy kcal, distanceWalkingRunning m, flightsClimbed) are summed; " +
 		"heartRate and restingHeartRate (bpm) and bodyMass (kg) are averaged with min and max; sleep gives hours asleep. " +
-		"`interval` splits the range into days or hours. The user is asked for permission the first time a metric is read.",
+		"`interval` splits the range into days or hours. The first Health read asks the user for permission for all of these metrics in one sheet.",
 	parameters: Type.Object({
 		metric: Type.Union(healthMetrics.map((m) => Type.Literal(m))),
 		start: isoDate("Range start"),
