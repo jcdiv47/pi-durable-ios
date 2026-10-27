@@ -5,7 +5,7 @@ import Testing
 @Suite("Surface host")
 struct HostTests {
     func host(_ root: URL, reloads: Counter = Counter(), tuning: Counter = Counter()) -> SurfaceHost {
-        SurfaceHost(store: SurfaceStore(root: root), reload: { reloads.add() }, tuning: { _, _ in tuning.add() })
+        SurfaceHost(store: SurfaceStore(root: root), reload: { reloads.add() }, tuning: { _ in tuning.add() })
     }
 
     func temporaryRoot() -> URL {
@@ -46,7 +46,7 @@ struct HostTests {
         #expect(SurfaceStore(root: root).values() == ["nudge": "Walk", "goal": 9000])
     }
 
-    @Test("Validation logs Custom trees and failures for tuning")
+    @Test("Every validation is logged for tuning, with its Custom trees and errors")
     func tuning() async throws {
         let tuning = Counter()
         let host = host(temporaryRoot(), tuning: tuning)

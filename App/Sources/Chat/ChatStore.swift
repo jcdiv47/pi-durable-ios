@@ -94,13 +94,19 @@ final class ChatStore {
             dial: {
                 UserDefaults.standard.data(forKey: ChatStore.dialKey).flatMap { try? JSONDecoder().decode(GenerativityDial.self, from: $0) } ?? GenerativityDial()
             },
-            tuning: { [weak self] kind, detail in
-                // The tuning log (spec "Generativity dial"): Custom trees and failed validations, reviewed later.
+            tuning: { [weak self] event in
+                // The tuning log (spec "Generativity dial"), reviewed in Widgets › Design Tuning. Custom trees and failed
+                // validations also go to Diagnostics.
+                TuningLog.shared.append(event)
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
                         guard let self else { return }
-                        self.diagnostics.record(kind == "invalid" ? "warn" : "info", "ui.\(kind)", detail)
-                        if kind == "published" { self.spotlight.sync(self) }
+                        for tree in event.customTrees { self.diagnostics.record("info", "ui.custom", tree) }
+                        if !event.errors.isEmpty { self.diagnostics.record("warn", "ui.invalid", event.errors.joined(separator: "\n")) }
+                        if event.kind == .published {
+                            self.diagnostics.record("info", "ui.published", event.detail ?? "")
+                            self.spotlight.sync(self)
+                        }
                     }
                 }
             }

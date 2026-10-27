@@ -25,7 +25,7 @@ public indirect enum PropType: Sendable, Hashable {
     /// Any JSON value.
     case json
 
-    var summary: String {
+    public var summary: String {
         switch self {
         case .number: "number"
         case .string: "string"

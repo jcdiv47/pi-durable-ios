@@ -4,7 +4,7 @@ import Foundation
 /// catalog, validator and renderer live only here, so the model's instructions, the checks and the widget
 /// cannot drift apart. Specs themselves live in Pi documents; this host only checks, draws and exports them.
 public final class SurfaceHost: Sendable {
-    public typealias Tuning = @Sendable (_ kind: String, _ detail: String) -> Void
+    public typealias Tuning = @Sendable (TuningEvent) -> Void
 
     let store: SurfaceStore?
     let native: NativeData
@@ -14,13 +14,14 @@ public final class SurfaceHost: Sendable {
 
     /// - Parameters:
     ///   - dial: read on every call, so Settings changes apply to the next tool call.
-    ///   - tuning: the tuning log (spec "Generativity dial"): every Custom subtree and failed validation.
+    ///   - tuning: the tuning log (spec "Generativity dial"): every validation, with its errors and Custom trees, and
+    ///     every publish.
     public init(
         store: SurfaceStore? = .shared,
         native: NativeData = NativeData(),
         dial: @escaping @Sendable () -> GenerativityDial = { GenerativityDial() },
         reload: @escaping @Sendable () -> Void = SurfaceStore.reloadWidgets,
-        tuning: @escaping Tuning = { _, _ in }
+        tuning: @escaping Tuning = { _ in }
     ) {
         self.store = store
         self.native = native
@@ -58,11 +59,13 @@ public final class SurfaceHost: Sendable {
 
     func validate(_ spec: JSONValue, docKeys: JSONValue?) -> ValidationReport {
         let keys = docKeys?.array.map { Set($0.compactMap(\.string)) }
-        let report = SurfaceValidator(dial: dial(), docKeys: keys).validate(spec)
-        for tree in report.customTrees { tuning("custom", tree) }
-        if !report.valid {
-            tuning("invalid", report.errors.map { "\($0.path): \($0.message)" }.joined(separator: "\n"))
-        }
+        let dial = dial()
+        let report = SurfaceValidator(dial: dial, docKeys: keys).validate(spec)
+        let families = SurfaceSpec(spec).families
+        tuning(TuningEvent(
+            kind: .validated, families: families.map(\.rawValue), levels: dial.record(families),
+            errors: report.errors.map { "\($0.path): \($0.message)" }, customTrees: report.customTrees
+        ))
         return report
     }
 
@@ -116,7 +119,7 @@ public final class SurfaceHost: Sendable {
             publishedAt: .now, dial: dial().record(parsed.families), spec: spec
         ))
         reload()
-        tuning("published", "\(publishedId) v\(Int(version))")
+        tuning(TuningEvent(kind: .published, families: parsed.families.map(\.rawValue), levels: dial().record(parsed.families), detail: "\(publishedId) v\(Int(version))"))
         return ["publishedId": .string(publishedId), "families": .array(parsed.families.map { .string($0.rawValue) })]
     }
 

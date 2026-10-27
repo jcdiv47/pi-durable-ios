@@ -1,21 +1,14 @@
 import Foundation
 @testable import PiUI
 
-/// The checked-in sample slots, specs and data (Tests/PiUITests/Fixtures), read in place.
+/// The checked-in sample specs (Tests/PiUITests/Fixtures), read in place, and the components' sample slots and data
+/// (`ComponentSamples`, a PiUI resource the gallery shows too).
 enum Fixtures {
     static let directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures")
 
-    static let components: JSONValue = try! JSONValue(json: Data(contentsOf: directory.appendingPathComponent("components.json")))
+    static var data: SurfaceData { ComponentSamples.data }
 
-    static var data: SurfaceData {
-        SurfaceData(
-            native: components["native"]?.object ?? [:],
-            doc: components["doc"]?.object ?? [:],
-            now: DateParsing.parse(components["now"]!.string!)!
-        )
-    }
-
-    static func slot(_ component: String) -> JSONValue { components["slots"]![component]! }
+    static func slot(_ component: String) -> JSONValue { ComponentSamples.slot(component)! }
 
     static func spec(_ name: String) -> JSONValue {
         try! JSONValue(json: Data(contentsOf: directory.appendingPathComponent("specs/\(name).json")))
@@ -25,7 +18,7 @@ enum Fixtures {
 
     /// A widget spec with one slot, shown in the given families.
     static func single(_ component: String, families: [SurfaceFamily]) -> JSONValue {
-        ["schema": 1, "title": .string(component), "surface": "widget", "families": .array(families.map { .string($0.rawValue) }), "slots": [slot(component)]]
+        ComponentSamples.single(component, families: families)!
     }
 
     /// Every level at its most permissive, so component fixtures validate in every family.

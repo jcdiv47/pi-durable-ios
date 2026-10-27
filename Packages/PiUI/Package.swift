@@ -7,7 +7,7 @@ let package = Package(
     platforms: [.iOS(.v26), .macOS(.v26)],
     products: [.library(name: "PiUI", targets: ["PiUI"])],
     targets: [
-        .target(name: "PiUI"),
+        .target(name: "PiUI", resources: [.copy("Gallery/components.json")]),
         // Fixtures and reference images are read (and recorded) in place, next to the tests.
         .testTarget(name: "PiUITests", dependencies: ["PiUI"], exclude: ["Fixtures", "Snapshots"]),
     ]

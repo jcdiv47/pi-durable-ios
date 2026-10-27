@@ -37,6 +37,13 @@ struct SurfacesView: View {
             }
 
             Section {
+                NavigationLink(value: Route.gallery) { Label("Component gallery", systemImage: "square.grid.3x3") }
+                NavigationLink(value: Route.tuning) { Label("Design tuning", systemImage: "slider.horizontal.3") }
+            } footer: {
+                Text("Every component Pi can use, in each size, and what the log of Pi's designs says about the levels below.")
+            }
+
+            Section {
                 ForEach(SurfaceFamily.allCases) { family in
                     Picker(selection: Binding(get: { store.dial.level(family) }, set: { store.dial.set($0, for: family) })) {
                         ForEach(DialLevel.allCases, id: \.self) { level in
