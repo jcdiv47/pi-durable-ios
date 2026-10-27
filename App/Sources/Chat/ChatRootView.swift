@@ -7,6 +7,9 @@ enum Route: Hashable {
     case surfaces
     case surface(String)
     case schedules
+    case gallery
+    case component(String)
+    case tuning
 
     /// `pidurable://conversation/<id>` (widget and Live Activity taps), `pidurable://widgets`, `pidurable://tasks`.
     init?(url: URL) {
@@ -36,6 +39,9 @@ struct ChatRootView: View {
                     case .surfaces: SurfacesView(store: store, path: $path)
                     case let .surface(publishedId): SurfaceDetailView(store: store, publishedId: publishedId, path: $path)
                     case .schedules: SchedulesView(store: store, path: $path)
+                    case .gallery: GalleryView()
+                    case let .component(name): ComponentDetailView(store: store, name: name)
+                    case .tuning: TuningView(store: store)
                     }
                 }
         }
@@ -131,7 +137,7 @@ struct ConversationListView: View {
                 Button("New conversation") {
                     Task { if let meta = await store.newConversation() { path.append(.conversation(meta.id)) } }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.glassProminent)
             }
         } else {
             List {

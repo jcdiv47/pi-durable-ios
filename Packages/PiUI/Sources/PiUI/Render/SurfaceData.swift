@@ -69,7 +69,8 @@ public struct SurfaceData: Sendable, Hashable {
                 date: item["date"]?.string.flatMap(DateParsing.parse),
                 end: item["end"]?.string.flatMap(DateParsing.parse),
                 done: item["done"]?.bool ?? false,
-                symbol: item["symbol"]?.string
+                symbol: item["symbol"]?.string,
+                id: item["id"]?.string
             )
             resolved.position = position
             return resolved
@@ -90,6 +91,8 @@ public struct SurfaceItem: Sendable, Hashable, Identifiable {
     public let end: Date?
     public let done: Bool
     public let symbol: String?
+    /// The native item behind it, for actions: a reminder's EventKit identifier.
+    public let nativeId: String?
     /// Where the item sits in its source list, counting items without a title: a checklist toggle names it.
     public var position = 0
 
@@ -101,15 +104,17 @@ public struct SurfaceItem: Sendable, Hashable, Identifiable {
         if let date { fields["date"] = .string(DateParsing.format(date)) }
         if let end { fields["end"] = .string(DateParsing.format(end)) }
         if let symbol { fields["symbol"] = .string(symbol) }
+        if let nativeId { fields["id"] = .string(nativeId) }
         return .object(fields)
     }
 
-    public init(title: String, subtitle: String? = nil, date: Date? = nil, end: Date? = nil, done: Bool = false, symbol: String? = nil) {
+    public init(title: String, subtitle: String? = nil, date: Date? = nil, end: Date? = nil, done: Bool = false, symbol: String? = nil, id: String? = nil) {
         self.title = title
         self.subtitle = subtitle
         self.date = date
         self.end = end
         self.done = done
         self.symbol = symbol
+        nativeId = id
     }
 }

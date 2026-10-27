@@ -288,6 +288,7 @@ const app = {
 	watchConversation: (id: number) => requireChat().watch(id),
 	unwatchConversation: async (id: number) => requireChat().unwatch(id),
 	transcript: (id: number) => requireChat().transcript(id),
+	searchText: (id: number) => requireChat().searchText(id),
 	send: (id: number, text: string, requestId: string) => requireChat().send(id, text, requestId),
 	abort: (id: number) => requireChat().abort(id),
 	withdraw: (id: number, submissionId: number) => requireChat().withdraw(id, submissionId),

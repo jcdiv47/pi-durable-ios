@@ -163,7 +163,7 @@ struct ToolCallCard: View {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: status.0).foregroundStyle(status.1)
-                    Text(call.name).font(.subheadline.monospaced().weight(.medium))
+                    Text(call.name).font(.subheadline.monospaced().weight(.medium)).lineLimit(1).minimumScaleFactor(0.7)
                     Spacer()
                     if result == nil, approval == nil, live?.status == "running" { ProgressView().controlSize(.mini) }
                     Text(status.2).font(.caption).foregroundStyle(.secondary)
@@ -179,9 +179,12 @@ struct ToolCallCard: View {
                 }
             }
             if let approval {
-                HStack {
-                    Button("Allow") { Task { await store.answer(approval, allow: true) } }.buttonStyle(.borderedProminent).tint(.green)
-                    Button("Deny", role: .destructive) { Task { await store.answer(approval, allow: false) } }.buttonStyle(.bordered)
+                // The same glass buttons as the approval sheet.
+                GlassEffectContainer {
+                    HStack {
+                        Button("Allow") { Task { await store.answer(approval, allow: true) } }.buttonStyle(.glassProminent).tint(.green)
+                        Button("Deny", role: .destructive) { Task { await store.answer(approval, allow: false) } }.buttonStyle(.glass)
+                    }
                 }
                 .controlSize(.small)
             }

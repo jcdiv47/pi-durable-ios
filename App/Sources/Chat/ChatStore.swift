@@ -80,6 +80,7 @@ final class ChatStore {
     @ObservationIgnored private(set) var background: BackgroundWork!
     @ObservationIgnored private(set) var notifications: Notifications!
     @ObservationIgnored private(set) var activities: RunActivities!
+    @ObservationIgnored private let spotlight = SpotlightIndex()
     nonisolated static let logger = Logger(subsystem: "dev.pi.durable", category: "chat")
 
     init() {
@@ -93,9 +94,21 @@ final class ChatStore {
             dial: {
                 UserDefaults.standard.data(forKey: ChatStore.dialKey).flatMap { try? JSONDecoder().decode(GenerativityDial.self, from: $0) } ?? GenerativityDial()
             },
-            tuning: { [weak self] kind, detail in
-                // The tuning log (spec "Generativity dial"): Custom trees and failed validations, reviewed later.
-                DispatchQueue.main.async { MainActor.assumeIsolated { self?.diagnostics.record(kind == "invalid" ? "warn" : "info", "ui.\(kind)", detail) } }
+            tuning: { [weak self] event in
+                // The tuning log (spec "Generativity dial"), reviewed in Widgets › Design Tuning. Custom trees and failed
+                // validations also go to Diagnostics.
+                TuningLog.shared.append(event)
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        for tree in event.customTrees { self.diagnostics.record("info", "ui.custom", tree) }
+                        if !event.errors.isEmpty { self.diagnostics.record("warn", "ui.invalid", event.errors.joined(separator: "\n")) }
+                        if event.kind == .published {
+                            self.diagnostics.record("info", "ui.published", event.detail ?? "")
+                            self.spotlight.sync(self)
+                        }
+                    }
+                }
             }
         )
         background = BackgroundWork(store: self)
@@ -163,6 +176,7 @@ final class ChatStore {
             await refreshSchedules()
             phase = .ready
             diagnostics.record("info", "app", "Opened Pi storage; \(conversations.count) conversations")
+            spotlight.sync(self)
             // Conversations that were busy when the process died resume on open; watch them so their
             // progress shows in the list.
             let resuming = Set(tasks.compactMap(\.conversationId))
@@ -194,9 +208,15 @@ final class ChatStore {
             updateBackgroundTime()
             activities.update(conversation, approval: approvals.first { $0.conversationId == conversation.id })
             background.progress(busy: busyConversations.count, status: activities.statusText(conversation.id))
-            if wasBusy, !conversation.live.busy { runEnded(conversation) }
+            if wasBusy, !conversation.live.busy {
+                runEnded(conversation)
+                spotlight.sync(self, refresh: [conversation.id])
+            }
         case "conversations":
-            if let event = try? decoder.decode(ConversationsEvent.self, from: data) { conversations = event.items }
+            if let event = try? decoder.decode(ConversationsEvent.self, from: data) {
+                conversations = event.items
+                if phase == .ready { spotlight.sync(self) }
+            }
         case "approvals":
             if let event = try? decoder.decode(ApprovalsEvent.self, from: data) {
                 let previous = Set(approvals.map(\.id))
@@ -234,6 +254,12 @@ final class ChatStore {
         Task {
             do { try await harness.perform("PiRuntime.watchConversation", [id]) } catch { report("watch", error) }
         }
+    }
+
+    /// A conversation's messages as plain text, for Spotlight.
+    func searchText(_ id: Int) async -> String? {
+        guard let harness else { return nil }
+        return try? await harness.call("PiRuntime.searchText", [id])
     }
 
     func newConversation() async -> ConversationMeta? {
@@ -449,6 +475,7 @@ final class ChatStore {
     func refreshPublished() async {
         guard let harness else { return }
         do { published = try await harness.call("PiRuntime.publishedSurfaces") } catch { report("published surfaces", error) }
+        spotlight.sync(self)
     }
 
     func surfaces(of conversationId: Int) async -> [SurfaceRef] {
@@ -515,6 +542,9 @@ final class ChatStore {
             guard let action = SurfaceStore.shared?.surface(publishedId)?.parsed.action(actionId) else {
                 return diagnostics.record("warn", "entry", "Widget action \(actionId) is not in \(publishedId) any more")
             }
+            if case let .completeReminder(id) = action {
+                return await completeReminder(id, requestId: request.requestId)
+            }
             do {
                 let result: WidgetActionResult = try await harness.call("PiRuntime.widgetAction", [
                     publishedId, try harness.jsonArgument(action.json), request.requestId, defaultModel.provider, defaultModel.modelId,
@@ -535,6 +565,19 @@ final class ChatStore {
     }
 
     private struct WidgetActionResult: Decodable { let conversationId: Int? }
+
+    /// A reminder row in a widget: EventKit only, no Pi. Completing is idempotent, so a repeated delivery is harmless.
+    private func completeReminder(_ id: String, requestId: String) async {
+        do {
+            let json = String(decoding: try JSONEncoder().encode(["id": id]), as: UTF8.self)
+            _ = try await appleTools.handle("reminders.complete", json)
+            diagnostics.record("info", "entry", "Completed a reminder from a widget (\(requestId))")
+            await refreshSurfaceData(force: true)
+            SurfaceStore.reloadWidgets()
+        } catch {
+            report("complete reminder", error)
+        }
+    }
 
     func notificationResponse(identifier: String, action: String, conversationId: Int?, approvalId: Int?, reply: String?) async {
         await ensureStarted()

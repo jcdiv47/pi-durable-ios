@@ -26,12 +26,16 @@ struct ConversationEntity: AppEntity {
 
     let id: Int
     let title: String
+    let updatedAt: Date
+    /// The messages' text, for Spotlight (`SpotlightIndex`); nil elsewhere.
+    var text: String?
 
     var displayRepresentation: DisplayRepresentation { DisplayRepresentation(title: "\(title)") }
 
     init(_ meta: ConversationMeta) {
         id = meta.id
         title = meta.title
+        updatedAt = Date(timeIntervalSince1970: meta.updatedAt / 1000)
     }
 }
 
@@ -142,6 +146,19 @@ struct OpenConversationIntent: OpenIntent {
 
     @MainActor func perform() async throws -> some IntentResult {
         ChatStore.shared.open(.conversation(target.id))
+        return .result()
+    }
+}
+
+/// Opens a published widget's screen in the app; how a Spotlight result for one opens.
+struct OpenSurfaceIntent: OpenIntent {
+    static let title: LocalizedStringResource = "Open Pi Widget"
+    static let isDiscoverable = false
+
+    @Parameter(title: "Widget") var target: PublishedSurfaceEntity
+
+    @MainActor func perform() async throws -> some IntentResult {
+        ChatStore.shared.open(.surface(target.id))
         return .result()
     }
 }

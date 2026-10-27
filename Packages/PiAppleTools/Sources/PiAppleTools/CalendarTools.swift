@@ -1,7 +1,7 @@
 import EventKit
 import Foundation
 
-/// EventKit handlers: calendar and reminder reads, and event creation that a rerun cannot duplicate.
+/// EventKit handlers: calendar and reminder reads, and event and reminder writes that a rerun cannot duplicate.
 final class CalendarTools: @unchecked Sendable {
     // EKEventStore is thread-safe for these calls; one store keeps its cache across tool calls.
     private let store = EKEventStore()
@@ -29,6 +29,22 @@ final class CalendarTools: @unchecked Sendable {
         let dueBefore: String?
         let list: String?
         let limit: Int?
+    }
+
+    struct CreateReminderArguments: Decodable {
+        let title: String
+        /// A date-time (due then, with an alert) or a bare date (due that day, no alert).
+        let due: String?
+        let list: String?
+        let notes: String?
+        let priority: String?
+        /// From the tool task's ID, as for events.
+        let idempotencyKey: String
+    }
+
+    struct CompleteReminderArguments: Decodable {
+        let id: String
+        let completed: Bool?
     }
 
     func query(_ args: QueryArguments) async throws -> [String: Any] {
@@ -75,6 +91,59 @@ final class CalendarTools: @unchecked Sendable {
         return ["created": true, "event": describe(event)]
     }
 
+    func createReminder(_ args: CreateReminderArguments) async throws -> [String: Any] {
+        try await requireAccess(.reminder)
+        let tag = URL(string: "pidurable://reminder/\(args.idempotencyKey)")!
+        // Completed ones too: the reminder may have been ticked off before the call ran again.
+        let all = try await fetch(store.predicateForReminders(in: nil))
+        if let existing = all.first(where: { $0.url == tag }) {
+            return ["created": false, "alreadyExisted": true, "reminder": describe(existing)]
+        }
+        let calendar: EKCalendar
+        if let list = args.list, !list.isEmpty {
+            let lists = store.calendars(for: .reminder)
+            guard let match = lists.first(where: { $0.title.lowercased() == list.lowercased() }) else {
+                throw AppleToolError("No reminder list named \(list). Lists: \(lists.map(\.title).joined(separator: ", "))")
+            }
+            calendar = match
+        } else {
+            guard let fallback = store.defaultCalendarForNewReminders() else { throw AppleToolError("There is no default list for new reminders") }
+            calendar = fallback
+        }
+        let priorities = ["none": 0, "high": 1, "medium": 5, "low": 9]
+        guard let priority = priorities[args.priority ?? "none"] else { throw AppleToolError("priority must be none, low, medium or high") }
+        let reminder = EKReminder(eventStore: store)
+        reminder.calendar = calendar
+        reminder.title = args.title
+        reminder.notes = args.notes
+        reminder.priority = priority
+        reminder.url = tag
+        if let due = args.due {
+            let date = try ISODate.parse(due, field: "due")
+            let dateOnly = due.count == 10
+            let components: Set<Calendar.Component> = dateOnly ? [.year, .month, .day] : [.year, .month, .day, .hour, .minute, .timeZone]
+            reminder.dueDateComponents = Calendar.current.dateComponents(components, from: date)
+            if !dateOnly { reminder.addAlarm(EKAlarm(absoluteDate: date)) }
+        }
+        try store.save(reminder, commit: true)
+        return ["created": true, "reminder": describe(reminder)]
+    }
+
+    /// Marks a reminder done (or not done). Setting the state it already has changes nothing, so a rerun is harmless.
+    func completeReminder(_ args: CompleteReminderArguments) async throws -> [String: Any] {
+        try await requireAccess(.reminder)
+        guard let reminder = store.calendarItem(withIdentifier: args.id) as? EKReminder else {
+            throw AppleToolError("No reminder with id \(args.id). Call reminders_query for current IDs.")
+        }
+        let completed = args.completed ?? true
+        let changed = reminder.isCompleted != completed
+        if changed {
+            reminder.isCompleted = completed
+            try store.save(reminder, commit: true)
+        }
+        return ["changed": changed, "reminder": describe(reminder)]
+    }
+
     func reminders(_ args: ReminderArguments) async throws -> [String: Any] {
         try await requireAccess(.reminder)
         var calendars = store.calendars(for: .reminder)
@@ -90,26 +159,37 @@ final class CalendarTools: @unchecked Sendable {
             ? store.predicateForReminders(in: calendars)
             : store.predicateForIncompleteReminders(withDueDateStarting: nil, ending: dueBefore, calendars: calendars)
         let limit = max(1, args.limit ?? 50)
-        return await withCheckedContinuation { continuation in
+        var items = try await fetch(predicate).map(describe)
+        if let dueBefore {
+            items = items.filter { ($0["due"] as? String).flatMap { try? ISODate.parse($0, field: "due") }.map { $0 < dueBefore } ?? false }
+        }
+        items.sort { ($0["due"] as? String ?? "~") < ($1["due"] as? String ?? "~") }
+        return ["count": items.count, "truncated": items.count > limit, "reminders": Array(items.prefix(limit))]
+    }
+
+    /// EKReminder is not Sendable; the callback hands them over once, and nothing else touches them.
+    private func fetch(_ predicate: NSPredicate) async throws -> [EKReminder] {
+        nonisolated(unsafe) var result: [EKReminder] = []
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             store.fetchReminders(matching: predicate) { reminders in
-                var items = (reminders ?? []).map { reminder -> [String: Any] in
-                    var item: [String: Any] = [
-                        "title": reminder.title ?? "",
-                        "completed": reminder.isCompleted,
-                        "list": reminder.calendar?.title ?? "",
-                        "priority": reminder.priority,
-                    ]
-                    if let due = reminder.dueDateComponents, let date = Calendar.current.date(from: due) { item["due"] = ISODate.format(date) }
-                    if let notes = reminder.notes, !notes.isEmpty { item["notes"] = String(notes.prefix(300)) }
-                    return item
-                }
-                if let dueBefore {
-                    items = items.filter { ($0["due"] as? String).flatMap { try? ISODate.parse($0, field: "due") }.map { $0 < dueBefore } ?? false }
-                }
-                items.sort { ($0["due"] as? String ?? "~") < ($1["due"] as? String ?? "~") }
-                continuation.resume(returning: ["count": items.count, "truncated": items.count > limit, "reminders": Array(items.prefix(limit))])
+                result = reminders ?? []
+                continuation.resume()
             }
         }
+        return result
+    }
+
+    private func describe(_ reminder: EKReminder) -> [String: Any] {
+        var item: [String: Any] = [
+            "id": reminder.calendarItemIdentifier,
+            "title": reminder.title ?? "",
+            "completed": reminder.isCompleted,
+            "list": reminder.calendar?.title ?? "",
+            "priority": reminder.priority,
+        ]
+        if let due = reminder.dueDateComponents, let date = Calendar.current.date(from: due) { item["due"] = ISODate.format(date) }
+        if let notes = reminder.notes, !notes.isEmpty { item["notes"] = String(notes.prefix(300)) }
+        return item
     }
 
     private func describe(_ event: EKEvent) -> [String: Any] {

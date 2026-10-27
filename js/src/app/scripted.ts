@@ -9,6 +9,9 @@
 //   "repair …"    → create_surface with an error (a Ring without goal), then patch_surface to fix it
 //   "schedule …"  → schedule_task "nudge" in 3 seconds, once, with a notification; its run calls set_value nudge
 //   "remind …"    → notify_schedule in a minute
+//   "todo …"      → reminders_create due today at 18:00 (asks for approval)
+//   "where …"     → location_current
+//   "chores …"    → create_surface and publish_surface for a widget whose checklist rows complete open reminders
 //   "habits …"    → set_value habits (a to-do list), then create_surface and publish_surface for a widget whose checklist
 //                   rows toggle it and whose buttons reset it or send a prompt
 //   anything else → "You said: …"
@@ -61,6 +64,13 @@ const habitsSpec = {
 	],
 };
 
+const choresSpec = {
+	title: "Chores",
+	surface: "widget",
+	families: ["systemMedium", "systemLarge"],
+	slots: [{ c: "Checklist", items: "$reminders.open", title: "Reminders" }],
+};
+
 const cardSpec = {
 	title: "Today",
 	surface: "card",
@@ -108,7 +118,7 @@ export function createScriptedModel() {
 		if (habitsSurface !== undefined) {
 			return fauxAssistantMessage(fauxToolCall("publish_surface", { id: habitsSurface }), { stopReason: "toolUse" });
 		}
-		if (word === "widget" && created !== undefined) {
+		if ((word === "widget" || word === "chores") && created !== undefined) {
 			return fauxAssistantMessage(fauxToolCall("publish_surface", { id: created }), { stopReason: "toolUse" });
 		}
 		if (word === "repair" && created !== undefined) {
@@ -140,6 +150,8 @@ export function createScriptedModel() {
 				});
 			case "widget":
 				return fauxAssistantMessage(fauxToolCall("create_surface", { spec: widgetSpec as never }), { stopReason: "toolUse" });
+			case "chores":
+				return fauxAssistantMessage(fauxToolCall("create_surface", { spec: choresSpec as never }), { stopReason: "toolUse" });
 			case "card":
 				return fauxAssistantMessage(fauxToolCall("create_surface", { spec: cardSpec as never }), { stopReason: "toolUse" });
 			case "repair":
@@ -159,6 +171,12 @@ export function createScriptedModel() {
 				);
 			case "habits":
 				return fauxAssistantMessage(fauxToolCall("set_value", { key: "habits", value: habits as never }), { stopReason: "toolUse" });
+			case "where":
+				return fauxAssistantMessage(fauxToolCall("location_current", {}), { stopReason: "toolUse" });
+			case "todo":
+				return fauxAssistantMessage(fauxToolCall("reminders_create", { title: prompt.slice(5) || "Pi test reminder", due: today(18) }), {
+					stopReason: "toolUse",
+				});
 			case "remind":
 				return fauxAssistantMessage(
 					fauxToolCall("notify_schedule", { title: "Pi reminder", body: prompt.slice(7) || "Stretch", at: new Date(Date.now() + 60_000).toISOString() }),
