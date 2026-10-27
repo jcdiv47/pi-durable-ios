@@ -404,8 +404,10 @@ struct ChecklistView: View {
                 Text(title).font(.caption.weight(.semibold)).surfaceTint(tint, surface).lineLimit(1)
             }
             if items.isEmpty { Text("All done").font(.subheadline).foregroundStyle(.secondary) }
-            // Rows of a $doc list are toggles; reminders stay read-only until Reminders writes (M4).
-            let toggles = r.slot["items"]?.string.flatMap(SurfaceSpec.docKey) != nil
+            // Rows of a $doc list flip their done; rows of $reminders.* complete the reminder.
+            let binding = r.slot["items"]?.string
+            let toggles = binding.flatMap(SurfaceSpec.docKey) != nil
+            let reminders = binding.flatMap(SurfaceSpec.remindersSource) != nil
             ForEach(items.prefix(max)) { item in
                 HStack(spacing: 6) {
                     Image(systemName: item.done ? "checkmark.circle.fill" : "circle")
@@ -416,12 +418,18 @@ struct ChecklistView: View {
                         .lineLimit(1)
                 }
                 .font(surface.family == .accessoryRectangular ? .caption : .subheadline)
-                .surfaceAction(toggles ? SurfaceAction.id(item: item.position, slot: r.slot.index) : nil, actions)
+                .surfaceAction(rowAction(item, toggles: toggles, reminders: reminders), actions)
             }
             if items.count > max {
                 Text("+\(items.count - max) more").font(.caption2).foregroundStyle(.secondary)
             }
         }
+    }
+
+    private func rowAction(_ item: SurfaceItem, toggles: Bool, reminders: Bool) -> String? {
+        if toggles { return SurfaceAction.id(item: item.position, slot: r.slot.index) }
+        if reminders, !item.done, let id = item.nativeId { return SurfaceAction.id(reminder: id, slot: r.slot.index) }
+        return nil
     }
 }
 

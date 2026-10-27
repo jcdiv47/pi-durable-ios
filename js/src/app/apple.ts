@@ -1,6 +1,7 @@
 // Apple tools: JS stubs whose work happens in Swift (Packages/PiAppleTools) through `hostCall`.
-// Reads are replay-safe. calendar_create_event is replay-safe too: Swift tags the event with the tool
-// task's ID and finds it instead of creating a second one when a crash makes the call run again.
+// Reads are replay-safe. calendar_create_event and reminders_create are replay-safe too: Swift tags the item with the
+// tool task's ID and finds it instead of creating a second one when a crash makes the call run again.
+// reminders_complete sets a state, so running it twice is the same as once.
 
 import { Type } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool, section } from "@earendil-works/pi-durable";
@@ -52,6 +53,34 @@ const calendarCreateEvent = defineTool({
 	replay: "safe",
 	execute: async (args, api, context) =>
 		json(await hostCall("calendar.createEvent", { ...args, idempotencyKey: `task-${api.taskId}` }, context.abortSignal)),
+});
+
+const remindersCreate = defineTool({
+	name: "reminders_create",
+	description: "Add a reminder, by default to the default list. The user may be asked to approve it first.",
+	parameters: Type.Object({
+		title: Type.String(),
+		due: Type.Optional(
+			Type.String({ description: "When it is due: an ISO 8601 date-time with a UTC offset (alerts then), or a date YYYY-MM-DD (no alert)" }),
+		),
+		list: Type.Optional(Type.String({ description: "Reminder list name" })),
+		notes: Type.Optional(Type.String()),
+		priority: Type.Optional(Type.Union([Type.Literal("none"), Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")])),
+	}),
+	replay: "safe",
+	execute: async (args, api, context) =>
+		json(await hostCall("reminders.create", { ...args, idempotencyKey: `task-${api.taskId}` }, context.abortSignal)),
+});
+
+const remindersComplete = defineTool({
+	name: "reminders_complete",
+	description: "Mark a reminder done, or not done with completed: false. Takes the id from reminders_query.",
+	parameters: Type.Object({
+		id: Type.String({ description: "The reminder's id" }),
+		completed: Type.Optional(Type.Boolean({ description: "Default true" })),
+	}),
+	replay: "safe",
+	execute: async (args, _api, context) => json(await hostCall("reminders.complete", args, context.abortSignal)),
 });
 
 const healthMetrics = [
@@ -109,7 +138,7 @@ const contextSection = section("context", () => {
 	return [
 		"You are Pi, a personal assistant running on the user's iPhone.",
 		`Today is ${weekday}, ${local.slice(0, 10)}. Time zone: ${timeZone}.`,
-		"Use the Apple tools to read the user's calendar, reminders and health data when it helps. Call current_time when the exact time matters.",
+		"Use the Apple tools to read the user's calendar, reminders and health data when it helps, and to add events and reminders when asked. Call current_time when the exact time matters.",
 		"Keep answers short; they are read on a phone.",
 	].join("\n");
 });
@@ -117,7 +146,7 @@ const contextSection = section("context", () => {
 export const AppleTools = defineExtension({
 	name: "apple",
 	sections: [contextSection],
-	tools: [currentTime, calendarQuery, remindersQuery, calendarCreateEvent, healthQuery],
+	tools: [currentTime, calendarQuery, remindersQuery, calendarCreateEvent, remindersCreate, remindersComplete, healthQuery],
 });
 
 /** Tool names with what they do, for the approval settings screen. */

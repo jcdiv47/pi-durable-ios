@@ -154,9 +154,13 @@ struct ValidatorTests {
         #expect(spec.action("a1.0") == nil, "a link opens in place; it is not an action")
         #expect(spec.action("a1.1") == .prompt(title: "Ask", prompt: "Plan my day"))
         #expect(spec.action("a1.2") == .set(key: "walked", value: true))
-        #expect(spec.action("t2.0") == nil, "reminder rows are read-only")
+        #expect(spec.action("t2.0") == nil, "reminder rows are named by reminder ID, not position")
+        #expect(spec.action("r2.x-p.1A2B") == .completeReminder(id: "x-p.1A2B"))
+        #expect(spec.action("r0.x-p.1A2B") == nil, "a $doc checklist has no reminders")
+        #expect(spec.action("r1.x") == nil)
         #expect(spec.action("a5.0") == nil)
         #expect(spec.action("x") == nil)
         #expect(SurfaceAction.toggle(key: "todo", index: 2).json == ["kind": "toggle", "key": "todo", "index": 2])
+        #expect(SurfaceAction.completeReminder(id: "abc").json == ["kind": "completeReminder", "id": "abc"])
     }
 }

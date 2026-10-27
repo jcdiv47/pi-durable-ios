@@ -139,7 +139,8 @@ public enum Catalog {
         ),
         ComponentDef(
             name: "Checklist",
-            purpose: "Reminders or to-dos with check marks. Bound to a $doc list, each row is a toggle in the widget that flips the item's done.",
+            purpose: "Reminders or to-dos with check marks. In the widget each row is a toggle: bound to a $doc list it flips the item's done; " +
+                "bound to $reminders.open or $reminders.dueToday it completes the reminder.",
             props: [PropDef("items", .items, required: true, "Usually $reminders.open, or a $doc list you keep with set_value"), PropDef("title", .string), PropDef("maxItems", .number, bindable: false), tint],
             families: system.union([.accessoryRectangular]),
             textBudget: [:]

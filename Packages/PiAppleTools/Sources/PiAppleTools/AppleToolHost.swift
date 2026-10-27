@@ -11,7 +11,9 @@ public final class AppleToolHost: Sendable {
     public init() {}
 
     /// Names this host answers; anything else is the caller's.
-    public static let handlers: Set<String> = ["calendar.query", "calendar.createEvent", "reminders.query", "health.query"]
+    public static let handlers: Set<String> = [
+        "calendar.query", "calendar.createEvent", "reminders.query", "reminders.create", "reminders.complete", "health.query",
+    ]
 
     public func handle(_ name: String, _ json: String) async throws -> String {
         let data = Data(json.utf8)
@@ -20,6 +22,8 @@ public final class AppleToolHost: Sendable {
         case "calendar.query": result = try await calendar.query(decode(data))
         case "calendar.createEvent": result = try await calendar.createEvent(decode(data))
         case "reminders.query": result = try await calendar.reminders(decode(data))
+        case "reminders.create": result = try await calendar.createReminder(decode(data))
+        case "reminders.complete": result = try await calendar.completeReminder(decode(data))
         #if os(iOS)
         case "health.query": result = try await health.query(decode(data))
         #endif

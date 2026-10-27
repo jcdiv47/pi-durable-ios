@@ -93,16 +93,20 @@ public final class NativeData: @unchecked Sendable {
 
     private func readReminders(now: Date) async -> [String: JSONValue] {
         let predicate = events.predicateForIncompleteReminders(withDueDateStarting: nil, ending: nil, calendars: nil)
-        let reminders: [(title: String, due: Date?, list: String?)] = await withCheckedContinuation { continuation in
+        let reminders: [(title: String, due: Date?, list: String?, id: String)] = await withCheckedContinuation { continuation in
             events.fetchReminders(matching: predicate) { found in
                 // EKReminder is not Sendable; copy out the fields inside the callback.
-                continuation.resume(returning: (found ?? []).map { ($0.title ?? "Reminder", $0.dueDateComponents?.date, $0.calendar?.title) })
+                continuation.resume(returning: (found ?? []).map {
+                    ($0.title ?? "Reminder", $0.dueDateComponents?.date, $0.calendar?.title, $0.calendarItemIdentifier)
+                })
             }
         }
         let sorted = reminders.sorted { ($0.due ?? .distantFuture) < ($1.due ?? .distantFuture) }
         let endOfDay = Calendar.current.startOfDay(for: now).addingTimeInterval(86_400)
-        let items = sorted.prefix(20).map { SurfaceItem(title: $0.title, subtitle: $0.list, date: $0.due).json }
-        let dueToday = sorted.filter { ($0.due ?? .distantFuture) < endOfDay }.prefix(20).map { SurfaceItem(title: $0.title, subtitle: $0.list, date: $0.due).json }
+        // The ID lets a Checklist row complete its reminder (`SurfaceAction.completeReminder`).
+        let item = { (r: (title: String, due: Date?, list: String?, id: String)) in SurfaceItem(title: r.title, subtitle: r.list, date: r.due, id: r.id).json }
+        let items = sorted.prefix(20).map(item)
+        let dueToday = sorted.filter { ($0.due ?? .distantFuture) < endOfDay }.prefix(20).map(item)
         return [
             "reminders.open": .array(Array(items)),
             "reminders.dueToday": .array(Array(dueToday)),

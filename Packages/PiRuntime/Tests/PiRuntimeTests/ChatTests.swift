@@ -50,6 +50,7 @@ final class ChatLog: @unchecked Sendable {
     var titles: [String] { lock.withLock { conversationTitles } }
     var wakes: [(active: Bool, at: Double?)] { lock.withLock { wakeEvents } }
     func calls(_ name: String) -> Int { lock.withLock { calls.filter { $0.0 == name }.count } }
+    func arguments(_ name: String) -> [[String: Any]] { lock.withLock { calls.filter { $0.0 == name }.map(\.1) } }
 
     func last(_ id: Int, kind: String) -> [String: Any]? { items(id).last { $0["kind"] as? String == kind } }
 }
@@ -74,6 +75,7 @@ func openChat(_ log: ChatLog, db: String) async throws -> PiHarness {
             switch name {
             case "calendar.createEvent": return #"{"created":true,"eventId":"E1"}"#
             case "calendar.query": return #"{"events":[]}"#
+            case "reminders.create": return #"{"created":true}"#
             default: throw JSRuntimeError("unexpected host call \(name)")
             }
         }
@@ -133,6 +135,28 @@ struct ChatTests {
         #expect(denied?["isError"] as? Bool == true)
         #expect((denied?["text"] as? String)?.contains("declined") == true)
         #expect(log.calls("calendar.createEvent") == 1, "a denied call never reaches Swift")
+        try await harness.close()
+    }
+
+    @Test("A new reminder asks first and carries its tool task's idempotency key", .timeLimit(.minutes(1)))
+    func reminderCreate() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let log = ChatLog()
+        let harness = try await openChat(log, db: directory.appendingPathComponent("chat.sqlite").path)
+        let meta: Meta = try await harness.call("PiRuntime.createConversation", ["scripted", "assistant"])
+        try await harness.perform("PiRuntime.watchConversation", [meta.id])
+
+        try await harness.perform("PiRuntime.send", [meta.id, "todo Buy oat milk", "r1"])
+        try await until { log.approvals.count == 1 }
+        #expect(log.approvals[0]["tool"] as? String == "reminders_create")
+        let request = log.approvals[0]["id"] as! Int
+        let _: Bool = try await harness.call("PiRuntime.answerApproval", [request, "allow"])
+        try await until { !log.busy(meta.id) && log.items(meta.id).count == 4 }
+        let args = log.arguments("reminders.create")
+        #expect(args.count == 1)
+        #expect(args.first?["title"] as? String == "Buy oat milk")
+        #expect(args.first?["idempotencyKey"] as? String == "task-\(request)", "the approval and the write name the same tool task")
         try await harness.close()
     }
 

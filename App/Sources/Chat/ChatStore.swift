@@ -515,6 +515,9 @@ final class ChatStore {
             guard let action = SurfaceStore.shared?.surface(publishedId)?.parsed.action(actionId) else {
                 return diagnostics.record("warn", "entry", "Widget action \(actionId) is not in \(publishedId) any more")
             }
+            if case let .completeReminder(id) = action {
+                return await completeReminder(id, requestId: request.requestId)
+            }
             do {
                 let result: WidgetActionResult = try await harness.call("PiRuntime.widgetAction", [
                     publishedId, try harness.jsonArgument(action.json), request.requestId, defaultModel.provider, defaultModel.modelId,
@@ -535,6 +538,19 @@ final class ChatStore {
     }
 
     private struct WidgetActionResult: Decodable { let conversationId: Int? }
+
+    /// A reminder row in a widget: EventKit only, no Pi. Completing is idempotent, so a repeated delivery is harmless.
+    private func completeReminder(_ id: String, requestId: String) async {
+        do {
+            let json = String(decoding: try JSONEncoder().encode(["id": id]), as: UTF8.self)
+            _ = try await appleTools.handle("reminders.complete", json)
+            diagnostics.record("info", "entry", "Completed a reminder from a widget (\(requestId))")
+            await refreshSurfaceData(force: true)
+            SurfaceStore.reloadWidgets()
+        } catch {
+            report("complete reminder", error)
+        }
+    }
 
     func notificationResponse(identifier: String, action: String, conversationId: Int?, approvalId: Int?, reply: String?) async {
         await ensureStarted()
