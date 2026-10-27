@@ -61,9 +61,9 @@ public struct SurfaceData: Sendable, Hashable {
     public func items(_ value: JSONValue?) -> [SurfaceItem] {
         guard let resolved = resolve(value) else { return [] }
         let list = resolved.array ?? (resolved.object != nil ? [resolved] : [])
-        return list.compactMap { item in
+        return list.enumerated().compactMap { position, item in
             guard let title = item["title"]?.display, !title.isEmpty else { return nil }
-            return SurfaceItem(
+            var resolved = SurfaceItem(
                 title: title,
                 subtitle: item["subtitle"]?.string,
                 date: item["date"]?.string.flatMap(DateParsing.parse),
@@ -71,6 +71,8 @@ public struct SurfaceData: Sendable, Hashable {
                 done: item["done"]?.bool ?? false,
                 symbol: item["symbol"]?.string
             )
+            resolved.position = position
+            return resolved
         }
     }
 
@@ -88,8 +90,10 @@ public struct SurfaceItem: Sendable, Hashable, Identifiable {
     public let end: Date?
     public let done: Bool
     public let symbol: String?
+    /// Where the item sits in its source list, counting items without a title: a checklist toggle names it.
+    public var position = 0
 
-    public var id: String { "\(title)|\(date?.timeIntervalSince1970 ?? 0)" }
+    public var id: String { "\(title)|\(date?.timeIntervalSince1970 ?? 0)|\(position)" }
 
     public var json: JSONValue {
         var fields: [String: JSONValue] = ["title": .string(title), "done": .bool(done)]

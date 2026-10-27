@@ -8,6 +8,8 @@ public struct SurfaceSpec: Sendable, Hashable {
         public let props: [String: JSONValue]
         /// Families this slot is limited to; nil shows it in every family that supports the component.
         public let families: Set<SurfaceFamily>?
+        /// Its position in the spec's `slots`, which action IDs name.
+        public var index = 0
 
         public subscript(prop: String) -> JSONValue? { props[prop] }
     }
@@ -35,10 +37,10 @@ public struct SurfaceSpec: Sendable, Hashable {
         let families = (raw["families"]?.array ?? []).compactMap { $0.string.flatMap(SurfaceFamily.init(rawValue:)) }.filter { $0 != .card }
         self.families = surface == "card" ? [.card] : families
         layout = raw["layout"]?.string.flatMap { Catalog.layouts.contains($0) ? $0 : nil }
-        slots = (raw["slots"]?.array ?? []).compactMap { value in
+        slots = (raw["slots"]?.array ?? []).enumerated().compactMap { index, value in
             guard var props = value.object, let component = props.removeValue(forKey: "c")?.string else { return nil }
             let families = props.removeValue(forKey: "families")?.array.map { Set($0.compactMap { $0.string.flatMap(SurfaceFamily.init(rawValue:)) }) }
-            return Slot(component: component, props: props, families: families)
+            return Slot(component: component, props: props, families: families, index: index)
         }
         tint = raw["tint"]?.string
         tapURL = raw["tapAction"]?["url"]?.string.flatMap(URL.init(string:))

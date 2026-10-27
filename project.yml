@@ -32,6 +32,8 @@ targets:
     platform: iOS
     sources:
       - App/Sources
+      # App Intents the widget's and Live Activity's buttons use; compiled into both targets.
+      - Shared/Sources
       # Built by the "Bundle JS" phase; optional so a fresh clone can generate the project.
       - path: App/Resources/pi-runtime.js
         optional: true
@@ -70,7 +72,7 @@ targets:
           - dev.jcdiv47.pidurable.processing
           - dev.jcdiv47.pidurable.run.*
         NSSupportsLiveActivities: true
-        # Widget taps: pidurable://conversation/<id>, pidurable://widgets.
+        # Widget and Live Activity taps: pidurable://conversation/<id>, pidurable://widgets, pidurable://tasks.
         CFBundleURLTypes:
           - CFBundleURLName: dev.jcdiv47.pidurable
             CFBundleURLSchemes: [pidurable]
@@ -89,7 +91,7 @@ targets:
   PiWidgets:
     type: app-extension
     platform: iOS
-    sources: [Widgets/Sources]
+    sources: [Widgets/Sources, Shared/Sources]
     dependencies:
       - package: PiUI
       - sdk: WidgetKit.framework

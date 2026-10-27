@@ -8,6 +8,7 @@ struct NodeView: View {
     let node: JSONValue
     @Environment(\.surface) private var surface
     @Environment(\.surfaceData) private var data
+    @Environment(\.surfaceIsStill) private var still
 
     var body: some View {
         primitive.modifier(NodeModifiers(node: node, tinted: surface.tinted))
@@ -51,7 +52,9 @@ struct NodeView: View {
         case "Chart":
             chart
         case "Link":
-            if let url = node["url"]?.string.flatMap(URL.init(string:)) { Link(destination: url) { VStack(spacing: spacing) { childViews } } }
+            if let url = node["url"]?.string.flatMap(URL.init(string:)) {
+                if still { VStack(spacing: spacing) { childViews } } else { Link(destination: url) { VStack(spacing: spacing) { childViews } } }
+            }
         default:
             EmptyView()
         }

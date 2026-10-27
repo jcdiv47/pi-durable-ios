@@ -7,7 +7,8 @@ import type { EntryRecord } from "@earendil-works/pi-durable";
 export type DisplayToolCall = { id: string; name: string; arguments: string };
 
 export type DisplayItem =
-	| { id: number; kind: "user"; text: string; timestamp?: number }
+	/** `origin`: where an input from outside the chat came from (Siri, a widget, a schedule). */
+	| { id: number; kind: "user"; text: string; timestamp?: number; origin?: string }
 	| {
 			id: number;
 			kind: "assistant";
@@ -100,6 +101,14 @@ export function displayItem(entry: EntryRecord): DisplayItem | undefined {
 				text: clip(textOf(message?.content)),
 				isError: message?.isError === true,
 				surface: (message?.details as { surface?: DisplaySurface } | undefined)?.surface,
+			};
+		case "app.input":
+			return {
+				id: entry.id,
+				kind: "user",
+				text: clip(textOf(message?.content)),
+				timestamp: message?.timestamp as number | undefined,
+				origin: (entry.data as { origin?: string } | undefined)?.origin,
 			};
 		case "pi.compaction":
 			return { id: entry.id, kind: "notice", text: "Earlier messages were summarized" };

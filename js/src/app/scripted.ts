@@ -7,6 +7,10 @@
 //   "widget …"    → create_surface (a morning widget), then publish_surface (asks for approval)
 //   "card …"      → create_surface (a checklist card shown in the chat)
 //   "repair …"    → create_surface with an error (a Ring without goal), then patch_surface to fix it
+//   "schedule …"  → schedule_task "nudge" in 3 seconds, once, with a notification; its run calls set_value nudge
+//   "remind …"    → notify_schedule in a minute
+//   "habits …"    → set_value habits (a to-do list), then create_surface and publish_surface for a widget whose checklist
+//                   rows toggle it and whose buttons reset it or send a prompt
 //   anything else → "You said: …"
 
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
@@ -36,6 +40,24 @@ const widgetSpec = {
 		{ c: "Ring", value: "$health.stepsToday", goal: 10000, symbol: "figure.walk", label: "Steps" },
 		{ c: "NextUp", source: "$calendar.next", families: ["systemMedium", "accessoryRectangular"] },
 		{ c: "Quote", text: "Small steps count.", emphasis: "secondary", families: ["systemMedium"] },
+	],
+};
+
+const habits = [{ title: "Water" }, { title: "Walk" }, { title: "Read" }];
+
+const habitsSpec = {
+	title: "Habits",
+	surface: "widget",
+	families: ["systemMedium", "systemLarge"],
+	slots: [
+		{ c: "Checklist", items: "$doc.habits", title: "Today" },
+		{
+			c: "ActionRow",
+			actions: [
+				{ title: "Reset", set: "habits", value: habits, symbol: "arrow.counterclockwise" },
+				{ title: "Plan", prompt: "Plan my evening around my habits.", symbol: "sparkles" },
+			],
+		},
 	],
 };
 
@@ -79,6 +101,13 @@ export function createScriptedModel() {
 		const results = messages.slice(lastUser + 1).filter((m) => m.role === "toolResult");
 		const word = prompt.toLowerCase().split(/\s+/)[0] ?? "";
 		const created = results.length === 1 && results[0]!.toolName === "create_surface" && !results[0]!.isError ? surfaceId(results[0]!.content) : undefined;
+		if (word === "habits" && results.length === 1 && results[0]!.toolName === "set_value") {
+			return fauxAssistantMessage(fauxToolCall("create_surface", { spec: habitsSpec as never }), { stopReason: "toolUse" });
+		}
+		const habitsSurface = word === "habits" && results.length === 2 && !results[1]!.isError ? surfaceId(results[1]!.content) : undefined;
+		if (habitsSurface !== undefined) {
+			return fauxAssistantMessage(fauxToolCall("publish_surface", { id: habitsSurface }), { stopReason: "toolUse" });
+		}
 		if (word === "widget" && created !== undefined) {
 			return fauxAssistantMessage(fauxToolCall("publish_surface", { id: created }), { stopReason: "toolUse" });
 		}
@@ -87,6 +116,11 @@ export function createScriptedModel() {
 				fauxToolCall("patch_surface", { id: created, baseVersion: 1, patch: [{ op: "add", path: "/slots/0/goal", value: 8 }] }),
 				{ stopReason: "toolUse" },
 			);
+		}
+		if (prompt.startsWith("[Scheduled task") && prompt.includes("set_value") && results.length === 0) {
+			return fauxAssistantMessage(fauxToolCall("set_value", { key: "nudge", value: `Refreshed at ${new Date().toISOString().slice(11, 16)} UTC` }), {
+				stopReason: "toolUse",
+			});
 		}
 		if (results.length > 0) {
 			const summary = results.map((r) => `${r.toolName}: ${r.isError ? "error" : "ok"} — ${text(r.content).slice(0, 200)}`);
@@ -111,6 +145,23 @@ export function createScriptedModel() {
 			case "repair":
 				return fauxAssistantMessage(
 					fauxToolCall("create_surface", { spec: { surface: "card", slots: [{ c: "Ring", value: 5, label: "Glasses" }] } as never }),
+					{ stopReason: "toolUse" },
+				);
+			case "schedule":
+				return fauxAssistantMessage(
+					fauxToolCall("schedule_task", {
+						name: "nudge",
+						prompt: "Write a new nudge with set_value nudge.",
+						at: new Date(Date.now() + 3000).toISOString(),
+						notify: true,
+					}),
+					{ stopReason: "toolUse" },
+				);
+			case "habits":
+				return fauxAssistantMessage(fauxToolCall("set_value", { key: "habits", value: habits as never }), { stopReason: "toolUse" });
+			case "remind":
+				return fauxAssistantMessage(
+					fauxToolCall("notify_schedule", { title: "Pi reminder", body: prompt.slice(7) || "Stretch", at: new Date(Date.now() + 60_000).toISOString() }),
 					{ stopReason: "toolUse" },
 				);
 			case "slow":

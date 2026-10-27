@@ -1,37 +1,31 @@
-import BackgroundTasks
 import SwiftUI
 
 @main
 struct PiApp: App {
     @State private var model = AppModel()
-    @State private var store = ChatStore()
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
-        // Must be registered before launch finishes. M3 schedules real work; M0 only checks that
-        // the background modes are accepted under this signing.
-        for identifier in [BackgroundIdentifiers.refresh, BackgroundIdentifiers.processing] {
-            BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: nil) { task in
-                task.setTaskCompleted(success: true)
-            }
-        }
+        // Before launch finishes: background launch handlers, and the notification delegate that receives actions
+        // which launched the app.
+        BackgroundWork.register()
+        if LaunchMode.current == .chat { ChatStore.shared.notifications.configure() }
     }
 
     var body: some Scene {
         WindowGroup {
             if LaunchMode.current == .chat {
-                ChatRootView(store: store)
-                    .task { await store.start() }
+                ChatRootView(store: ChatStore.shared)
+                    .task { await ChatStore.shared.ensureStarted() }
             } else {
                 ContentView(model: model)
                     .task { await model.start() }
             }
         }
+        .onChange(of: scenePhase) { old, new in
+            if LaunchMode.current == .chat { ChatStore.shared.scenePhaseChanged(from: old, to: new) }
+        }
     }
-}
-
-enum BackgroundIdentifiers {
-    static let refresh = "dev.jcdiv47.pidurable.refresh"
-    static let processing = "dev.jcdiv47.pidurable.processing"
 }
 
 /// What this launch does, from `-PiMode <mode>` (launch arguments land in `UserDefaults`).

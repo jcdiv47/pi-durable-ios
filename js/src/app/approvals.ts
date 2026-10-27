@@ -25,11 +25,18 @@ export type ApprovalRequest = {
 export const defaultPolicies: Record<string, ToolPolicy> = {
 	calendar_create_event: "ask",
 	publish_surface: "ask",
+	// A schedule runs the model unattended, on the user's key.
+	schedule_task: "ask",
 };
 
 export class Approvals {
 	policies: Record<string, ToolPolicy> = { ...defaultPolicies };
 	readonly #waiting = new Map<number, { request: ApprovalRequest; answer: (decision: Decision) => void }>();
+	/**
+	 * Answers that came before their request: a notification action launches the app, and its answer can arrive
+	 * before `resume()` reruns the hook that asks again.
+	 */
+	readonly #early = new Map<number, Decision>();
 
 	constructor(private readonly changed: (pending: ApprovalRequest[]) => void) {}
 
@@ -41,10 +48,16 @@ export class Approvals {
 		return [...this.#waiting.values()].map((w) => w.request);
 	}
 
-	/** Answers a waiting request; false when nothing waits under `id` (already answered, or aborted). */
+	/**
+	 * Answers a waiting request. False when nothing waits under `id` yet; the answer is then kept for the hook, in
+	 * case it is about to ask again (an answered or aborted request never asks again, so it is never used).
+	 */
 	answer(id: number, decision: Decision): boolean {
 		const waiting = this.#waiting.get(id);
-		if (waiting === undefined) return false;
+		if (waiting === undefined) {
+			this.#early.set(id, decision);
+			return false;
+		}
 		waiting.answer(decision);
 		return true;
 	}
@@ -85,7 +98,9 @@ export class Approvals {
 						if (policy === "deny") return { block: `The user has turned off ${call.name}.` };
 						let decision = await api.memo<Decision>("approval", context);
 						if (decision === undefined) {
-							const answered = await this.#ask(
+							const early = this.#early.get(api.taskId);
+							this.#early.delete(api.taskId);
+							const answered = early ?? await this.#ask(
 								{
 									id: api.taskId,
 									conversationId: api.conversationId,

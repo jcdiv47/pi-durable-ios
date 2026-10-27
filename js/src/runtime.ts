@@ -15,8 +15,9 @@ import {
 import { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
 import { AppleTools, appleToolInfo } from "./app/apple.ts";
 import { Approvals, type Decision, type ToolPolicy } from "./app/approvals.ts";
-import { Chat } from "./app/chat.ts";
+import { Chat, type OutsideInput, type WidgetAction } from "./app/chat.ts";
 import { type CustomProvider, ModelSetup } from "./app/models.ts";
+import { answerText, ScheduleTools, scheduleToolInfo } from "./app/schedule.ts";
 import { SurfaceTools, surfaceToolInfo } from "./app/surfaces.ts";
 import { createKillTestFaux, KillTestTools } from "./killtest.ts";
 import { fetchStats } from "./host/fetch.ts";
@@ -47,6 +48,17 @@ let root: Conversation | undefined;
 let chat: Chat | undefined;
 const setup = new ModelSetup();
 const approvals = new Approvals((pending) => emit({ type: "approvals", pending }));
+let wakeTimer: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * With `onWake` the Harness arms no timer for sleeps; the host does. While the process lives, a JS timer resumes
+ * due sleeps; Swift arms a BGAppRefreshTask from the same event for when iOS has suspended or evicted it.
+ */
+function onWake(wake: Wake): void {
+	clearTimeout(wakeTimer);
+	wakeTimer = wake.at === undefined ? undefined : setTimeout(() => harness?.resume(), Math.max(0, wake.at - Date.now()) + 50);
+	emit({ type: "wake", wake });
+}
 
 async function open(options: OpenOptions): Promise<{ openMs: number; rootId: number; wake: Wake }> {
 	if (harness !== undefined) throw new Error("PiRuntime is already open");
@@ -61,6 +73,8 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 	const approvalGate = approvals.extension();
 	registry.install(AppleTools);
 	registry.install(SurfaceTools);
+	const scheduleTools = ScheduleTools((taskId) => requireOpen().harness.abortTask(taskId as never, context));
+	registry.install(scheduleTools);
 	registry.install(approvalGate);
 
 	const storage = await SqliteStorage.open(openIOSSqliteDatabase(options.dbPath), { prefix: "pi_" });
@@ -70,8 +84,8 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 		{
 			models,
 			registry,
-			// iOS evicts the process; Swift arms BackgroundTasks / notifications from these (M3). M0 logs them.
-			onWake: (wake) => emit({ type: "wake", wake }),
+			// iOS suspends and evicts the process; see onWake above.
+			onWake,
 			onReport: (error, info) =>
 				emit({ type: "report", info, error: error instanceof Error ? `${error.name}: ${error.message}` : String(error) }),
 			settings: { toolExecution: "parallel" },
@@ -82,8 +96,10 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 	root = await harness.root(context, {
 		agent: { model: { provider: options.provider, modelId: options.modelId }, extensions: [KillTestTools(0)] },
 	});
-	chat = new Chat(harness, approvals, [AppleTools, SurfaceTools, approvalGate], emit);
+	chat = new Chat(harness, approvals, [AppleTools, SurfaceTools, scheduleTools, approvalGate], emit);
+	await chat.upgrade();
 	const wake = harness.wake();
+	onWake(wake);
 	emit({
 		type: "opened",
 		storageMs: tStorage - t0,
@@ -118,14 +134,6 @@ async function watch(): Promise<() => Promise<unknown>> {
 		emit({ type: "agent", events });
 	});
 	return () => stream.stop();
-}
-
-function answerText(entry: EntryRecord | undefined): string {
-	const message = (entry?.model as { content?: { type: string; text?: string }[] }[] | undefined)?.[0];
-	return (message?.content ?? [])
-		.filter((block) => block.type === "text")
-		.map((block) => block.text ?? "")
-		.join("");
 }
 
 /**
@@ -265,6 +273,7 @@ async function entries(): Promise<unknown> {
 }
 
 async function close(): Promise<void> {
+	clearTimeout(wakeTimer);
 	const current = harness;
 	harness = undefined;
 	root = undefined;
@@ -291,7 +300,8 @@ const app = {
 	approvals: async () => approvals.pending(),
 	answerApproval: async (id: number, decision: Decision) => requireChat().answerApproval(id, decision),
 	setPolicies: async (policies: Record<string, ToolPolicy>) => requireChat().setPolicies(policies),
-	tools: async () => [...appleToolInfo, ...surfaceToolInfo].map((tool) => ({ ...tool, policy: approvals.policy(tool.name) })),
+	tools: async () =>
+		[...appleToolInfo, ...surfaceToolInfo, ...scheduleToolInfo].map((tool) => ({ ...tool, policy: approvals.policy(tool.name) })),
 	surfaces: (conversationId: number) => requireChat().surfaces(conversationId),
 	publishedSurfaces: () => requireChat().published(),
 	unpublishSurface: (publishedId: string) => requireChat().unpublish(publishedId),
@@ -299,6 +309,21 @@ const app = {
 	configureProviders: async (keyedProviders: string[], custom?: CustomProvider) => configureProviders(keyedProviders, custom),
 	models: async () => setup.available(),
 	usage: async () => JSON.parse(JSON.stringify(await requireOpen().harness.usage(context))),
+	// Entry points outside the chat (App Intents, widget buttons, notification actions); each carries a request ID.
+	askFromOutside: (input: OutsideInput) => requireChat().ask(input),
+	widgetAction: (publishedId: string, action: WidgetAction, requestId: string, provider: string, modelId: string) =>
+		requireChat().widgetAction(publishedId, action, requestId, { provider, modelId }),
+	schedules: () => requireChat().schedules(),
+	runSchedule: (name: string, requestId: string, waitMs: number, provider: string, modelId: string) =>
+		requireChat().runSchedule(name, requestId, waitMs, { provider, modelId }),
+	cancelSchedule: (taskId: number) => requireChat().cancelSchedule(taskId),
+	/** BackgroundTasks and app activation: runs due sleeps and work a lost process left; returns what is left. */
+	resume: async () => {
+		const { harness } = requireOpen();
+		harness.resume();
+		return harness.wake();
+	},
+	wake: async () => requireOpen().harness.wake(),
 };
 
 (globalThis as Record<string, unknown>).PiRuntime = { open, watch, ask, submit, settle, entries, close, ...app };

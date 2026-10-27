@@ -393,6 +393,7 @@ struct CountdownView: View {
 struct ChecklistView: View {
     let r: SlotReader
     @Environment(\.surface) private var surface
+    @Environment(\.surfaceActions) private var actions
 
     var body: some View {
         let items = r.items("items")
@@ -403,6 +404,8 @@ struct ChecklistView: View {
                 Text(title).font(.caption.weight(.semibold)).surfaceTint(tint, surface).lineLimit(1)
             }
             if items.isEmpty { Text("All done").font(.subheadline).foregroundStyle(.secondary) }
+            // Rows of a $doc list are toggles; reminders stay read-only until Reminders writes (M4).
+            let toggles = r.slot["items"]?.string.flatMap(SurfaceSpec.docKey) != nil
             ForEach(items.prefix(max)) { item in
                 HStack(spacing: 6) {
                     Image(systemName: item.done ? "checkmark.circle.fill" : "circle")
@@ -413,6 +416,7 @@ struct ChecklistView: View {
                         .lineLimit(1)
                 }
                 .font(surface.family == .accessoryRectangular ? .caption : .subheadline)
+                .surfaceAction(toggles ? SurfaceAction.id(item: item.position, slot: r.slot.index) : nil, actions)
             }
             if items.count > max {
                 Text("+\(items.count - max) more").font(.caption2).foregroundStyle(.secondary)
@@ -596,12 +600,14 @@ struct BadgeView: View {
 struct ActionRowView: View {
     let r: SlotReader
     @Environment(\.surface) private var surface
+    @Environment(\.surfaceActions) private var handler
+    @Environment(\.surfaceIsStill) private var still
 
     var body: some View {
         let actions = (r.slot["actions"]?.array ?? []).prefix(3)
         let tint = surface.tint(r.literal("tint"), default: .accentColor)
         HStack(spacing: 8) {
-            ForEach(Array(actions.enumerated()), id: \.offset) { _, action in
+            ForEach(Array(actions.enumerated()), id: \.offset) { index, action in
                 let title = r.data.text(action["title"]) ?? ""
                 let content = SymbolLabel(text: title, symbol: action["symbol"]?.string)
                     .font(.caption.weight(.semibold))
@@ -610,7 +616,11 @@ struct ActionRowView: View {
                     .padding(.vertical, 8)
                     .foregroundStyle(tint)
                     .background(tint.opacity(surface.tinted ? 0.2 : 0.14), in: .capsule)
-                if let url = action["url"]?.string.flatMap(URL.init(string:)) { Link(destination: url) { content } } else { content }
+                if let url = action["url"]?.string.flatMap(URL.init(string:)) {
+                    if still { content } else { Link(destination: url) { content } }
+                } else {
+                    content.surfaceAction(SurfaceAction.id(button: index, slot: r.slot.index), handler)
+                }
             }
         }
     }

@@ -49,6 +49,8 @@ struct DisplayItem: Decodable, Identifiable, Hashable {
     var stopReason: String?
     var error: String?
     var timestamp: Double?
+    /// Where an input from outside the chat came from: Siri, a widget button, a schedule.
+    var origin: String?
     /// A surface a UI tool made or changed (`DisplaySurface` in display.ts).
     var surface: SurfaceRef?
 }
@@ -80,6 +82,47 @@ struct PublishedEntry: Decodable, Hashable, Identifiable {
     let publishedAt: Double
 
     var id: String { publishedId }
+}
+
+/// A scheduled task (`ScheduleEntry` in js/src/app/schedule.ts).
+struct ScheduleEntry: Decodable, Hashable, Identifiable {
+    let taskId: Int
+    let conversationId: Int
+    let name: String
+    let prompt: String
+    let everyMs: Double?
+    let nextAt: Double?
+    let runs: Int
+    let lastRunAt: Double?
+    let lastAnswer: String?
+    let notify: Bool
+
+    var id: Int { taskId }
+    var next: Date? { nextAt.map { Date(timeIntervalSince1970: $0 / 1000) } }
+    var lastRun: Date? { lastRunAt.map { Date(timeIntervalSince1970: $0 / 1000) } }
+    var every: String {
+        guard let everyMs else { return "Once" }
+        let minutes = Int(everyMs / 60_000)
+        return minutes % 1440 == 0 ? "Every \(minutes / 1440) d" : minutes % 60 == 0 ? "Every \(minutes / 60) h" : "Every \(minutes) min"
+    }
+}
+
+/// An input from outside the chat (`OutsideInput` in js/src/app/chat.ts).
+struct OutsideInput: Encodable {
+    let text: String
+    let requestId: String
+    let origin: String
+    let conversationId: Int?
+    let waitMs: Int
+    let model: ModelRef
+}
+
+struct OutsideAnswer: Decodable {
+    let conversationId: Int
+    /// `done`, `running` (still going after the wait) or `unanswered`.
+    let status: String
+    let text: String?
+    let surface: SurfaceRef?
 }
 
 struct LiveGeneration: Decodable, Hashable {

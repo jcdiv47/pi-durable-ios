@@ -6,13 +6,15 @@ enum Route: Hashable {
     case diagnostics
     case surfaces
     case surface(String)
+    case schedules
 
-    /// `pidurable://conversation/<id>` (widget taps) and `pidurable://widgets`.
+    /// `pidurable://conversation/<id>` (widget and Live Activity taps), `pidurable://widgets`, `pidurable://tasks`.
     init?(url: URL) {
         guard url.scheme == "pidurable" else { return nil }
         switch url.host() {
         case "conversation": guard let id = Int(url.lastPathComponent) else { return nil }; self = .conversation(id)
         case "widgets": self = .surfaces
+        case "tasks": self = .schedules
         default: return nil
         }
     }
@@ -33,11 +35,18 @@ struct ChatRootView: View {
                     case .diagnostics: DiagnosticsView(store: store)
                     case .surfaces: SurfacesView(store: store, path: $path)
                     case let .surface(publishedId): SurfaceDetailView(store: store, publishedId: publishedId, path: $path)
+                    case .schedules: SchedulesView(store: store, path: $path)
                     }
                 }
         }
         .onOpenURL { url in
             if let route = Route(url: url) { path = [route] }
+        }
+        .onChange(of: store.pendingRoute, initial: true) {
+            // From notifications and intents, which may arrive before this view exists.
+            guard let route = store.pendingRoute else { return }
+            store.pendingRoute = nil
+            path = [route]
         }
         .sheet(item: pendingApproval) { request in
             ApprovalSheet(store: store, request: request) {
@@ -83,6 +92,7 @@ struct ConversationListView: View {
             ToolbarItem(placement: .topBarLeading) {
                 Menu {
                     Button("Widgets", systemImage: "square.grid.2x2") { path.append(.surfaces) }
+                    Button("Scheduled Tasks", systemImage: "clock.arrow.circlepath") { path.append(.schedules) }
                     Button("Settings", systemImage: "gearshape") { path.append(.settings) }
                     Button("Diagnostics", systemImage: "stethoscope") { path.append(.diagnostics) }
                 } label: {
