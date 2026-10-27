@@ -2,6 +2,7 @@
 // transcript renders. Entries are immutable, so frames carry only the entries appended since the last
 // frame, plus the whole live state (streamed partial, running tools), which is small.
 
+import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { EntryRecord, InboxState } from "@earendil-works/pi-durable";
 
 export type DisplayToolCall = { id: string; name: string; arguments: string };
@@ -20,7 +21,18 @@ export type DisplayItem =
 			error?: string;
 			timestamp?: number;
 	  }
-	| { id: number; kind: "toolResult"; callId: string; toolName: string; text: string; isError: boolean; surface?: DisplaySurface }
+	| {
+			id: number;
+			kind: "toolResult";
+			callId: string;
+			toolName: string;
+			text: string;
+			isError: boolean;
+			timestamp?: number;
+			surface?: DisplaySurface;
+			/** The parsed output of a tool the chat draws a native card for (`cardTools`). */
+			data?: unknown;
+	  }
 	| { id: number; kind: "notice"; text: string };
 
 /** A queued user message, by submission ID. */
@@ -46,6 +58,7 @@ export type DisplayFrame = {
 	/** Messages waiting in the inbox, oldest first; a `steer` lands at the next tool boundary. */
 	queue: DisplayQueued[];
 	model?: { provider: string; modelId: string };
+	thinkingLevel: ModelThinkingLevel;
 	usage: { input: number; output: number; cost: number };
 };
 
@@ -57,6 +70,29 @@ function clip(text: string): string {
 }
 
 type Block = { type: string; text?: string; thinking?: string; id?: string; name?: string; arguments?: unknown };
+
+/** Tools whose JSON output the chat draws as a card (ResultCards.swift); the text is clipped, the data is not. */
+const cardTools = new Set([
+	"reminders_query",
+	"reminders_create",
+	"reminders_complete",
+	"calendar_query",
+	"calendar_create_event",
+	"health_query",
+	"location_current",
+]);
+
+/** Larger outputs keep only their text. */
+const MAX_DATA = 64_000;
+
+function cardData(toolName: string, isError: boolean, text: string): unknown {
+	if (isError || !cardTools.has(toolName) || text.length > MAX_DATA) return undefined;
+	try {
+		return JSON.parse(text);
+	} catch {
+		return undefined;
+	}
+}
 
 function textOf(content: unknown): string {
 	if (typeof content === "string") return content;
@@ -96,16 +132,22 @@ export function displayItem(entry: EntryRecord): DisplayItem | undefined {
 				timestamp: message?.timestamp as number | undefined,
 			};
 		}
-		case "pi.tool-result":
+		case "pi.tool-result": {
+			const toolName = String(message?.toolName ?? "");
+			const isError = message?.isError === true;
+			const text = textOf(message?.content);
 			return {
 				id: entry.id,
 				kind: "toolResult",
 				callId: String(message?.toolCallId ?? ""),
-				toolName: String(message?.toolName ?? ""),
-				text: clip(textOf(message?.content)),
-				isError: message?.isError === true,
+				toolName,
+				text: clip(text),
+				isError,
+				timestamp: message?.timestamp as number | undefined,
 				surface: (message?.details as { surface?: DisplaySurface } | undefined)?.surface,
+				data: cardData(toolName, isError, text),
 			};
+		}
 		case "app.input":
 			return {
 				id: entry.id,
@@ -184,7 +226,7 @@ export class FrameBuilder {
 		}
 		this.#sent = ids;
 		const docs = value.docs;
-		const agent = docs["pi.agent"] as { model?: { provider: string; modelId: string } } | undefined;
+		const agent = docs["pi.agent"] as { model?: { provider: string; modelId: string }; thinkingLevel?: ModelThinkingLevel } | undefined;
 		const inbox = docs["pi.inbox"] as InboxState | undefined;
 		return {
 			conversationId: this.conversationId,
@@ -195,6 +237,7 @@ export class FrameBuilder {
 				item.mode === "write" ? [] : [{ id: item.id as number, text: textOf(item.content), mode: item.mode }],
 			),
 			model: agent?.model,
+			thinkingLevel: agent?.thinkingLevel ?? "off",
 			usage: displayUsage(docs["pi.usage"] as UsageDoc | undefined),
 		};
 	}

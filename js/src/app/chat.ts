@@ -2,6 +2,7 @@
 // these emit: `frame` events for watched conversations, `conversations` when the list changes, and
 // `approvals` when a tool call waits for the user.
 
+import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { AttachedReplicatedState } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord";
@@ -105,6 +106,8 @@ export class Chat {
 		private readonly approvals: Approvals,
 		private readonly extensions: readonly Extension[],
 		private readonly emit: (event: Record<string, unknown>) => void,
+		/** The nearest thinking level a model supports (`ModelSetup.clampThinking`). */
+		private readonly clampThinking: (model: { provider: string; modelId: string }, level: ModelThinkingLevel) => ModelThinkingLevel = (_, level) => level,
 	) {}
 
 	async conversations(): Promise<ConversationMeta[]> {
@@ -116,14 +119,21 @@ export class Chat {
 		this.emit({ type: "conversations", items: await this.conversations() });
 	}
 
-	/** `requestId`: an outside request that starts this conversation, recorded in the same commit. */
-	async create(model: { provider: string; modelId: string }, requestId?: string): Promise<ConversationMeta> {
+	/**
+	 * `requestId`: an outside request that starts this conversation, recorded in the same commit. `thinkingLevel`: the
+	 * effort the user last picked, clamped to the model; without it Pi asks for no thinking.
+	 */
+	async create(model: { provider: string; modelId: string }, requestId?: string, thinkingLevel?: ModelThinkingLevel): Promise<ConversationMeta> {
 		const now = Date.now();
 		let meta: ConversationMeta | undefined;
 		await this.harness.createConversation(
 			{
 				ownership: { kind: "ownerless" },
-				agent: { model, extensions: [...this.extensions] },
+				agent: {
+					model,
+					extensions: [...this.extensions],
+					...(thinkingLevel === undefined ? {} : { thinkingLevel: this.clampThinking(model, thinkingLevel) }),
+				},
 				init: async (tx, id) => {
 					meta = { id, title: untitled, createdAt: now, updatedAt: now };
 					(await tx.doc(ConversationIndex)).items.push(meta);
@@ -406,8 +416,21 @@ export class Chat {
 		await this.#changed();
 	}
 
+	/** Switches the model, and moves the thinking level to the nearest one the new model supports. */
 	async setModel(id: number, provider: string, modelId: string): Promise<void> {
-		await (await this.#conversation(id)).configure({ model: { provider, modelId } }, context);
+		const conversation = await this.#conversation(id);
+		const { thinkingLevel } = await conversation.agent(context);
+		const model = { provider, modelId };
+		await conversation.configure({ model, thinkingLevel: this.clampThinking(model, thinkingLevel) }, context);
+	}
+
+	/** The effort of the conversation's next requests, clamped to its model. Returns the level set. */
+	async setThinking(id: number, level: ModelThinkingLevel): Promise<ModelThinkingLevel> {
+		const conversation = await this.#conversation(id);
+		const { model } = await conversation.agent(context);
+		const clamped = model === undefined ? level : this.clampThinking(model, level);
+		await conversation.configure({ thinkingLevel: clamped }, context);
+		return clamped;
 	}
 
 	/** Live tasks with what the scheduler would do with them; parked ones (`restart_limit`) can be retried. */

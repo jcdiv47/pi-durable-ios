@@ -8,6 +8,7 @@ final class ChatLog: @unchecked Sendable {
     private var items: [Int: [[String: Any]]] = [:]
     private var live: [Int: [String: Any]] = [:]
     private var queues: [Int: [[String: Any]]] = [:]
+    private var thinkingLevels: [Int: String] = [:]
     private var pending: [[String: Any]] = []
     private var calls: [(String, [String: Any])] = []
     private var conversationTitles: [String] = []
@@ -24,6 +25,7 @@ final class ChatLog: @unchecked Sendable {
                 items[id] = (frame["reset"] as! Bool) ? new : (items[id] ?? []) + new
                 live[id] = frame["live"] as? [String: Any]
                 queues[id] = frame["queue"] as? [[String: Any]]
+                thinkingLevels[id] = frame["thinkingLevel"] as? String
             case "approvals":
                 pending = event["pending"] as! [[String: Any]]
             case "conversations":
@@ -45,6 +47,7 @@ final class ChatLog: @unchecked Sendable {
     func items(_ id: Int) -> [[String: Any]] { lock.withLock { items[id] ?? [] } }
     func busy(_ id: Int) -> Bool { lock.withLock { live[id]?["busy"] as? Bool ?? false } }
     func queue(_ id: Int) -> [[String: Any]] { lock.withLock { queues[id] ?? [] } }
+    func thinking(_ id: Int) -> String? { lock.withLock { thinkingLevels[id] } }
     func liveText(_ id: Int) -> String { lock.withLock { (live[id]?["generation"] as? [String: Any])?["text"] as? String ?? "" } }
     var approvals: [[String: Any]] { lock.withLock { pending } }
     var titles: [String] { lock.withLock { conversationTitles } }
@@ -75,6 +78,7 @@ func openChat(_ log: ChatLog, db: String) async throws -> PiHarness {
             switch name {
             case "calendar.createEvent": return #"{"created":true,"eventId":"E1"}"#
             case "calendar.query": return #"{"events":[]}"#
+            case "reminders.query": return #"{"count":1,"truncated":false,"reminders":[{"id":"R1","title":"Buy oat milk","completed":false,"list":"Home"}]}"#
             case "reminders.create": return #"{"created":true}"#
             default: throw JSRuntimeError("unexpected host call \(name)")
             }
@@ -135,6 +139,51 @@ struct ChatTests {
         #expect(denied?["isError"] as? Bool == true)
         #expect((denied?["text"] as? String)?.contains("declined") == true)
         #expect(log.calls("calendar.createEvent") == 1, "a denied call never reaches Swift")
+        try await harness.close()
+    }
+
+    @Test("A card tool's result carries its parsed output and a timestamp", .timeLimit(.minutes(1)))
+    func cardData() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let log = ChatLog()
+        let harness = try await openChat(log, db: directory.appendingPathComponent("chat.sqlite").path)
+        let meta: Meta = try await harness.call("PiRuntime.createConversation", ["scripted", "assistant"])
+        try await harness.perform("PiRuntime.watchConversation", [meta.id])
+
+        try await harness.perform("PiRuntime.send", [meta.id, "tasks", "r1"])
+        try await until { !log.busy(meta.id) && log.items(meta.id).count == 4 }
+        let result = try #require(log.last(meta.id, kind: "toolResult"))
+        #expect(result["toolName"] as? String == "reminders_query")
+        #expect(result["timestamp"] as? Double != nil)
+        let reminders = (result["data"] as? [String: Any])?["reminders"] as? [[String: Any]]
+        #expect(reminders?.first?["title"] as? String == "Buy oat milk")
+        #expect(log.calls("reminders.query") == 1)
+        try await harness.close()
+    }
+
+    @Test("The effort is per conversation and clamped to what its model supports", .timeLimit(.minutes(1)))
+    func thinkingLevel() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let log = ChatLog()
+        let harness = try await openChat(log, db: directory.appendingPathComponent("chat.sqlite").path)
+        // The offline model reasons up to high: no xhigh or max.
+        let meta: Meta = try await harness.call("PiRuntime.createConversation", ["scripted", "assistant", "max"])
+        try await harness.perform("PiRuntime.watchConversation", [meta.id])
+        try await until { log.thinking(meta.id) == "high" }
+
+        let set: String = try await harness.call("PiRuntime.setThinking", [meta.id, "low"])
+        #expect(set == "low")
+        try await until { log.thinking(meta.id) == "low" }
+
+        // The kill-test model does not reason: switching to it turns thinking off.
+        try await harness.perform("PiRuntime.setModel", [meta.id, "faux", "killtest"])
+        try await until { log.thinking(meta.id) == "off" }
+
+        let plain: Meta = try await harness.call("PiRuntime.createConversation", ["scripted", "assistant"])
+        try await harness.perform("PiRuntime.watchConversation", [plain.id])
+        try await until { log.thinking(plain.id) == "off" }
         try await harness.close()
     }
 

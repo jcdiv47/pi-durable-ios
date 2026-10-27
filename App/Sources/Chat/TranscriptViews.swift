@@ -1,6 +1,52 @@
 import PiUI
 import SwiftUI
 
+/// A transcript entry as the conversation shows it: messages as they are, and each stretch of tool calls folded into one
+/// "Worked" row, with the cards its results draw under it.
+enum TranscriptRow: Identifiable {
+    /// `resent`: an answer cut off by a crash or eviction, which Pi then asked for again.
+    case item(DisplayItem, resent: Bool)
+    /// Tool-calling answers in a row, and their results (looked up by call ID).
+    case work(id: Int, steps: [DisplayItem])
+
+    var id: Int {
+        switch self {
+        case let .item(item, _): item.id
+        // An answer with text and calls is both an item and the start of a work row.
+        case let .work(id, _): -id
+        }
+    }
+
+    static func rows(_ items: [DisplayItem]) -> [TranscriptRow] {
+        let calls = Set(items.flatMap { $0.toolCalls ?? [] }.map(\.id))
+        var rows: [TranscriptRow] = []
+        for (index, item) in items.enumerated() {
+            switch item.kind {
+            case .assistant:
+                let hasCalls = !(item.toolCalls ?? []).isEmpty
+                let stopped = ["aborted", "error", "length"].contains(item.stopReason ?? "")
+                let shown = !(item.text ?? "").isEmpty || !(item.thinking ?? "").isEmpty || !hasCalls || stopped
+                if shown {
+                    let resent = item.stopReason == "aborted" && index + 1 < items.count && items[index + 1].kind == .assistant
+                    rows.append(.item(item, resent: resent))
+                }
+                guard hasCalls else { continue }
+                if !shown, case let .work(id, steps)? = rows.last {
+                    rows[rows.count - 1] = .work(id: id, steps: steps + [item])
+                } else {
+                    rows.append(.work(id: item.id, steps: [item]))
+                }
+            case .toolResult:
+                // Results show with their calls; one whose call is not in view shows on its own.
+                if !calls.contains(item.callId ?? "") { rows.append(.item(item, resent: false)) }
+            default:
+                rows.append(.item(item, resent: false))
+            }
+        }
+        return rows
+    }
+}
+
 /// One committed transcript entry.
 struct TranscriptItemView: View {
     let item: DisplayItem
@@ -26,14 +72,7 @@ struct TranscriptItemView: View {
                 }
             }
         case .assistant:
-            AssistantView(
-                text: item.text ?? "",
-                thinking: item.thinking ?? "",
-                toolCalls: item.toolCalls ?? [],
-                state: state,
-                store: store,
-                streaming: false
-            )
+            AssistantView(text: item.text ?? "", thinking: item.thinking ?? "", streaming: false)
             if item.stopReason == "aborted" && resent {
                 Label("Interrupted when Pi was closed; asked again", systemImage: "arrow.clockwise.circle").font(.caption).foregroundStyle(.secondary)
             } else if item.stopReason == "aborted" {
@@ -46,10 +85,7 @@ struct TranscriptItemView: View {
                 Label("The answer hit the length limit", systemImage: "scissors").font(.caption).foregroundStyle(.secondary)
             }
         case .toolResult:
-            // Shown inside its call's card; a result whose call is not in view is shown on its own.
-            if !state.items.contains(where: { $0.toolCalls?.contains { $0.id == item.callId } == true }) {
-                ToolCallCard(call: ToolCallItem(id: item.callId ?? "", name: item.toolName ?? "tool", arguments: "{}"), result: item, live: nil, approval: nil, store: store)
-            }
+            ToolCallCard(call: ToolCallItem(id: item.callId ?? "", name: item.toolName ?? "tool", arguments: "{}"), result: item, live: nil, approval: nil, store: store)
         case .notice:
             Text(item.text ?? "")
                 .font(.caption)
@@ -66,76 +102,188 @@ private func originSymbol(_ origin: String) -> String {
     return "waveform"
 }
 
-/// The streamed partial answer and running tools of the current run.
+/// A stretch of tool calls as one row: "Worked 11s · 2 steps", which opens to each call's card. Calls waiting for
+/// approval stay open, and the results' cards (native ones and the agent's surfaces) always show under it.
+struct WorkRow: View {
+    let steps: [DisplayItem]
+    let state: ConversationState
+    let store: ChatStore
+    @State private var expanded = false
+
+    var body: some View {
+        let calls = steps.flatMap { $0.toolCalls ?? [] }
+        let results = calls.compactMap { state.results[$0.id] }
+        // Only an unfinished row reads the live state, so finished rows are not redrawn with every streamed frame.
+        let running = results.count < calls.count && state.live.busy
+        let waiting = Set(store.approvals.filter { $0.conversationId == state.id }.map(\.callId))
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                withAnimation(.snappy) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    if running {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Image(systemName: results.contains { $0.isError == true } ? "exclamationmark.triangle" : "apple.terminal")
+                            .foregroundStyle(results.contains { $0.isError == true } ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                    }
+                    if running, let start = steps.first?.date {
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            Text(summary(calls: calls, results: results, running: true, seconds: context.date.timeIntervalSince(start)))
+                        }
+                    } else {
+                        Text(summary(calls: calls, results: results, running: running, seconds: duration(results)))
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                        .foregroundStyle(.tertiary)
+                }
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(.quaternary.opacity(0.5), in: .capsule)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("work.row")
+            ForEach(calls.filter { expanded || waiting.contains($0.id) }, id: \.id) { call in
+                ToolCallCard(
+                    call: call,
+                    result: state.results[call.id],
+                    live: running ? state.liveTool(call.id) : nil,
+                    approval: store.approvals.first { $0.conversationId == state.id && $0.callId == call.id },
+                    store: store
+                )
+            }
+            ForEach(calls, id: \.id) { call in
+                if let result = state.results[call.id] { card(call, result) }
+            }
+        }
+    }
+
+    @ViewBuilder private func card(_ call: ToolCallItem, _ result: DisplayItem) -> some View {
+        if let surface = result.surface {
+            if store.states[surface.conversationId]?.latestSurfaceCall[surface.id].map({ $0 == call.id }) ?? true {
+                SurfaceStrip(surface: surface, store: store)
+            } else {
+                Text("\(surface.id) version \(surface.version); newer below").font(.caption).foregroundStyle(.secondary)
+            }
+        } else if let content = ResultCardContent(call: call, result: result) {
+            ResultCard(content: content, store: store)
+        }
+    }
+
+    /// From the first answer to the last result; nil without timestamps (entries from before they were shown).
+    private func duration(_ results: [DisplayItem]) -> TimeInterval? {
+        guard let start = steps.first?.date, let end = results.compactMap(\.date).max(), end >= start else { return nil }
+        return end.timeIntervalSince(start)
+    }
+
+    private func summary(calls: [ToolCallItem], results: [DisplayItem], running: Bool, seconds: TimeInterval?) -> String {
+        let time = seconds.map { " \(Self.elapsed($0))" } ?? ""
+        var parts = ["\(running ? "Working" : "Worked")\(time)", calls.count == 1 ? "1 step" : "\(calls.count) steps"]
+        let failed = results.filter { $0.isError == true }.count
+        if failed > 0 { parts.append("\(failed) failed") }
+        return parts.joined(separator: " · ")
+    }
+
+    /// "8s", "1m 25s".
+    static func elapsed(_ seconds: TimeInterval) -> String {
+        let total = max(0, Int(seconds.rounded()))
+        return total < 60 ? "\(total)s" : "\(total / 60)m \(total % 60)s"
+    }
+}
+
+/// The streamed partial answer of the current run, and what the run is doing.
 struct LiveView: View {
     let state: ConversationState
     let store: ChatStore
 
     var body: some View {
         let live = state.live
-        if let generation = live.generation {
-            AssistantView(text: generation.text, thinking: generation.thinking, toolCalls: generation.toolCalls, state: state, store: store, streaming: true)
-            if let retry = generation.retry {
-                Label("Retrying: \(retry.error)", systemImage: "arrow.clockwise")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-            }
-        } else if live.busy, live.tools.allSatisfy({ $0.status == "done" }) {
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.small)
-                Text("Thinking…").font(.footnote).foregroundStyle(.secondary)
-            }
+        if let generation = live.generation, !(generation.text.isEmpty && generation.thinking.isEmpty) {
+            AssistantView(text: generation.text, thinking: generation.thinking, streaming: true)
         }
-        if live.compacting {
-            Label("Summarizing earlier messages…", systemImage: "rectangle.compress.vertical").font(.caption).foregroundStyle(.secondary)
+        if let retry = live.generation?.retry {
+            Label("Retrying: \(retry.error)", systemImage: "arrow.clockwise")
+                .font(.caption)
+                .foregroundStyle(.orange)
         }
         if let error = live.compactionError {
             Label("Summarizing failed: \(error)", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
         }
+        if live.busy {
+            LiveStatusRow(state: state, store: store)
+        }
+    }
+}
+
+/// The run's step and how long it has been going ("Thinking 8s", "Waiting for you"), the same words as its Live Activity.
+struct LiveStatusRow: View {
+    let state: ConversationState
+    let store: ChatStore
+
+    var body: some View {
+        let approval = store.approvals.first { $0.conversationId == state.id }
+        let status = RunActivities.status(state.live, approval: approval)
+        HStack(spacing: 10) {
+            Image(systemName: approval != nil ? "hand.raised.fill" : status.symbol)
+                .foregroundStyle(approval != nil ? AnyShapeStyle(.orange) : AnyShapeStyle(.tint))
+                .symbolEffect(.pulse, isActive: approval == nil)
+                .frame(width: 22)
+            Text(approval != nil ? "Waiting for you" : status.status.replacingOccurrences(of: "…", with: ""))
+                .lineLimit(1)
+            Spacer()
+            if let since = state.busySince {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    Text(WorkRow.elapsed(context.date.timeIntervalSince(since))).monospacedDigit().foregroundStyle(.secondary)
+                }
+            }
+        }
+        .font(.subheadline)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(approval != nil ? AnyShapeStyle(.orange.opacity(0.15)) : AnyShapeStyle(.quaternary.opacity(0.5)), in: .capsule)
+        .accessibilityIdentifier("live.status")
     }
 }
 
 struct AssistantView: View {
     let text: String
     let thinking: String
-    let toolCalls: [ToolCallItem]
-    let state: ConversationState
-    let store: ChatStore
     let streaming: Bool
     @State private var showThinking = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if !thinking.isEmpty {
-                DisclosureGroup(isExpanded: $showThinking) {
-                    Text(thinking).font(.footnote).foregroundStyle(.secondary).textSelection(.enabled)
+                Button {
+                    withAnimation(.snappy) { showThinking.toggle() }
                 } label: {
-                    Label(streaming && text.isEmpty ? "Thinking…" : "Thought", systemImage: "brain")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        Image(systemName: "brain")
+                        Text(streaming && text.isEmpty ? "Thinking" : "Thought")
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                            .rotationEffect(.degrees(showThinking ? 90 : 0))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(.quaternary.opacity(0.5), in: .capsule)
+                }
+                .buttonStyle(.plain)
+                if showThinking {
+                    Text(thinking).font(.footnote).foregroundStyle(.secondary).textSelection(.enabled)
                 }
             }
             if !text.isEmpty {
-                Text(markdown(text))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            } else if streaming, thinking.isEmpty, toolCalls.isEmpty {
-                ProgressView().controlSize(.small)
-            }
-            ForEach(toolCalls, id: \.id) { call in
-                ToolCallCard(
-                    call: call,
-                    result: state.results[call.id],
-                    live: state.liveTool(call.id),
-                    approval: store.approvals.first { $0.conversationId == state.id && $0.callId == call.id },
-                    store: store
-                )
+                MarkdownText(source: text)
             }
         }
-    }
-
-    private func markdown(_ text: String) -> AttributedString {
-        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text)
     }
 }
 
@@ -171,13 +319,6 @@ struct ToolCallCard: View {
                 }
             }
             .buttonStyle(.plain)
-            if let surface = result?.surface {
-                if state(for: surface) {
-                    SurfaceStrip(surface: surface, store: store)
-                } else {
-                    Text("\(surface.id) version \(surface.version); newer below").font(.caption).foregroundStyle(.secondary)
-                }
-            }
             if let approval {
                 // The same glass buttons as the approval sheet.
                 GlassEffectContainer {
@@ -203,11 +344,6 @@ struct ToolCallCard: View {
         .padding(10)
         .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 12))
         .accessibilityIdentifier("tool.\(call.name)")
-    }
-
-    /// Whether this call holds the surface's newest version in the conversation.
-    private func state(for surface: SurfaceRef) -> Bool {
-        store.states[surface.conversationId]?.latestSurfaceCall[surface.id].map { $0 == call.id } ?? true
     }
 }
 

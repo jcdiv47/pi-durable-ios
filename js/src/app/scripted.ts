@@ -11,12 +11,14 @@
 //   "remind …"    → notify_schedule in a minute
 //   "todo …"      → reminders_create due today at 18:00 (asks for approval)
 //   "where …"     → location_current
+//   "tasks …"     → reminders_query for what is due by the end of today
+//   "markdown …"  → a short thought, then an answer with headings, lists, a table, a quote and code
 //   "chores …"    → create_surface and publish_surface for a widget whose checklist rows complete open reminders
 //   "habits …"    → set_value habits (a to-do list), then create_surface and publish_surface for a widget whose checklist
 //                   rows toggle it and whose buttons reset it or send a prompt
 //   anything else → "You said: …"
 
-import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
+import { fauxAssistantMessage, fauxProvider, fauxText, fauxThinking, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 
 type Transcript = { messages: { role: string; content?: unknown; toolName?: string; isError?: boolean }[] };
 
@@ -89,6 +91,33 @@ function surfaceId(content: unknown): string | undefined {
 	}
 }
 
+const markdownAnswer = [
+	"## Your evening",
+	"",
+	"You have **three** things left, and one is *overdue*:",
+	"",
+	"1. Pick up the `plastic bag` for the storage unit",
+	"2. Defrost dinner",
+	"   - check the freezer first",
+	"   - leave it in the fridge",
+	"3. Brush the kids' teeth",
+	"",
+	"> Tip: tick them off right in the card.",
+	"",
+	"| When | What |",
+	"|:--|--:|",
+	"| 19:00 | Dinner |",
+	"| 22:00 | Bed |",
+	"",
+	"```swift",
+	'let greeting = "Hello"',
+	"print(greeting)",
+	"```",
+	"",
+	"---",
+	"See [Reminders](https://www.icloud.com/reminders) for the rest.",
+].join("\n");
+
 const longAnswer = Array.from(
 	{ length: 60 },
 	(_, i) => `Sentence ${i + 1} of a long answer that streams slowly, so there is time to stop it.`,
@@ -97,7 +126,8 @@ const longAnswer = Array.from(
 export function createScriptedModel() {
 	const faux = fauxProvider({
 		provider: "scripted",
-		models: [{ id: "assistant", name: "Offline demo (scripted)" }],
+		// Reasoning, so the effort picker can be tried offline; the faux provider ignores the level.
+		models: [{ id: "assistant", name: "Offline demo (scripted)", reasoning: true }],
 		tokensPerSecond: 120,
 		tokenSize: { min: 2, max: 6 },
 	});
@@ -171,6 +201,10 @@ export function createScriptedModel() {
 				);
 			case "habits":
 				return fauxAssistantMessage(fauxToolCall("set_value", { key: "habits", value: habits as never }), { stopReason: "toolUse" });
+			case "tasks":
+				return fauxAssistantMessage(fauxToolCall("reminders_query", { dueBefore: today(24) }), { stopReason: "toolUse" });
+			case "markdown":
+				return fauxAssistantMessage([fauxThinking("They want formatting. A list, a table and some code."), fauxText(markdownAnswer)]);
 			case "where":
 				return fauxAssistantMessage(fauxToolCall("location_current", {}), { stopReason: "toolUse" });
 			case "todo":

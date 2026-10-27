@@ -11,7 +11,9 @@ decisions that change the spec go in `docs/adr/`.
   `.entitlements` files are generated and git-ignored; edit `project.yml` instead.
 - `App/`, `Widgets/`: app and WidgetKit extension.
 - `App/Sources/Chat/`: the chat app (`ChatStore.shared` owns the Harness; conversation list, transcript,
-  approval sheet, settings, diagnostics, scheduled tasks, the component gallery and design tuning).
+  approval sheet, settings, diagnostics, scheduled tasks, the component gallery and design tuning). The transcript
+  folds tool calls into "Worked" rows (`TranscriptRow`), draws Apple tool results as native cards (`ResultCards`,
+  from `cardTools` in display.ts) and assistant text as Markdown (`MarkdownText`).
   `App/Sources/M0/`: the headless check modes.
 - `App/Sources/System/`: M3's system integration: App Intents, entities, Siri phrases and snippets
   (`PiAppIntents`), BackgroundTasks from `onWake` (`BackgroundWork`), notifications with actions (`Notifications`),

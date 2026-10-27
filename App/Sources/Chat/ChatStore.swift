@@ -59,6 +59,17 @@ final class ChatStore {
         didSet { settings.set(defaultModel.key, forKey: "defaultModel") }
     }
 
+    /// The effort new conversations start with: the one last picked in any conversation, clamped to the model in JS.
+    private(set) var defaultThinking: String {
+        didSet { settings.set(defaultThinking, forKey: "defaultThinking") }
+    }
+
+    /// Reminders' state by ID, read when a card shows them or set when one is ticked: a card's rows are its tool
+    /// result's snapshot.
+    private(set) var reminderDone: [String: Bool] = [:]
+    /// Reminder lists' and calendars' colors by title, read when a card first needs them.
+    private(set) var listColors: (reminders: [String: Color], calendars: [String: Color])?
+
     var custom: PiHarness.CustomProvider? {
         didSet {
             settings.set(try? JSONEncoder().encode(custom), forKey: "customProvider")
@@ -86,6 +97,7 @@ final class ChatStore {
     init() {
         let stored = settings.string(forKey: "defaultModel")?.split(separator: "/", maxSplits: 1).map(String.init)
         defaultModel = stored?.count == 2 ? ModelRef(provider: stored![0], modelId: stored![1]) : Self.offlineModel
+        defaultThinking = settings.string(forKey: "defaultThinking") ?? "medium"
         custom = settings.data(forKey: "customProvider").flatMap { try? JSONDecoder().decode(PiHarness.CustomProvider.self, from: $0) }
         ProviderKeys.setCustomHost(custom.flatMap { URL(string: $0.baseUrl)?.host() })
         dial = settings.data(forKey: Self.dialKey).flatMap { try? JSONDecoder().decode(GenerativityDial.self, from: $0) } ?? GenerativityDial()
@@ -265,7 +277,9 @@ final class ChatStore {
     func newConversation() async -> ConversationMeta? {
         guard let harness else { return nil }
         do {
-            let meta: ConversationMeta = try await harness.call("PiRuntime.createConversation", [defaultModel.provider, defaultModel.modelId])
+            let meta: ConversationMeta = try await harness.call(
+                "PiRuntime.createConversation", [defaultModel.provider, defaultModel.modelId, defaultThinking]
+            )
             watch(meta.id)
             return meta
         } catch {
@@ -342,6 +356,19 @@ final class ChatStore {
         guard let harness else { return }
         do { try await harness.perform("PiRuntime.setModel", [id, model.provider, model.modelId]) } catch { report("set model", error) }
     }
+
+    /// The effort of the conversation's next requests; also the default for new conversations.
+    func setThinking(_ level: String, for id: Int) async {
+        guard let harness else { return }
+        do {
+            let _: String = try await harness.call("PiRuntime.setThinking", [id, level])
+            defaultThinking = level
+        } catch {
+            report("set effort", error)
+        }
+    }
+
+    func model(_ ref: ModelRef?) -> ModelInfo? { models.first { $0.ref == ref } }
 
     func modelName(_ ref: ModelRef?) -> String {
         guard let ref else { return "No model" }
@@ -565,6 +592,31 @@ final class ChatStore {
     }
 
     private struct WidgetActionResult: Decodable { let conversationId: Int? }
+
+    /// A reminder row in a chat card: EventKit only, like a widget's. The card shows the change at once; a failure undoes it.
+    func setReminder(_ id: String, done: Bool) async {
+        reminderDone[id] = done
+        do {
+            let json = String(decoding: try JSONSerialization.data(withJSONObject: ["id": id, "completed": done]), as: UTF8.self)
+            _ = try await appleTools.handle("reminders.complete", json)
+            await refreshSurfaceData(force: true)
+            SurfaceStore.reloadWidgets()
+        } catch {
+            reminderDone[id] = !done
+            report("complete reminder", error)
+        }
+    }
+
+    /// A card's reminders as they are now: its rows are the tool result's snapshot, which may be days old.
+    func loadReminderStates(_ ids: [String]) {
+        for (id, done) in appleTools.reminderCompletion(ids) where reminderDone[id] != done { reminderDone[id] = done }
+    }
+
+    func loadListColors() {
+        guard listColors == nil else { return }
+        let colors = appleTools.listColors()
+        listColors = (colors.reminders.mapValues { Color(cgColor: $0) }, colors.calendars.mapValues { Color(cgColor: $0) })
+    }
 
     /// A reminder row in a widget: EventKit only, no Pi. Completing is idempotent, so a repeated delivery is harmless.
     private func completeReminder(_ id: String, requestId: String) async {

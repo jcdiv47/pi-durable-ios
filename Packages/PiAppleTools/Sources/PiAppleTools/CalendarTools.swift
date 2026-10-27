@@ -205,6 +205,22 @@ final class CalendarTools: @unchecked Sendable {
         return item
     }
 
+    /// Each reminder list's or calendar's color by title. Empty without access: it never asks.
+    func colors(_ type: EKEntityType) -> [String: CGColor] {
+        guard EKEventStore.authorizationStatus(for: type) == .fullAccess else { return [:] }
+        return Dictionary(store.calendars(for: type).compactMap { calendar in calendar.cgColor.map { (calendar.title, $0) } }) { first, _ in first }
+    }
+
+    /// Whether each reminder is done now, by ID; reminders that are gone are left out. Empty without access.
+    func completion(_ ids: [String]) -> [String: Bool] {
+        guard EKEventStore.authorizationStatus(for: .reminder) == .fullAccess else { return [:] }
+        var states: [String: Bool] = [:]
+        for id in ids {
+            if let reminder = store.calendarItem(withIdentifier: id) as? EKReminder { states[id] = reminder.isCompleted }
+        }
+        return states
+    }
+
     private func requireAccess(_ type: EKEntityType) async throws {
         let name = type == .event ? "Calendar" : "Reminders"
         switch EKEventStore.authorizationStatus(for: type) {
