@@ -11,19 +11,20 @@ decisions that change the spec go in `docs/adr/`.
   `.entitlements` files are generated and git-ignored; edit `project.yml` instead.
 - `App/`, `Widgets/`: app and WidgetKit extension.
 - `App/Sources/Chat/`: the chat app (`ChatStore.shared` owns the Harness; conversation list, transcript,
-  approval sheet, settings, diagnostics, scheduled tasks). `App/Sources/M0/`: the headless check modes.
+  approval sheet, settings, diagnostics, scheduled tasks, the component gallery and design tuning).
+  `App/Sources/M0/`: the headless check modes.
 - `App/Sources/System/`: M3's system integration: App Intents, entities, Siri phrases and snippets
   (`PiAppIntents`), BackgroundTasks from `onWake` (`BackgroundWork`), notifications with actions (`Notifications`),
-  the run Live Activity (`RunActivities`).
+  the run Live Activity (`RunActivities`), Spotlight indexing of conversations and widgets (`SpotlightIndex`).
 - `Shared/Sources/`: compiled into the app and the widget: the `LiveActivityIntent`s behind widget and Live Activity
   buttons, which iOS performs in the app's process.
 - `Packages/PiRuntime`: JSContext host, polyfill natives, the sqlite3 facade, the URLSession fetch
   bridge, the Keychain key source and the async host-call bridge (`JSRuntime.Options.hostCall`).
-- `Packages/PiAppleTools`: EventKit and HealthKit handlers behind the JS Apple tools
+- `Packages/PiAppleTools`: EventKit, HealthKit and CoreLocation handlers behind the JS Apple tools
   (`AppleToolHost`).
 - `Packages/PiUI`: generated UI (M2). The component catalog, validator, renderer (`SurfaceView`), previews,
-  native data sources (`NativeData`), the App Group files (`SurfaceStore`) and `SurfaceHost`, which answers the
-  JS UI tools. Shared by the app and the widget. The catalog lives only here ([ADR 0001](docs/adr/0001-surface-validation-in-swift.md)).
+  native data sources (`NativeData`), the App Group files (`SurfaceStore`), `SurfaceHost`, which answers the
+  JS UI tools, the components' sample slots (`Gallery/`) and the dial's tuning log (`Tuning/`). Shared by the app and the widget. The catalog lives only here ([ADR 0001](docs/adr/0001-surface-validation-in-swift.md)).
 - `Widgets/`: the configurable Pi Widget (`PiWidget.swift`): shows a published surface, resolves native data on
   its timeline, runs its buttons through `RunWidgetActionIntent`. The run Live Activity (`PiRunLiveActivity.swift`).
 - `js/`: TypeScript run inside JSC. `bun build.ts` bundles `src/runtime.ts` (the app's harness
@@ -99,6 +100,7 @@ intended rendering change, re-record with `PI_RECORD_SNAPSHOTS=1 swift test` and
   idle before returning, or iOS suspends the app mid-run.
 - The `SqliteDatabase` facade must keep passing both Pi's storage conformance suite and
   `js/test/facade-cases.ts` (Pi's suite does not exercise rollback).
-- A new component, prop, family rule or data source goes in PiUI's catalog (`Schema/`), with a fixture slot in
-  `Tests/PiUITests/Fixtures/components.json` and a re-recorded snapshot sheet. The dial changes validation and
+- A new component, prop, family rule or data source goes in PiUI's catalog (`Schema/`), with a sample slot in
+  `Sources/PiUI/Gallery/components.json` (the gallery and the snapshot tests both draw it) and a re-recorded
+  snapshot sheet. The dial changes validation and
   `list_components` only, never the renderer. Widgets never ask for permissions; `bind_data` does, in the app.
