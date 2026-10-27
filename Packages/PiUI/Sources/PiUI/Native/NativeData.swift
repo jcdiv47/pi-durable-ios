@@ -2,6 +2,7 @@ import EventKit
 import Foundation
 #if os(iOS)
 import HealthKit
+import os
 #endif
 
 /// Reads the native sources a spec binds (`DataSources.sources`), in the widget on its timeline and in the app
@@ -12,6 +13,7 @@ public final class NativeData: @unchecked Sendable {
     private let events = EKEventStore()
     #if os(iOS)
     private let health = HKHealthStore()
+    private let healthRequest = OSAllocatedUnfairLock<Task<Void, Never>?>(initialState: nil)
     #endif
 
     public init() {}
@@ -39,7 +41,7 @@ public final class NativeData: @unchecked Sendable {
         case granted, denied, notDetermined, unknown, notApplicable
     }
 
-    /// Asks for the permission `source` needs if it was never asked (for Health, only its own data type), then
+    /// Asks for the permission `source` needs if it was never asked (for Health, every Health source at once), then
     /// reports the state.
     public func authorize(_ source: DataSources.Source) async -> Authorization {
         switch source.permission {
@@ -59,8 +61,8 @@ public final class NativeData: @unchecked Sendable {
             #if os(iOS)
             guard HKHealthStore.isHealthDataAvailable() else { return .denied }
             // HealthKit never says whether reading was allowed, only whether it already asked.
-            guard let type = Self.healthTypes[source.name] else { return .unknown }
-            try? await health.requestAuthorization(toShare: [], read: [type])
+            guard Self.healthTypes[source.name] != nil else { return .unknown }
+            await healthAuthorization().value
             return .unknown
             #else
             return .denied
@@ -112,6 +114,17 @@ public final class NativeData: @unchecked Sendable {
 
     #if os(iOS)
     /// The HealthKit type behind each health source, so binding one asks for that type only.
+    /// One request for every Health source, shared by parallel `bind_data` calls: HealthKit cannot present a
+    /// request's sheet while another one's is presenting, and never calls that request back.
+    private func healthAuthorization() -> Task<Void, Never> {
+        healthRequest.withLock { request in
+            if let request { return request }
+            let task = Task { [health] in _ = try? await health.requestAuthorization(toShare: [], read: Set(Self.healthTypes.values)) }
+            request = task
+            return task
+        }
+    }
+
     static let healthTypes: [String: HKObjectType] = [
         "health.stepsToday": HKQuantityType(.stepCount), "health.stepsWeek": HKQuantityType(.stepCount),
         "health.activeEnergyToday": HKQuantityType(.activeEnergyBurned), "health.activeEnergyWeek": HKQuantityType(.activeEnergyBurned),

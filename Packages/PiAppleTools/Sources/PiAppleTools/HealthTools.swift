@@ -6,6 +6,12 @@ import HealthKit
 /// samples, so an empty result says so in `note`.
 final class HealthTools: Sendable {
     private let store = HKHealthStore()
+    private let authorization: HealthAuthorization
+
+    init() {
+        let read = Set(Self.quantities.values.map { HKQuantityType($0.identifier) as HKObjectType } + [HKCategoryType(.sleepAnalysis)])
+        authorization = HealthAuthorization(store: store, types: read)
+    }
 
     struct QueryArguments: Decodable {
         let metric: String
@@ -43,7 +49,7 @@ final class HealthTools: Sendable {
             throw AppleToolError("Unknown metric \(args.metric). Known: \((Self.quantities.keys.sorted() + ["sleep"]).joined(separator: ", "))")
         }
         let type = HKQuantityType(quantity.identifier)
-        try await store.requestAuthorization(toShare: [], read: [type])
+        try await authorization.ensure()
 
         let options: HKStatisticsOptions = quantity.cumulative ? .cumulativeSum : [.discreteAverage, .discreteMin, .discreteMax]
         var buckets: [[String: Any]] = []
@@ -68,7 +74,7 @@ final class HealthTools: Sendable {
 
     private func sleep(start: Date, end: Date, interval: String) async throws -> [String: Any] {
         let type = HKCategoryType(.sleepAnalysis)
-        try await store.requestAuthorization(toShare: [], read: [type])
+        try await authorization.ensure()
         let descriptor = HKSampleQueryDescriptor(
             predicates: [.categorySample(type: type, predicate: HKQuery.predicateForSamples(withStart: start, end: end))],
             sortDescriptors: [SortDescriptor(\.startDate)]
