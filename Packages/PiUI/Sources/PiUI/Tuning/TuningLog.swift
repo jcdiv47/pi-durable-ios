@@ -249,7 +249,8 @@ public struct TuningSummary: Sendable, Hashable {
     static func owns(_ error: String, _ family: SurfaceFamily) -> Bool {
         let message = error.split(separator: ": ", maxSplits: 1).last.map(String.init) ?? error
         let name = family.rawValue
-        return message.hasPrefix("\(name) ") || message.contains(" in \(name) at level") || message.contains("; \(name) at level")
+        return ["\(name) would show nothing:", "\(name) allows ", "\(name) is at level "].contains(where: message.hasPrefix)
+            || message.contains(" in \(name) at level") || message.contains("; \(name) at level")
     }
 
     static func isCustomRejection(_ error: String, family: SurfaceFamily) -> Bool {

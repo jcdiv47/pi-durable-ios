@@ -59,7 +59,7 @@ struct TuningTests {
             errors: ["/slots/1/tree: This Custom tree has 30 nodes; systemLarge at level 2 (Compose+) allows 24"],
             customTrees: [water], customFamilies: ["systemLarge"]
         )
-        let mentions = validated(["systemMedium", "systemLarge"], errors: [#"/surface: surface must be "widget" or "card""#])
+        let mentions = validated(["systemMedium", "systemLarge"], errors: [#"/surface: surface must be "widget" or "card""#, "/slots/0/symbol: card is not an SF Symbol on this iPhone"])
         let summary = TuningSummary([event, validated(["systemMedium", "systemLarge"], errors: ["/slots/0: Ring needs goal (number)"]), mentions], dial: .init())
         let medium = summary.families.first { $0.family == .systemMedium }
         let large = summary.families.first { $0.family == .systemLarge }
