@@ -58,7 +58,7 @@ struct ConversationView: View {
         }
         .overlay {
             if state.loaded && state.items.isEmpty && !state.live.busy {
-                ContentUnavailableView("Ask Pi anything", systemImage: "sparkles", description: Text(store.modelName(state.model)))
+                ContentUnavailableView("Ask Pi anything", systemImage: "sparkles", description: Text(modelLine))
             }
         }
         .navigationTitle(meta?.title ?? "Conversation")
@@ -90,7 +90,7 @@ struct ConversationView: View {
                         Text("Working · \(WorkRow.elapsed(context.date.timeIntervalSince(since)))").monospacedDigit()
                     }
                 } else {
-                    Text(store.modelName(state.model))
+                    Text(modelLine)
                 }
             }
             .font(.caption)
@@ -99,6 +99,12 @@ struct ConversationView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("conversation.header")
+    }
+
+    /// The model the conversation started with, and its effort unless thinking is off. Both are set in Settings, for new conversations.
+    private var modelLine: String {
+        let name = store.modelName(state.model)
+        return state.thinkingLevel == "off" ? name : "\(name) · \(ThinkingLevel.name(state.thinkingLevel)) effort"
     }
 
     @ViewBuilder private func itemMenu(_ item: DisplayItem) -> some View {
@@ -111,52 +117,6 @@ struct ConversationView: View {
                     if let fork = await store.fork(conversationId, at: item.id) { path.append(.conversation(fork.id)) }
                 }
             }
-        }
-    }
-
-    private var modelMenu: some View {
-        Menu {
-            ForEach(Dictionary(grouping: store.models, by: \.providerName).sorted { $0.key < $1.key }, id: \.key) { provider, models in
-                Section(provider) {
-                    ForEach(models.prefix(40)) { model in
-                        Button {
-                            Task { await store.setModel(model.ref, for: conversationId) }
-                        } label: {
-                            if model.ref == state.model { Label(model.name, systemImage: "checkmark") } else { Text(model.name) }
-                        }
-                    }
-                }
-            }
-        } label: {
-            Label(store.modelName(state.model), systemImage: "cpu")
-                .font(.footnote.weight(.medium))
-                .lineLimit(1)
-        }
-        .buttonStyle(.glass)
-        .accessibilityIdentifier("model.menu")
-    }
-
-    /// How hard the model thinks, from the levels it supports; hidden for models without reasoning.
-    @ViewBuilder private var effortMenu: some View {
-        let levels = store.model(state.model)?.thinkingLevels ?? []
-        if levels.count > 1 {
-            Menu {
-                Picker("Effort", selection: Binding(
-                    get: { state.thinkingLevel },
-                    set: { level in Task { await store.setThinking(level, for: conversationId) } }
-                )) {
-                    ForEach(levels, id: \.self) { level in
-                        Label(ThinkingLevel.name(level), systemImage: ThinkingLevel.symbol(level)).tag(level)
-                    }
-                }
-            } label: {
-                Label(ThinkingLevel.name(state.thinkingLevel), systemImage: ThinkingLevel.symbol(state.thinkingLevel))
-                    .font(.footnote.weight(.medium))
-                    .lineLimit(1)
-            }
-            .buttonStyle(.glass)
-            .accessibilityLabel("Effort: \(ThinkingLevel.name(state.thinkingLevel))")
-            .accessibilityIdentifier("effort.menu")
         }
     }
 
@@ -174,11 +134,11 @@ struct ConversationView: View {
             Button("Files", systemImage: "folder") { importingFiles = true }
         } label: {
             Image(systemName: "plus")
-                .font(.body.weight(.semibold))
-                .frame(width: 30, height: 30)
+                .font(.system(size: 20, weight: .medium))
+                .frame(width: Self.fieldHeight, height: Self.fieldHeight)
+                .glassEffect(.regular.interactive(), in: .circle)
         }
-        .buttonStyle(.glass)
-        .buttonBorderShape(.circle)
+        .tint(.primary)
         .accessibilityLabel("Attach")
         .accessibilityIdentifier("attach.menu")
     }
@@ -221,12 +181,38 @@ struct ConversationView: View {
         }
     }
 
-    /// The field, and under it the model, the effort and Send/Stop, in one glass panel.
+    /// The height of a one-line field, and of the Attach button beside it.
+    private static let fieldHeight: CGFloat = 44
+
+    /// As Messages: Attach in a circle beside the field, and Send (or Stop) inside the field's trailing end.
     private var composer: some View {
         VStack(spacing: 8) {
             if !state.queue.isEmpty { queue }
-            VStack(alignment: .leading, spacing: 10) {
-                if !attachments.isEmpty || attaching > 0 {
+            GlassEffectContainer(spacing: 8) {
+                HStack(alignment: .bottom, spacing: 8) {
+                    attachMenu
+                    field
+                }
+            }
+        }
+        .padding(.horizontal)
+        .padding(.bottom, 8)
+        .animation(.snappy, value: state.queue)
+        .animation(.snappy, value: attachments)
+        .animation(.snappy, value: hasDraft)
+        .animation(.snappy, value: state.live.busy)
+        .photosPicker(isPresented: $choosingPhotos, selection: $photoItems, maxSelectionCount: 10, matching: .images)
+        .onChange(of: photoItems) { attachPhotos(photoItems) }
+        .fileImporter(isPresented: $importingFiles, allowedContentTypes: [.image, .pdf, .text, .json, .sourceCode], allowsMultipleSelection: true) {
+            attachFiles($0)
+        }
+    }
+
+    /// Attachments over the text, as Messages puts them in its field; a capsule while it holds one line.
+    private var field: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if !attachments.isEmpty || attaching > 0 {
+                VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
                         AttachmentStrip(attachments: attachments) { removed in attachments.removeAll { $0.id == removed.id } }
                         if attaching > 0 { ProgressView().controlSize(.small) }
@@ -235,35 +221,27 @@ struct ConversationView: View {
                         Label("This model can't see images", systemImage: "eye.slash").font(.caption).foregroundStyle(.secondary)
                     }
                 }
+                .padding([.horizontal, .top], 8)
+            }
+            HStack(alignment: .bottom, spacing: 4) {
                 TextField(state.live.busy ? "Queue a message" : "Message", text: $draft, axis: .vertical)
                     .lineLimit(1...6)
                     .focused($composing)
-                    .padding(.horizontal, 6)
-                    .padding(.top, 4)
+                    .padding(.leading, 16)
+                    .padding(.vertical, 11)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityIdentifier("composer")
-                GlassEffectContainer {
-                    HStack(spacing: 8) {
-                        attachMenu
-                        modelMenu
-                        effortMenu
-                        Spacer(minLength: 0)
-                        primaryButton
-                    }
+                if hasDraft || state.live.busy {
+                    primaryButton
+                        .padding(6)
+                        .transition(.scale.combined(with: .opacity))
                 }
-                .controlSize(.small)
             }
-            .padding(10)
-            .glassEffect(.regular, in: .rect(cornerRadius: 26))
+            .frame(minHeight: Self.fieldHeight)
         }
-        .padding(.horizontal)
-        .padding(.bottom, 8)
-        .animation(.snappy, value: state.queue)
-        .animation(.snappy, value: attachments)
-        .photosPicker(isPresented: $choosingPhotos, selection: $photoItems, maxSelectionCount: 10, matching: .images)
-        .onChange(of: photoItems) { attachPhotos(photoItems) }
-        .fileImporter(isPresented: $importingFiles, allowedContentTypes: [.image, .pdf, .text, .json, .sourceCode], allowsMultipleSelection: true) {
-            attachFiles($0)
-        }
+        .contentShape(.rect(cornerRadius: Self.fieldHeight / 2))
+        .onTapGesture { composing = true }
+        .glassEffect(.regular, in: .rect(cornerRadius: Self.fieldHeight / 2))
     }
 
     /// Send, or Stop while an answer runs and the field is empty. Text typed during an answer is queued.
@@ -281,13 +259,15 @@ struct ConversationView: View {
             }
         } label: {
             Image(systemName: stops ? "stop.fill" : "arrow.up")
-                .font(.body.weight(.semibold))
-                .frame(width: 30, height: 30)
+                .font(.system(size: stops ? 13 : 16, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 32, height: 32)
+                .background(.tint, in: .circle)
                 .contentTransition(.symbolEffect(.replace))
         }
-        .buttonStyle(.glassProminent)
-        .buttonBorderShape(.circle)
-        .disabled(!stops && (!hasDraft || attaching > 0))
+        .buttonStyle(.plain)
+        .disabled(!stops && attaching > 0)
+        .opacity(!stops && attaching > 0 ? 0.4 : 1)
         .animation(.snappy, value: stops)
         .accessibilityLabel(stops ? "Stop" : state.live.busy ? "Queue" : "Send")
         .accessibilityIdentifier(stops ? "stop" : "send")

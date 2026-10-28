@@ -62,12 +62,13 @@ final class ChatStore {
         didSet { settings.set(try? JSONEncoder().encode(dial), forKey: Self.dialKey) }
     }
 
+    /// The model new conversations start with; a conversation keeps the one it started with.
     var defaultModel: ModelRef {
         didSet { settings.set(defaultModel.key, forKey: "defaultModel") }
     }
 
-    /// The effort new conversations start with: the one last picked in any conversation, clamped to the model in JS.
-    private(set) var defaultThinking: String {
+    /// The effort new conversations from the chat start with, clamped to the model in JS; a conversation keeps its own.
+    var defaultThinking: String {
         didSet { settings.set(defaultThinking, forKey: "defaultThinking") }
     }
 
@@ -383,22 +384,6 @@ final class ChatStore {
             states[id] = nil
         } catch {
             report("remove", error)
-        }
-    }
-
-    func setModel(_ model: ModelRef, for id: Int) async {
-        guard let harness else { return }
-        do { try await harness.perform("PiRuntime.setModel", [id, model.provider, model.modelId]) } catch { report("set model", error) }
-    }
-
-    /// The effort of the conversation's next requests; also the default for new conversations.
-    func setThinking(_ level: String, for id: Int) async {
-        guard let harness else { return }
-        do {
-            let _: String = try await harness.call("PiRuntime.setThinking", [id, level])
-            defaultThinking = level
-        } catch {
-            report("set effort", error)
         }
     }
 

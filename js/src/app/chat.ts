@@ -135,7 +135,8 @@ export class Chat {
 
 	/**
 	 * `requestId`: an outside request that starts this conversation, recorded in the same commit. `thinkingLevel`: the
-	 * effort the user last picked, clamped to the model; without it Pi asks for no thinking.
+	 * default effort from Settings, clamped to the model; without it Pi asks for no thinking. A conversation keeps the
+	 * model and effort it starts with.
 	 */
 	async create(model: { provider: string; modelId: string }, requestId?: string, thinkingLevel?: ModelThinkingLevel): Promise<ConversationMeta> {
 		const now = Date.now();
@@ -472,23 +473,6 @@ export class Chat {
 			if (at >= 0) index.items.splice(at, 1);
 		}, context);
 		await this.#changed();
-	}
-
-	/** Switches the model, and moves the thinking level to the nearest one the new model supports. */
-	async setModel(id: number, provider: string, modelId: string): Promise<void> {
-		const conversation = await this.#conversation(id);
-		const { thinkingLevel } = await conversation.agent(context);
-		const model = { provider, modelId };
-		await conversation.configure({ model, thinkingLevel: this.clampThinking(model, thinkingLevel) }, context);
-	}
-
-	/** The effort of the conversation's next requests, clamped to its model. Returns the level set. */
-	async setThinking(id: number, level: ModelThinkingLevel): Promise<ModelThinkingLevel> {
-		const conversation = await this.#conversation(id);
-		const { model } = await conversation.agent(context);
-		const clamped = model === undefined ? level : this.clampThinking(model, level);
-		await conversation.configure({ thinkingLevel: clamped }, context);
-		return clamped;
 	}
 
 	/** Live tasks with what the scheduler would do with them; parked ones (`restart_limit`) can be retried. */

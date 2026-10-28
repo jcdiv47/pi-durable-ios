@@ -343,8 +343,17 @@ struct ModelInfo: Decodable, Identifiable, Hashable {
     var ref: ModelRef { ModelRef(provider: provider, modelId: id) }
 }
 
-/// pi-ai's thinking levels as the composer's effort menu names them.
+/// pi-ai's thinking levels as Settings names them.
 enum ThinkingLevel {
+    static let all = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
+
+    /// What a conversation started now gets: the nearest supported level, higher first, as pi-ai's `clampThinkingLevel`.
+    static func clamp(_ level: String, to supported: [String]) -> String {
+        if supported.contains(level) { return level }
+        guard let index = all.firstIndex(of: level) else { return supported.first ?? "off" }
+        return all[index...].first(where: supported.contains) ?? all[..<index].last(where: supported.contains) ?? supported.first ?? "off"
+    }
+
     static func name(_ level: String) -> String {
         switch level {
         case "off": "Off"

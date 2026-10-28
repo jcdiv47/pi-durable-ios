@@ -3,6 +3,8 @@ import SwiftUI
 
 struct SettingsView: View {
     @Bindable var store: ChatStore
+    /// The efforts the default model supports; just `off` for one without reasoning, which gets no effort picker.
+    private var defaultLevels: [String] { store.model(store.defaultModel)?.thinkingLevels ?? [] }
 
     var body: some View {
         Form {
@@ -16,8 +18,19 @@ struct SettingsView: View {
                     }
                 }
                 .pickerStyle(.navigationLink)
+                if defaultLevels.count > 1 {
+                    Picker("Default effort", selection: Binding(
+                        get: { ThinkingLevel.clamp(store.defaultThinking, to: defaultLevels) },
+                        set: { store.defaultThinking = $0 }
+                    )) {
+                        ForEach(defaultLevels, id: \.self) { level in
+                            Label(ThinkingLevel.name(level), systemImage: ThinkingLevel.symbol(level)).tag(level)
+                        }
+                    }
+                    .accessibilityIdentifier("settings.effort")
+                }
             } footer: {
-                Text("New conversations start with this model. Change a conversation's model from its title bar.")
+                Text("New conversations start with this model and effort, and keep them. Conversations already started don't change.")
             }
 
             Section {
