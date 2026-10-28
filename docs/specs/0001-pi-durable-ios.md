@@ -34,7 +34,8 @@ an explicit, tunable setting (see "Generativity dial").
 - Personal sideload only. No App Store. Guideline 2.5.2 does not apply, but iOS
   still cannot compile or load Swift at runtime, so generated UI is **interpreted
   data**, never code.
-- iPhone only. Apple Watch is a later milestone. iPad, Mac and visionOS are out of scope.
+- iPhone only. Apple Watch is **deferred** with no milestone ([ADR 0003](../adr/0003-defer-apple-watch.md)).
+  iPad, Mac and visionOS are out of scope.
 - Agent runtime: Pi Durable + pi-ai, **API-key providers** (Anthropic, OpenAI,
   OpenRouter, any OpenAI-compatible base URL). No OAuth/subscription login.
 - Apple Notes is deferred (it has no public API; a later workaround goes through Shortcuts).
@@ -84,12 +85,15 @@ PiApp (the only process that runs the agent)
  └─ App Group container
       ├─ pi/session.sqlite         (Pi Durable storage; owned by PiApp only)
       ├─ surfaces/<id>.json        (published component specs, read-only for extensions)
-      └─ snapshots/<id>.json       (data values the agent already produced, e.g. $doc.* values)
+      ├─ snapshots/<id>.json       (data values the agent already produced, e.g. $doc.* values)
+      └─ inbox/shares/<id>/        (share sheet items waiting for PiApp: request + attachment files)
 
 PiWidgets (WidgetKit extension): renders surfaces with PiUI; resolves native data
   sources itself (Health, Calendar) on its timeline; never opens Pi storage, never loads JS.
+PiShare (share extension): takes images, text, links and files from other apps' share sheets,
+  writes them to the App Group inbox and opens PiApp, which sends them; never loads JS.
 PiUI (Swift package): component schema types, validator, renderer. Shared by app, widgets,
-  Live Activities, App Intent snippets, and the Watch later.
+  Live Activities and App Intent snippets.
 ```
 
 ### Runtime host: JavaScriptCore
@@ -296,10 +300,13 @@ change only validation rules and tool descriptions, never the renderer.
   time, approve/stop buttons); Dynamic Island.
 - **BackgroundTasks**: `BGContinuedProcessingTask`, `BGAppRefreshTask`.
 - **UserNotifications**: run finished, approval needed (actionable), scheduled task results.
+- **Share extension**: send screenshots, photos, selected text, links and text/PDF files to Pi
+  from any app's share sheet, with an optional prompt, to a new or recent conversation; or open
+  them as a draft. The chat composer takes the same attachments (Photos, Paste, Files). Images go
+  to the model as image blocks; text, links and file text as text blocks.
 - **EventKit**, **HealthKit** (read), **CoreLocation** (on request), **Spotlight** (index
   conversations/surfaces via `IndexedEntity`).
-- Later: Watch app + Smart Stack widgets (Watch is a client; iPhone owns the harness),
-  WeatherKit, MapKit search, Photos, Contacts, Notes via Shortcuts, Foundation Models provider.
+- Later: WeatherKit, MapKit search, Photos, Contacts, Notes via Shortcuts, Foundation Models provider.
 
 ## Repository layout (proposed)
 
@@ -308,6 +315,7 @@ pi-durable-ios/
   project.yml                 # XcodeGen
   App/                        # PiApp target (SwiftUI, App Intents, ActivityKit, BG tasks)
   Widgets/                    # PiWidgets extension
+  Share/                      # PiShare extension (share sheet → App Group inbox)
   Packages/
     PiRuntime/                # JSContext host, polyfills, SQLite facade, env, tool bridge
     PiUI/                     # schema types, validator, renderer, previews
@@ -355,7 +363,16 @@ actionable approval notifications, `requestId` on every entry point, scheduled a
 
 ### M4 — Breadth and polish
 Reminders writes, location, Spotlight, Liquid Glass pass, component gallery, dial tuning
-from logs. M5 (later): Watch.
+from logs.
+
+### M5 — Context in
+Share extension (images, text, links, files; prompt; new or recent conversation; send or
+draft), composer attachments (Photos, Paste, Files), attachments in the transcript, `share:<id>`
+request IDs.
+
+### Deferred
+Watch app and Smart Stack widgets (Watch as a client; the iPhone owns the harness). See
+[ADR 0003](../adr/0003-defer-apple-watch.md).
 
 ## Testing
 

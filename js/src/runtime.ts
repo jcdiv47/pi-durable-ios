@@ -16,6 +16,7 @@ import {
 import { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
 import { AppleTools, appleToolInfo } from "./app/apple.ts";
 import { Approvals, type Decision, type ToolPolicy } from "./app/approvals.ts";
+import type { InputAttachment } from "./app/attachments.ts";
 import { Chat, type OutsideInput, type WidgetAction } from "./app/chat.ts";
 import { type CustomProvider, ModelSetup } from "./app/models.ts";
 import { answerText, ScheduleTools, scheduleToolInfo } from "./app/schedule.ts";
@@ -293,10 +294,12 @@ const app = {
 	unwatchConversation: async (id: number) => requireChat().unwatch(id),
 	transcript: (id: number) => requireChat().transcript(id),
 	searchText: (id: number) => requireChat().searchText(id),
-	send: (id: number, text: string, requestId: string) => requireChat().send(id, text, requestId),
+	send: (id: number, text: string, requestId: string, attachments?: InputAttachment[]) => requireChat().send(id, text, requestId, attachments),
 	abort: (id: number) => requireChat().abort(id),
 	withdraw: (id: number, submissionId: number) => requireChat().withdraw(id, submissionId),
 	steer: (id: number, submissionId: number) => requireChat().steer(id, submissionId),
+	takeBack: (id: number, submissionId: number) => requireChat().takeBack(id, submissionId),
+	attachmentFiles: () => requireChat().attachmentFiles(),
 	fork: (id: number, entryId: number) => requireChat().fork(id, entryId),
 	rename: (id: number, title: string) => requireChat().rename(id, title),
 	removeConversation: (id: number) => requireChat().remove(id),

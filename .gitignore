@@ -38,3 +38,5 @@ App/Info.plist
 App/PiApp.entitlements
 Widgets/Info.plist
 Widgets/PiWidgets.entitlements
+Share/Info.plist
+Share/PiShare.entitlements

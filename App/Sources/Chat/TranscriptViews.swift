@@ -61,14 +61,19 @@ struct TranscriptItemView: View {
                 if let origin = item.origin {
                     Label(origin, systemImage: originSymbol(origin)).font(.caption2).foregroundStyle(.secondary)
                 }
-                HStack {
-                    Spacer(minLength: 48)
-                    Text(item.text ?? "")
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 9)
-                        .background(item.origin == nil ? Color.accentColor : Color.indigo, in: .rect(cornerRadius: 18))
-                        .foregroundStyle(.white)
-                        .textSelection(.enabled)
+                if let attachments = item.attachments, !attachments.isEmpty {
+                    SentAttachments(attachments: attachments)
+                }
+                if item.attachments == nil || !(item.text ?? "").isEmpty {
+                    HStack {
+                        Spacer(minLength: 48)
+                        Text(item.text ?? "")
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 9)
+                            .background(item.origin == nil ? Color.accentColor : Color.indigo, in: .rect(cornerRadius: 18))
+                            .foregroundStyle(.white)
+                            .textSelection(.enabled)
+                    }
                 }
             }
         case .assistant:
@@ -95,10 +100,57 @@ struct TranscriptItemView: View {
     }
 }
 
+/// A user message's attachments above its bubble: images open full size, links open in Safari.
+private struct SentAttachments: View {
+    let attachments: [DisplayAttachment]
+    @State private var viewing: String?
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 6) {
+                ForEach(Array(attachments.enumerated()), id: \.offset) { _, attachment in
+                    switch attachment.look {
+                    case let .image(file):
+                        AttachmentChip(look: .image(file: file), height: 120)
+                            .onTapGesture { viewing = file }
+                            .accessibilityAddTraits(.isButton)
+                    case let .link(_, url):
+                        AttachmentChip(look: attachment.look)
+                            .onTapGesture { openURL(url) }
+                            .accessibilityAddTraits(.isLink)
+                    case .text:
+                        AttachmentChip(look: attachment.look)
+                    }
+                }
+            }
+        }
+        .defaultScrollAnchor(.trailing)
+        .scrollIndicators(.hidden)
+        .padding(.leading, 48)
+        .sheet(item: Binding(get: { viewing.map(ViewedImage.init) }, set: { viewing = $0?.id })) { image in
+            NavigationStack {
+                AttachmentImage(file: image.id, maxPixel: 2400, fit: true)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done", systemImage: "checkmark") { viewing = nil }
+                        }
+                    }
+            }
+        }
+    }
+
+    private struct ViewedImage: Identifiable {
+        let id: String
+    }
+}
+
 private func originSymbol(_ origin: String) -> String {
     if origin.hasPrefix("Widget") { return "square.grid.2x2" }
     if origin.hasPrefix("Scheduled") || origin.hasPrefix("Run now") { return "clock.arrow.circlepath" }
     if origin.hasPrefix("Notification") { return "bell" }
+    if origin.hasPrefix("Share") { return "square.and.arrow.up" }
     return "waveform"
 }
 

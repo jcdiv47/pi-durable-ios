@@ -36,7 +36,10 @@ export const SchedulesDoc = defineDoc<{ items: ScheduleEntry[] }>({
 	checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 50,
 });
 
-/** Inputs that did not come from the chat composer: the transcript shows where they came from. */
+/**
+ * Inputs that did not come from the chat composer, or carry attachments: the transcript shows where they came from
+ * and the attachments (`InputData` in attachments.ts).
+ */
 export const OriginInput = "app.input";
 export type Origin = { origin: string };
 
