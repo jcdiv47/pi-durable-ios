@@ -235,7 +235,7 @@ struct ChatTests {
         try await harness.close()
     }
 
-    @Test("The effort is per conversation and clamped to what its model supports", .timeLimit(.minutes(1)))
+    @Test("A conversation starts with the effort asked for, clamped to what its model supports", .timeLimit(.minutes(1)))
     func thinkingLevel() async throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -246,13 +246,14 @@ struct ChatTests {
         try await harness.perform("PiRuntime.watchConversation", [meta.id])
         try await until { log.thinking(meta.id) == "high" }
 
-        let set: String = try await harness.call("PiRuntime.setThinking", [meta.id, "low"])
-        #expect(set == "low")
-        try await until { log.thinking(meta.id) == "low" }
+        let low: Meta = try await harness.call("PiRuntime.createConversation", ["scripted", "assistant", "low"])
+        try await harness.perform("PiRuntime.watchConversation", [low.id])
+        try await until { log.thinking(low.id) == "low" }
 
-        // The kill-test model does not reason: switching to it turns thinking off.
-        try await harness.perform("PiRuntime.setModel", [meta.id, "faux", "killtest"])
-        try await until { log.thinking(meta.id) == "off" }
+        // The kill-test model does not reason: its conversations start with thinking off.
+        let unreasoning: Meta = try await harness.call("PiRuntime.createConversation", ["faux", "killtest", "high"])
+        try await harness.perform("PiRuntime.watchConversation", [unreasoning.id])
+        try await until { log.thinking(unreasoning.id) == "off" }
 
         let plain: Meta = try await harness.call("PiRuntime.createConversation", ["scripted", "assistant"])
         try await harness.perform("PiRuntime.watchConversation", [plain.id])

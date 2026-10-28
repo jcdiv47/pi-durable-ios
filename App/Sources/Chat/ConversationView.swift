@@ -58,7 +58,7 @@ struct ConversationView: View {
         }
         .overlay {
             if state.loaded && state.items.isEmpty && !state.live.busy {
-                ContentUnavailableView("Ask Pi anything", systemImage: "sparkles", description: Text(store.modelName(state.model)))
+                ContentUnavailableView("Ask Pi anything", systemImage: "sparkles", description: Text(modelLine))
             }
         }
         .navigationTitle(meta?.title ?? "Conversation")
@@ -90,7 +90,7 @@ struct ConversationView: View {
                         Text("Working · \(WorkRow.elapsed(context.date.timeIntervalSince(since)))").monospacedDigit()
                     }
                 } else {
-                    Text(store.modelName(state.model))
+                    Text(modelLine)
                 }
             }
             .font(.caption)
@@ -99,6 +99,12 @@ struct ConversationView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("conversation.header")
+    }
+
+    /// The model the conversation started with, and its effort unless thinking is off. Both are set in Settings, for new conversations.
+    private var modelLine: String {
+        let name = store.modelName(state.model)
+        return state.thinkingLevel == "off" ? name : "\(name) · \(ThinkingLevel.name(state.thinkingLevel)) effort"
     }
 
     @ViewBuilder private func itemMenu(_ item: DisplayItem) -> some View {
@@ -111,52 +117,6 @@ struct ConversationView: View {
                     if let fork = await store.fork(conversationId, at: item.id) { path.append(.conversation(fork.id)) }
                 }
             }
-        }
-    }
-
-    private var modelMenu: some View {
-        Menu {
-            ForEach(Dictionary(grouping: store.models, by: \.providerName).sorted { $0.key < $1.key }, id: \.key) { provider, models in
-                Section(provider) {
-                    ForEach(models.prefix(40)) { model in
-                        Button {
-                            Task { await store.setModel(model.ref, for: conversationId) }
-                        } label: {
-                            if model.ref == state.model { Label(model.name, systemImage: "checkmark") } else { Text(model.name) }
-                        }
-                    }
-                }
-            }
-        } label: {
-            Label(store.modelName(state.model), systemImage: "cpu")
-                .font(.footnote.weight(.medium))
-                .lineLimit(1)
-        }
-        .buttonStyle(.glass)
-        .accessibilityIdentifier("model.menu")
-    }
-
-    /// How hard the model thinks, from the levels it supports; hidden for models without reasoning.
-    @ViewBuilder private var effortMenu: some View {
-        let levels = store.model(state.model)?.thinkingLevels ?? []
-        if levels.count > 1 {
-            Menu {
-                Picker("Effort", selection: Binding(
-                    get: { state.thinkingLevel },
-                    set: { level in Task { await store.setThinking(level, for: conversationId) } }
-                )) {
-                    ForEach(levels, id: \.self) { level in
-                        Label(ThinkingLevel.name(level), systemImage: ThinkingLevel.symbol(level)).tag(level)
-                    }
-                }
-            } label: {
-                Label(ThinkingLevel.name(state.thinkingLevel), systemImage: ThinkingLevel.symbol(state.thinkingLevel))
-                    .font(.footnote.weight(.medium))
-                    .lineLimit(1)
-            }
-            .buttonStyle(.glass)
-            .accessibilityLabel("Effort: \(ThinkingLevel.name(state.thinkingLevel))")
-            .accessibilityIdentifier("effort.menu")
         }
     }
 
@@ -221,7 +181,7 @@ struct ConversationView: View {
         }
     }
 
-    /// The field, and under it the model, the effort and Send/Stop, in one glass panel.
+    /// The field, and under it Attach and Send/Stop, in one glass panel.
     private var composer: some View {
         VStack(spacing: 8) {
             if !state.queue.isEmpty { queue }
@@ -244,8 +204,6 @@ struct ConversationView: View {
                 GlassEffectContainer {
                     HStack(spacing: 8) {
                         attachMenu
-                        modelMenu
-                        effortMenu
                         Spacer(minLength: 0)
                         primaryButton
                     }
