@@ -17,6 +17,7 @@ struct ConversationView: View {
     @FocusState private var composing: Bool
     /// Queued messages with a withdraw or steer in flight.
     @State private var queueActions: Set<Int> = []
+    @State private var keyboardScroll = TranscriptKeyboardScroll()
 
     private var state: ConversationState { store.state(conversationId) }
     private var meta: ConversationMeta? { store.conversations.first { $0.id == conversationId } }
@@ -46,14 +47,22 @@ struct ConversationView: View {
                 }
                 .padding(.horizontal)
                 .padding(.vertical, 8)
+                .background(TranscriptScrollProbe(scroll: keyboardScroll))
             }
             .defaultScrollAnchor(.bottom)
+            .onScrollGeometryChange(for: ScrollGeometry.self, of: { $0 }) { old, new in
+                keyboardScroll.resize(from: old, to: new)
+            }
+            .onScrollPhaseChange { _, phase in keyboardScroll.phaseChanged(phase) }
             .scrollDismissesKeyboard(.interactively)
-            .onChange(of: state.items.count) { proxy.scrollTo("bottom", anchor: .bottom) }
-            .onChange(of: state.live.generation?.text.count) { proxy.scrollTo("bottom", anchor: .bottom) }
+            .onChange(of: state.items.count) {
+                if keyboardScroll.allowsAutomaticScrolling { proxy.scrollTo("bottom", anchor: .bottom) }
+            }
+            .onChange(of: state.live.generation?.text.count) {
+                if keyboardScroll.allowsAutomaticScrolling { proxy.scrollTo("bottom", anchor: .bottom) }
+            }
             .safeAreaInset(edge: .bottom) {
-                // Queued messages and longer drafts grow the composer; once laid out, keep the newest entry above it.
-                composer.onGeometryChange(for: CGFloat.self, of: \.size.height) { _ in proxy.scrollTo("bottom", anchor: .bottom) }
+                composer
             }
         }
         .overlay {
@@ -306,6 +315,95 @@ struct ConversationView: View {
             draft = [taken.text, draft].filter { !$0.isEmpty }.joined(separator: "\n")
             attachments = taken.attachments + attachments
             composing = true
+        }
+    }
+}
+
+/// Moves the transcript up as the keyboard (or the composer) takes room and back down as it gives it back, as Messages
+/// does, on the keyboard's own curve. Keeps out of the way while the user drags, or interactive dismissal gets stuck.
+@MainActor
+private final class TranscriptKeyboardScroll: NSObject {
+    weak var view: UIScrollView?
+    private var target: CGFloat?
+    private var scheduled = false
+    private var interacting = false
+    private var animationEnd = Date.distantPast
+    private var animationOptions: UIView.AnimationOptions = []
+
+    var allowsAutomaticScrolling: Bool {
+        !interacting && view?.isTracking != true && view?.isDragging != true && view?.isDecelerating != true
+    }
+
+    func attach(_ view: UIScrollView) {
+        guard self.view !== view else { return }
+        self.view = view
+        NotificationCenter.default.removeObserver(self)
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillChange),
+                                               name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+    }
+
+    func phaseChanged(_ phase: ScrollPhase) {
+        // Keep hands off through the drag and its settling animation, including a cancelled dismissal.
+        if phase == .tracking || phase == .interacting { interacting = true; target = nil }
+        if phase == .idle { interacting = false }
+    }
+
+    @objc private func keyboardWillChange(_ note: Notification) {
+        let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? 0
+        let curve = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 0
+        animationEnd = Date().addingTimeInterval(duration)
+        animationOptions = [UIView.AnimationOptions(rawValue: curve << 16), .beginFromCurrentState, .allowUserInteraction]
+    }
+
+    func resize(from old: ScrollGeometry, to new: ScrollGeometry) {
+        guard allowsAutomaticScrolling, old.contentSize == new.contentSize else { target = nil; return }
+        let shift = old.containerSize.height - new.containerSize.height
+        if shift != 0, old.containerSize.height > 0 {
+            let position = target ?? (old.contentOffset.y + old.contentInsets.top)
+            target = min(max(position + shift, 0), max(0, new.contentSize.height - new.containerSize.height))
+        }
+        guard target != nil, !scheduled else { return }
+        scheduled = true
+        // The keyboard notification and the final insets arrive after the viewport's first layout pass.
+        DispatchQueue.main.async { [weak self] in self?.apply() }
+    }
+
+    private func apply() {
+        scheduled = false
+        guard allowsAutomaticScrolling, let view, let target else { self.target = nil; return }
+        let y = target - view.adjustedContentInset.top
+        let bottom = max(-view.adjustedContentInset.top, view.contentSize.height + view.adjustedContentInset.bottom - view.bounds.height)
+        guard y <= bottom + 0.5 else { return }
+        self.target = nil
+        let duration = max(0, animationEnd.timeIntervalSinceNow)
+        UIView.animate(withDuration: duration, delay: 0, options: animationOptions) {
+            view.contentOffset = CGPoint(x: view.contentOffset.x, y: y)
+        }
+    }
+}
+
+/// Hands the transcript's UIScrollView to `TranscriptKeyboardScroll`.
+private struct TranscriptScrollProbe: UIViewRepresentable {
+    let scroll: TranscriptKeyboardScroll
+
+    func makeUIView(context: Context) -> Probe { Probe(scroll: scroll) }
+    func updateUIView(_ uiView: Probe, context: Context) {}
+
+    final class Probe: UIView {
+        let scroll: TranscriptKeyboardScroll
+        init(scroll: TranscriptKeyboardScroll) {
+            self.scroll = scroll
+            super.init(frame: .zero)
+            isUserInteractionEnabled = false
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            var ancestor = superview
+            while let candidate = ancestor {
+                if let view = candidate as? UIScrollView { scroll.attach(view); break }
+                ancestor = candidate.superview
+            }
         }
     }
 }
