@@ -11,13 +11,25 @@ import {
 	type Conversation,
 	type ConversationView,
 	defineDoc,
+	type EntryRecord,
 	type Extension,
 	type Harness,
+	InboxDoc,
 	type InboxState,
 	type Submission,
 } from "@earendil-works/pi-durable";
 import type { Approvals, Decision, ToolPolicy } from "./approvals.ts";
-import { type DisplaySurface, FrameBuilder } from "./display.ts";
+import {
+	attachmentFiles,
+	attachmentTitle,
+	displayAttachments,
+	type EditableAttachment,
+	editableAttachments,
+	type InputAttachment,
+	type InputData,
+	inputContent,
+} from "./attachments.ts";
+import { type DisplaySurface, FrameBuilder, textOf } from "./display.ts";
 import { answerText, OriginInput, SchedulesDoc } from "./schedule.ts";
 import { PublishedDoc, SurfacesDoc, ValuesDoc } from "./surfaces.ts";
 import { hostCall } from "../host/hostcall.ts";
@@ -73,6 +85,8 @@ export type OutsideInput = {
 	conversationId?: number;
 	/** How long to wait for the answer; 0 returns once the input is admitted. */
 	waitMs: number;
+	/** Screenshots, text and links from the share sheet. */
+	attachments?: InputAttachment[];
 	model: { provider: string; modelId: string };
 };
 
@@ -198,20 +212,27 @@ export class Chat {
 		watch.view.dispose();
 	}
 
-	/** Admits a user message; while a run is going it queues as a follow-up. Never waits for the answer. */
-	async send(id: number, text: string, requestId: string, origin?: string): Promise<{ submissionId: number }> {
-		const submission = await this.#submit(id, text, requestId, origin);
+	/**
+	 * Admits a user message; while a run is going it queues as a follow-up. Never waits for the answer. With
+	 * attachments, the model gets them after the text; the transcript shows the text and the attachments apart.
+	 */
+	async send(id: number, text: string, requestId: string, attachments: InputAttachment[] = []): Promise<{ submissionId: number }> {
+		const submission = await this.#submit(id, text, requestId, undefined, attachments);
 		return { submissionId: submission.id };
 	}
 
-	async #submit(id: number, text: string, requestId: string, origin?: string): Promise<Submission> {
+	async #submit(id: number, text: string, requestId: string, origin?: string, attachments: readonly InputAttachment[] = []): Promise<Submission> {
 		const conversation = await this.#conversation(id);
+		const data: InputData = {
+			...(origin === undefined ? {} : { origin }),
+			...(attachments.length === 0 ? {} : { text, attachments: displayAttachments(attachments) }),
+		};
 		const submission = await conversation.submit(
 			{
 				type: "input",
-				content: text,
+				content: attachments.length === 0 ? text : inputContent(text, attachments),
 				requestId,
-				...(origin === undefined ? {} : { entry: { kind: OriginInput, data: { origin } } }),
+				...(Object.keys(data).length === 0 ? {} : { entry: { kind: OriginInput, data } }),
 			},
 			context,
 		);
@@ -220,7 +241,7 @@ export class Chat {
 			const meta = (await tx.doc(ConversationIndex)).items.find((item) => item.id === id);
 			if (meta === undefined) return;
 			meta.updatedAt = now;
-			if (meta.title === untitled) meta.title = titleFrom(text);
+			if (meta.title === untitled) meta.title = text.trim() === "" ? (attachmentTitle(attachments) ?? untitled) : titleFrom(text);
 		}, context);
 		await this.#changed();
 		return submission;
@@ -238,7 +259,7 @@ export class Chat {
 			id ??= (await this.create(input.model, input.requestId)).id;
 		}
 		const startedAt = Date.now();
-		const submission = await this.#submit(id, input.text, input.requestId, input.origin);
+		const submission = await this.#submit(id, input.text, input.requestId, input.origin, input.attachments);
 		if (input.waitMs <= 0) return { conversationId: id, status: "running" };
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		const timeout = new Promise<undefined>((resolve) => {
@@ -330,6 +351,43 @@ export class Chat {
 	/** Withdraws one queued message; false when a boundary already placed it. */
 	async withdraw(id: number, submissionId: number): Promise<boolean> {
 		return (await this.harness.abortSubmission(submissionId as never, context, id as never)) === "aborted";
+	}
+
+	/**
+	 * Withdraws a queued message to edit it: its typed text and attachments as the composer takes them, or null when a
+	 * boundary already placed it.
+	 */
+	async takeBack(id: number, submissionId: number): Promise<{ text: string; attachments: EditableAttachment[] } | null> {
+		const inbox = await this.harness.snapshot(InboxDoc, id as never, context);
+		const item = inbox?.items.find((candidate) => candidate.id === submissionId);
+		if (item === undefined || item.mode === "write" || !(await this.withdraw(id, submissionId))) return null;
+		const data = (item.entry as { data?: InputData } | undefined)?.data;
+		if (data?.attachments === undefined) return { text: textOf(item.content), attachments: [] };
+		const text = data.text ?? "";
+		return { text, attachments: editableAttachments(item.content, data.attachments, text) };
+	}
+
+	/**
+	 * The attachment image files the app still shows or sends: those of every listed conversation's history (a fork's
+	 * includes its parent's up to the fork) and of its queued messages. Hidden conversations' images are not kept.
+	 */
+	async attachmentFiles(): Promise<string[]> {
+		const files = new Set<string>();
+		for (const { id } of await this.conversations()) {
+			const conversation = await this.#conversation(id);
+			let cursor: Parameters<Conversation["entries"]>[2];
+			do {
+				const page = await conversation.entries({ order: "ascending" }, 200, cursor, context);
+				for (const entry of page.items as readonly EntryRecord[]) {
+					if (entry.kind === OriginInput) for (const file of attachmentFiles(entry.data)) files.add(file);
+				}
+				cursor = page.next;
+			} while (cursor !== undefined);
+			for (const item of (await this.harness.snapshot(InboxDoc, id as never, context))?.items ?? []) {
+				if (item.mode !== "write") for (const file of attachmentFiles(item.entry?.data)) files.add(file);
+			}
+		}
+		return [...files];
 	}
 
 	/**

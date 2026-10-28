@@ -12,6 +12,7 @@ enum Route: Hashable {
     case tuning
 
     /// `pidurable://conversation/<id>` (widget and Live Activity taps), `pidurable://widgets`, `pidurable://tasks`.
+    /// `pidurable://share/<id>` is no route: the share extension's item goes through `ChatStore.receiveShares`.
     init?(url: URL) {
         guard url.scheme == "pidurable" else { return nil }
         switch url.host() {
@@ -46,6 +47,7 @@ struct ChatRootView: View {
                 }
         }
         .onOpenURL { url in
+            if url.host() == "share" { Task { await store.receiveShares() } }
             if let route = Route(url: url) { path = [route] }
         }
         .onChange(of: store.pendingRoute, initial: true) {

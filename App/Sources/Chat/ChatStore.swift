@@ -46,6 +46,13 @@ final class ChatStore {
     private(set) var schedules: [ScheduleEntry] = []
     /// A screen to show, from a notification, a deep link or an intent; the root view takes it.
     var pendingRoute: Route?
+    /// Composer drafts from the share sheet's "Open in Pi to Edit", by conversation; the conversation's view takes them.
+    private(set) var drafts: [Int: Draft] = [:]
+
+    struct Draft: Hashable {
+        var text: String
+        var attachments: [Attachment]
+    }
     /// Native and `$doc` values for drawing surfaces in the app (chat cards, the Widgets screen).
     private(set) var surfaceData = SurfaceData()
     let diagnostics = DiagnosticsLog()
@@ -88,6 +95,7 @@ final class ChatStore {
     private var watched: Set<Int> = []
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private var startTask: Task<Void, Never>?
+    private var receivingShares = false
     @ObservationIgnored private(set) var background: BackgroundWork!
     @ObservationIgnored private(set) var notifications: Notifications!
     @ObservationIgnored private(set) var activities: RunActivities!
@@ -196,6 +204,9 @@ final class ChatStore {
             activities.adopt(busy: resuming)
             // Widget and Live Activity taps that could not reach the app while it was not running.
             for request in PendingIntents.drain() { await perform(request) }
+            publishRecent()
+            await receiveShares()
+            await sweepAttachments()
         } catch {
             phase = .failed(String(describing: error))
             diagnostics.record("error", "app", "Open failed: \(error)")
@@ -227,6 +238,7 @@ final class ChatStore {
         case "conversations":
             if let event = try? decoder.decode(ConversationsEvent.self, from: data) {
                 conversations = event.items
+                publishRecent()
                 if phase == .ready { spotlight.sync(self) }
             }
         case "approvals":
@@ -288,12 +300,14 @@ final class ChatStore {
         }
     }
 
-    func send(_ text: String, to id: Int) async {
+    func send(_ text: String, attachments: [Attachment] = [], to id: Int) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let harness, !trimmed.isEmpty else { return }
+        guard let harness, !trimmed.isEmpty || !attachments.isEmpty else { return }
         watch(id)
         do {
-            try await harness.perform("PiRuntime.send", [id, trimmed, UUID().uuidString])
+            var arguments: [any Sendable] = [id, trimmed, UUID().uuidString]
+            if !attachments.isEmpty { arguments.append(try attachments.compactMap(InputAttachment.init).map { try harness.jsonArgument($0) }) }
+            try await harness.perform("PiRuntime.send", arguments)
             let title = conversations.first { $0.id == id }?.title ?? "Pi"
             activities.start(conversationId: id, title: title)
             // The first run asks for notification permission: answers and approvals may arrive while away.
@@ -314,6 +328,26 @@ final class ChatStore {
         do { return try await harness.call("PiRuntime.withdraw", [id, message.id]) } catch {
             report("withdraw", error)
             return false
+        }
+    }
+
+    /// Takes a queued message back to edit it, with its attachments; nil when it was already sent. An image whose file
+    /// is gone is left out.
+    func takeBack(_ message: QueuedMessage, from id: Int) async -> Draft? {
+        guard let harness else { return nil }
+        do {
+            let taken: TakenBack? = try await harness.call("PiRuntime.takeBack", [id, message.id])
+            guard let taken else { return nil }
+            let attachments = taken.attachments.compactMap(\.attachment).filter { attachment in
+                guard case let .image(file) = attachment.content else { return true }
+                guard let url = Attachments.imageURL(file), FileManager.default.fileExists(atPath: url.path) else { return false }
+                Attachments.touch(file)
+                return true
+            }
+            return Draft(text: taken.text, attachments: attachments)
+        } catch {
+            report("take back", error)
+            return nil
         }
     }
 
@@ -551,14 +585,83 @@ final class ChatStore {
 
     /// Siri, Shortcuts and notification replies: sends `text` (to a new conversation when `conversationId` is nil) and
     /// waits up to `waitMs` for the answer. A run still going then notifies when it ends.
-    func askFromOutside(_ text: String, conversationId: Int?, requestId: String, origin: String, waitMs: Int = 20_000) async throws -> OutsideAnswer {
+    func askFromOutside(
+        _ text: String, conversationId: Int?, requestId: String, origin: String, waitMs: Int = 20_000, attachments: [Attachment] = []
+    ) async throws -> OutsideAnswer {
         guard let harness else { throw PiIntentError("Pi could not open its storage.") }
         if let conversationId { watch(conversationId) }
-        let input = OutsideInput(text: text, requestId: requestId, origin: origin, conversationId: conversationId, waitMs: waitMs, model: defaultModel)
+        let input = OutsideInput(
+            text: text, requestId: requestId, origin: origin, conversationId: conversationId, waitMs: waitMs, model: defaultModel,
+            attachments: attachments.compactMap(InputAttachment.init)
+        )
         let answer: OutsideAnswer = try await harness.call("PiRuntime.askFromOutside", [try harness.jsonArgument(input)])
         watch(answer.conversationId)
         diagnostics.record("info", "entry", "\(origin): \(answer.status) in conversation \(answer.conversationId) (\(requestId))")
         return answer
+    }
+
+    /// Share sheet items (`ShareInbox`): sent with their request ID, so one picked up twice is one message, or put in a
+    /// conversation's composer. Each leaves the inbox once handled. A conversation removed meanwhile becomes a new one.
+    func receiveShares() async {
+        guard harness != nil, !receivingShares else { return }
+        receivingShares = true
+        defer { receivingShares = false }
+        for input in ShareInbox.pending() {
+            let target = input.conversationId.flatMap { id in conversations.contains { $0.id == id } ? id : nil }
+            if input.draft {
+                var id = target
+                if id == nil { id = await newConversation()?.id }
+                guard let id else { continue }
+                // Shares that waited for Pi may target one conversation; each adds to its draft.
+                let earlier = drafts[id]
+                drafts[id] = Draft(
+                    text: [earlier?.text ?? "", input.text].filter { !$0.isEmpty }.joined(separator: "\n"),
+                    attachments: (earlier?.attachments ?? []) + input.attachments
+                )
+                ShareInbox.remove(input.id)
+                open(.conversation(id))
+                continue
+            }
+            do {
+                let answer = try await askFromOutside(
+                    input.text, conversationId: target, requestId: input.requestId, origin: "Share sheet", waitMs: 0, attachments: input.attachments
+                )
+                ShareInbox.remove(input.id)
+                activities.start(conversationId: answer.conversationId, title: conversations.first { $0.id == answer.conversationId }?.title ?? "Pi")
+                open(.conversation(answer.conversationId))
+                Task { await notifications.authorize() }
+            } catch {
+                report("share", error)
+            }
+        }
+    }
+
+    func takeDraft(_ id: Int) -> Draft? {
+        drafts.removeValue(forKey: id)
+    }
+
+    /// Deletes attachment images nothing shows or sends any more (`Attachments.sweep`), at most once a day, when Pi
+    /// opens: the composer's own attachments are then all younger than the sweep's grace period. Removing a
+    /// conversation lets its images go; a fork keeps the ones it shows.
+    private func sweepAttachments() async {
+        let key = "attachmentsSweptAt"
+        guard let harness, Date().timeIntervalSince(settings.object(forKey: key) as? Date ?? .distantPast) > Attachments.sweepGrace else { return }
+        // Swift's references first: a share item moves from the inbox to `drafts` to a composer, never back.
+        var kept = Set(ShareInbox.pending().flatMap { Attachments.files($0.attachments) } + drafts.values.flatMap { Attachments.files($0.attachments) })
+        do {
+            let files: [String] = try await harness.call("PiRuntime.attachmentFiles")
+            kept.formUnion(files)
+        } catch {
+            return report("sweep attachments", error)
+        }
+        settings.set(Date(), forKey: key)
+        let removed = await Task.detached(priority: .utility) { [kept] in Attachments.sweep(keeping: kept) }.value
+        if removed > 0 { diagnostics.record("info", "app", "Deleted \(removed) unused attachment images (\(kept.count) in use)") }
+    }
+
+    /// The share sheet's conversation picker reads these from the App Group.
+    private func publishRecent() {
+        RecentConversation.write(conversations.prefix(12).map { RecentConversation(id: $0.id, title: $0.title) })
     }
 
     /// Widget and Live Activity buttons (`SharedIntents`).
@@ -697,6 +800,7 @@ final class ChatStore {
                 guard phase == .ready else { return }
                 await resumeWork()
                 for request in PendingIntents.drain() { await perform(request) }
+                await receiveShares()
                 await refreshSchedules()
             }
         default:

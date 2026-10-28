@@ -18,6 +18,15 @@ decisions that change the spec go in `docs/adr/`.
 - `App/Sources/System/`: M3's system integration: App Intents, entities, Siri phrases and snippets
   (`PiAppIntents`), BackgroundTasks from `onWake` (`BackgroundWork`), notifications with actions (`Notifications`),
   the run Live Activity (`RunActivities`), Spotlight indexing of conversations and widgets (`SpotlightIndex`).
+- `Share/`: the PiShare extension (`ShareViewController`): images, text, links and files from other apps' share
+  sheets, a prompt and a conversation, written to the App Group inbox (`ShareInbox`); then it opens
+  `pidurable://share/<id>` and PiApp sends the item (`ChatStore.receiveShares`, request ID `share:<id>`) or puts it in
+  the composer.
+- `Shared/Attachments/`: compiled into the app and the share extension: preparing attachments (images downscaled
+  to JPEG in `<App Group>/attachments/`, PDF and text file text), the share inbox, and the chips both draw. JS turns
+  them into the message (`js/src/app/attachments.ts`); the input entry's data keeps what the transcript shows.
+  `ChatStore.sweepAttachments` deletes image files over a day old that nothing points at; a new place that keeps an
+  image file name must be added to what it keeps.
 - `Shared/Sources/`: compiled into the app and the widget: the `LiveActivityIntent`s behind widget and Live Activity
   buttons, which iOS performs in the app's process.
 - `Packages/PiRuntime`: JSContext host, polyfill natives, the sqlite3 facade, the URLSession fetch

@@ -55,8 +55,94 @@ struct DisplayItem: Decodable, Identifiable, Hashable {
     var surface: SurfaceRef?
     /// The parsed output of a tool the chat draws a native card for (`cardTools` in display.ts).
     var data: JSONValue?
+    /// What came with a user message (`DisplayAttachment` in attachments.ts).
+    var attachments: [DisplayAttachment]?
 
     var date: Date? { timestamp.map { Date(timeIntervalSince1970: $0 / 1000) } }
+}
+
+/// An attachment as the transcript shows it; the model got the content itself.
+struct DisplayAttachment: Decodable, Hashable {
+    let kind: String
+    var name: String?
+    /// An image's JPEG in `Attachments.directory`.
+    var file: String?
+    var preview: String?
+    var length: Int?
+    var url: String?
+    var title: String?
+
+    var look: AttachmentChip.Look {
+        switch kind {
+        case "image": return .image(file: file ?? "")
+        case "link":
+            let link = url.flatMap(URL.init(string:)) ?? URL(string: "about:blank")!
+            return .link(title: title ?? link.host() ?? "Link", url: link)
+        default:
+            let size = length.map { $0 >= 1000 ? "\($0 / 1000)k characters" : "\($0) characters" } ?? ""
+            return .text(title: name ?? "Text", detail: name == nil ? AttachmentChip.Look.preview(preview ?? "") : size)
+        }
+    }
+}
+
+/// An attachment as JS takes it (`InputAttachment` in attachments.ts): an image's JPEG goes as base64.
+struct InputAttachment: Encodable, Sendable {
+    let kind: String
+    var data: String?
+    var mimeType: String?
+    var name: String?
+    var file: String?
+    var text: String?
+    var url: String?
+    var title: String?
+
+    /// nil when an image's file is gone.
+    init?(_ attachment: Attachment) {
+        switch attachment.content {
+        case let .image(file):
+            guard let url = Attachments.imageURL(file), let bytes = try? Data(contentsOf: url) else { return nil }
+            self.init(kind: "image", data: bytes.base64EncodedString(), mimeType: "image/jpeg", name: attachment.name, file: file)
+        case let .text(text):
+            self.init(kind: "text", name: attachment.name, text: text)
+        case let .link(url):
+            self.init(kind: "link", url: url.absoluteString, title: attachment.name)
+        }
+    }
+
+    private init(kind: String, data: String? = nil, mimeType: String? = nil, name: String? = nil, file: String? = nil, text: String? = nil, url: String? = nil, title: String? = nil) {
+        self.kind = kind
+        self.data = data
+        self.mimeType = mimeType
+        self.name = name
+        self.file = file
+        self.text = text
+        self.url = url
+        self.title = title
+    }
+}
+
+/// A queued message withdrawn to edit (`PiRuntime.takeBack`): its typed text and attachments, an image by its file.
+struct TakenBack: Decodable {
+    struct Part: Decodable {
+        let kind: String
+        var file: String?
+        var name: String?
+        var text: String?
+        var url: String?
+        var title: String?
+
+        var attachment: Attachment? {
+            switch kind {
+            case "image": file.map { Attachment(content: .image(file: $0), name: name) }
+            case "text": text.map { Attachment(content: .text($0), name: name) }
+            case "link": url.flatMap(URL.init(string:)).map { Attachment(content: .link($0), name: title) }
+            default: nil
+            }
+        }
+    }
+
+    let text: String
+    let attachments: [Part]
 }
 
 /// One version of a surface, as a UI tool result or `PiRuntime.surfaces` carries it.
@@ -119,6 +205,7 @@ struct OutsideInput: Encodable {
     let conversationId: Int?
     let waitMs: Int
     let model: ModelRef
+    var attachments: [InputAttachment] = []
 }
 
 struct OutsideAnswer: Decodable {
@@ -250,6 +337,8 @@ struct ModelInfo: Decodable, Identifiable, Hashable {
     /// The thinking levels it supports, `off` first; just `off` for a model without reasoning.
     let thinkingLevels: [String]
     let contextWindow: Double
+    /// Takes images; others get a placeholder for each attached image.
+    let images: Bool
 
     var ref: ModelRef { ModelRef(provider: provider, modelId: id) }
 }

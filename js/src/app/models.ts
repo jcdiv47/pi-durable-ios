@@ -106,6 +106,8 @@ export class ModelSetup {
 		reasoning: boolean;
 		thinkingLevels: ModelThinkingLevel[];
 		contextWindow: number;
+		/** Takes image input; others get a placeholder for each attached image. */
+		images: boolean;
 	}[] {
 		return this.models
 			.getProviders()
@@ -119,6 +121,7 @@ export class ModelSetup {
 					reasoning: model.reasoning,
 					thinkingLevels: getSupportedThinkingLevels(model),
 					contextWindow: model.contextWindow,
+					images: model.input.includes("image"),
 				})),
 			);
 	}

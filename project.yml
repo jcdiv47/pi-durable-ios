@@ -34,6 +34,8 @@ targets:
       - App/Sources
       # App Intents the widget's and Live Activity's buttons use; compiled into both targets.
       - Shared/Sources
+      # Attachments: shared with the share extension.
+      - Shared/Attachments
       # Built by the "Bundle JS" phase; optional so a fresh clone can generate the project.
       - path: App/Resources/pi-runtime.js
         optional: true
@@ -46,6 +48,7 @@ targets:
       - package: PiUI
       - package: PiAppleTools
       - target: PiWidgets
+      - target: PiShare
       - sdk: JavaScriptCore.framework
     preBuildScripts:
       - name: Bundle JS
@@ -73,6 +76,7 @@ targets:
           - dev.jcdiv47.pidurable.run.*
         NSSupportsLiveActivities: true
         # Widget and Live Activity taps: pidurable://conversation/<id>, pidurable://widgets, pidurable://tasks.
+        # The share extension: pidurable://share/<id>.
         CFBundleURLTypes:
           - CFBundleURLName: dev.jcdiv47.pidurable
             CFBundleURLSchemes: [pidurable]
@@ -117,6 +121,37 @@ targets:
         com.apple.security.application-groups: [group.dev.jcdiv47.pidurable]
         com.apple.developer.healthkit: true
         com.apple.developer.healthkit.access: []
+
+  PiShare:
+    type: app-extension
+    platform: iOS
+    sources: [Share/Sources, Shared/Attachments]
+    dependencies:
+      - package: PiUI
+      - sdk: SwiftUI.framework
+      - sdk: PDFKit.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.jcdiv47.pidurable.share
+        PRODUCT_NAME: PiShare
+    info:
+      path: Share/Info.plist
+      properties:
+        CFBundleDisplayName: Pi
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsImageWithMaxCount: 10
+              NSExtensionActivationSupportsText: true
+              NSExtensionActivationSupportsWebURLWithMaxCount: 1
+              NSExtensionActivationSupportsFileWithMaxCount: 5
+              NSExtensionActivationSupportsAttachmentsWithMaxCount: 10
+    entitlements:
+      path: Share/PiShare.entitlements
+      properties:
+        com.apple.security.application-groups: [group.dev.jcdiv47.pidurable]
 
 schemes:
   PiApp:

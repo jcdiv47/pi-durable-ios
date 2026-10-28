@@ -4,12 +4,14 @@
 
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { EntryRecord, InboxState } from "@earendil-works/pi-durable";
+import { attachmentSummary, type DisplayAttachment, type InputData } from "./attachments.ts";
 
 export type DisplayToolCall = { id: string; name: string; arguments: string };
 
 export type DisplayItem =
 	/** `origin`: where an input from outside the chat came from (Siri, a widget, a schedule). */
-	| { id: number; kind: "user"; text: string; timestamp?: number; origin?: string }
+	/** `attachments`: what came with the text (the model got them in the message after it). */
+	| { id: number; kind: "user"; text: string; timestamp?: number; origin?: string; attachments?: DisplayAttachment[] }
 	| {
 			id: number;
 			kind: "assistant";
@@ -94,7 +96,7 @@ function cardData(toolName: string, isError: boolean, text: string): unknown {
 	}
 }
 
-function textOf(content: unknown): string {
+export function textOf(content: unknown): string {
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return "";
 	return (content as Block[])
@@ -148,14 +150,17 @@ export function displayItem(entry: EntryRecord): DisplayItem | undefined {
 				data: cardData(toolName, isError, text),
 			};
 		}
-		case "app.input":
+		case "app.input": {
+			const data = entry.data as InputData | undefined;
 			return {
 				id: entry.id,
 				kind: "user",
-				text: clip(textOf(message?.content)),
+				text: clip(data?.attachments === undefined ? textOf(message?.content) : (data.text ?? "")),
 				timestamp: message?.timestamp as number | undefined,
-				origin: (entry.data as { origin?: string } | undefined)?.origin,
+				origin: data?.origin,
+				attachments: data?.attachments,
 			};
+		}
 		case "pi.compaction":
 			return { id: entry.id, kind: "notice", text: "Earlier messages were summarized" };
 		case "pi.reset":
@@ -205,6 +210,15 @@ export function displayUsage(usage: UsageDoc | undefined): DisplayFrame["usage"]
 	return total;
 }
 
+/** A queued message's typed text; with attachments, the text alone, or what is attached when there is none. */
+function queuedText(item: Extract<InboxState["items"][number], { content: unknown }>): string {
+	const data = (item.entry as { data?: InputData } | undefined)?.data;
+	if (data?.attachments === undefined) return textOf(item.content);
+	const text = data.text?.trim() ?? "";
+	const summary = attachmentSummary(data.attachments);
+	return text === "" ? `📎 ${summary}` : `${text} (📎 ${summary})`;
+}
+
 /** Remembers which entries a watcher already sent, so the next frame carries only new ones. */
 export class FrameBuilder {
 	#sent: number[] = [];
@@ -234,7 +248,7 @@ export class FrameBuilder {
 			items,
 			live: displayLive(docs["pi.live"] as LiveDoc | undefined),
 			queue: (inbox?.items ?? []).flatMap((item) =>
-				item.mode === "write" ? [] : [{ id: item.id as number, text: textOf(item.content), mode: item.mode }],
+				item.mode === "write" ? [] : [{ id: item.id as number, text: queuedText(item), mode: item.mode }],
 			),
 			model: agent?.model,
 			thinkingLevel: agent?.thinkingLevel ?? "off",

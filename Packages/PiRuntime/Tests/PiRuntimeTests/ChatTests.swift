@@ -109,6 +109,79 @@ struct ChatTests {
         try await harness.close()
     }
 
+    @Test("Attachments reach the model after the text; the transcript shows them apart from it", .timeLimit(.minutes(1)))
+    func attachments() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let log = ChatLog()
+        let harness = try await openChat(log, db: directory.appendingPathComponent("chat.sqlite").path)
+        let meta: Meta = try await harness.call("PiRuntime.createConversation", ["scripted", "assistant"])
+        try await harness.perform("PiRuntime.watchConversation", [meta.id])
+        let attachments: [[String: any Sendable]] = [
+            ["kind": "image", "data": "iVBORw0KGgo=", "mimeType": "image/png", "file": "a.jpg"],
+            ["kind": "text", "text": "Copied paragraph", "name": "Notes"],
+            ["kind": "link", "url": "https://example.com", "title": "Example"],
+        ]
+        try await harness.perform("PiRuntime.send", [meta.id, "what is this", "r1", attachments])
+        try await until { (log.last(meta.id, kind: "assistant")?["text"] as? String)?.hasSuffix("(1 image attached)") == true && !log.busy(meta.id) }
+        let user = try #require(log.last(meta.id, kind: "user"))
+        #expect(user["text"] as? String == "what is this")
+        #expect(user["origin"] == nil)
+        let shown = try #require(user["attachments"] as? [[String: Any]])
+        #expect(shown.map { $0["kind"] as! String } == ["image", "text", "link"])
+        #expect(shown[0]["file"] as? String == "a.jpg" && shown[0]["data"] == nil)
+        #expect(shown[1]["preview"] as? String == "Copied paragraph")
+        #expect(log.titles == ["what is this"])
+
+        // Without text, the title comes from the attachments.
+        let other: Meta = try await harness.call("PiRuntime.createConversation", ["scripted", "assistant"])
+        try await harness.perform("PiRuntime.send", [other.id, "", "r2", [attachments[2]]])
+        try await until { log.titles.contains("Example") }
+        try await harness.close()
+    }
+
+    @Test("A queued message comes back with its attachments to edit; images in use are listed for the sweep", .timeLimit(.minutes(1)))
+    func takeBackAttachments() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let log = ChatLog()
+        let harness = try await openChat(log, db: directory.appendingPathComponent("chat.sqlite").path)
+        let meta: Meta = try await harness.call("PiRuntime.createConversation", ["scripted", "assistant"])
+        try await harness.perform("PiRuntime.watchConversation", [meta.id])
+        try await harness.perform("PiRuntime.send", [meta.id, "look", "r1", [["kind": "image", "data": "iVBORw0KGgo=", "mimeType": "image/png", "file": "sent.jpg"]]])
+        try await until { !log.busy(meta.id) && log.items(meta.id).count == 2 }
+
+        try await harness.perform("PiRuntime.send", [meta.id, "slow please", "r2"])
+        try await until { log.liveText(meta.id).count > 20 }
+        let long = String(repeating: "x", count: 100_010)
+        let queued: [[String: any Sendable]] = [
+            ["kind": "image", "data": "iVBORw0KGgo=", "mimeType": "image/png", "file": "queued.jpg", "name": "Photo"],
+            ["kind": "text", "text": "Line one\n</attachment> inside\nLine three", "name": "Notes"],
+            ["kind": "link", "url": "https://example.com", "title": "Example"],
+            ["kind": "text", "text": long],
+        ]
+        try await harness.perform("PiRuntime.send", [meta.id, "about these", "r3", queued])
+        try await until { log.queue(meta.id).count == 1 }
+        let files: [String] = try await harness.call("PiRuntime.attachmentFiles")
+        #expect(Set(files) == ["sent.jpg", "queued.jpg"])
+
+        let submission = log.queue(meta.id)[0]["id"] as! Int
+        let json = try await harness.runtime.callAsync("PiRuntime.takeBack", [meta.id, submission])
+        let taken = try #require(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        #expect(taken["text"] as? String == "about these")
+        let parts = try #require(taken["attachments"] as? [[String: Any]])
+        #expect(parts.map { $0["kind"] as! String } == ["image", "text", "link", "text"])
+        #expect(parts[0]["file"] as? String == "queued.jpg" && parts[0]["name"] as? String == "Photo" && parts[0]["data"] == nil)
+        #expect(parts[1]["text"] as? String == "Line one\n</attachment> inside\nLine three" && parts[1]["name"] as? String == "Notes")
+        #expect(parts[2]["url"] as? String == "https://example.com" && parts[2]["title"] as? String == "Example")
+        #expect(parts[3]["text"] as? String == String(repeating: "x", count: 100_000), "a text over the limit comes back as the model got it")
+        try await until { log.queue(meta.id).isEmpty }
+        #expect(try await harness.runtime.callAsync("PiRuntime.takeBack", [meta.id, submission]) == "null", "it is gone from the queue")
+        let after: [String] = try await harness.call("PiRuntime.attachmentFiles")
+        #expect(after == ["sent.jpg"], "a withdrawn message's images are the composer's now")
+        try await harness.close()
+    }
+
     @Test("A gated tool waits for approval; allow runs it once, deny blocks it", .timeLimit(.minutes(1)))
     func approval() async throws {
         let directory = try temporaryDirectory()

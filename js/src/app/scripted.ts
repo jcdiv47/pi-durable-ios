@@ -127,7 +127,8 @@ export function createScriptedModel() {
 	const faux = fauxProvider({
 		provider: "scripted",
 		// Reasoning, so the effort picker can be tried offline; the faux provider ignores the level.
-		models: [{ id: "assistant", name: "Offline demo (scripted)", reasoning: true }],
+		// Image input too, so attachments reach it as images and its answer can count them.
+		models: [{ id: "assistant", name: "Offline demo (scripted)", reasoning: true, input: ["text", "image"] }],
 		tokensPerSecond: 120,
 		tokenSize: { min: 2, max: 6 },
 	});
@@ -218,8 +219,11 @@ export function createScriptedModel() {
 				);
 			case "slow":
 				return fauxAssistantMessage(longAnswer);
-			default:
-				return fauxAssistantMessage(`You said: ${prompt}`);
+			default: {
+				const content = messages[lastUser]?.content;
+				const images = Array.isArray(content) ? content.filter((block: { type?: string }) => block.type === "image").length : 0;
+				return fauxAssistantMessage(images === 0 ? `You said: ${prompt}` : `You said: ${prompt}\n\n(${images} image${images === 1 ? "" : "s"} attached)`);
+			}
 		}
 	};
 	// Every request consumes one step; each step is the same function of the transcript.
