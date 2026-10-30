@@ -9,6 +9,8 @@ public final class PiHarness: Sendable {
         public var modelId: String
         public var keyedProviders: [String]
         public var customProvider: CustomProvider?
+        /// Where `web_search` searches: `off`, `deepseek`, `brave` or `scripted` (offline).
+        public var searchProvider: String?
         /// Approval policy per tool name: `auto`, `ask` or `deny`.
         public var policies: [String: String]?
         public var toolMs: Int?
@@ -19,6 +21,7 @@ public final class PiHarness: Sendable {
             modelId: String,
             keyedProviders: [String] = [],
             customProvider: CustomProvider? = nil,
+            searchProvider: String? = nil,
             policies: [String: String]? = nil,
             toolMs: Int? = nil
         ) {
@@ -27,6 +30,7 @@ public final class PiHarness: Sendable {
             self.modelId = modelId
             self.keyedProviders = keyedProviders
             self.customProvider = customProvider
+            self.searchProvider = searchProvider
             self.policies = policies
             self.toolMs = toolMs
         }

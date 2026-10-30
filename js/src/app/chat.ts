@@ -18,7 +18,7 @@ import {
 	type InboxState,
 	type Submission,
 } from "@earendil-works/pi-durable";
-import type { Approvals, Decision, ToolPolicy } from "./approvals.ts";
+import { type Approvals, type Decision, defaultPolicies, type ToolPolicy } from "./approvals.ts";
 import {
 	attachmentFiles,
 	attachmentTitle,
@@ -530,6 +530,7 @@ export class Chat {
 	}
 
 	setPolicies(policies: Record<string, ToolPolicy>): void {
-		this.approvals.policies = { ...policies };
+		// Tools newer than the stored settings keep their default.
+		this.approvals.policies = { ...defaultPolicies, ...policies };
 	}
 }

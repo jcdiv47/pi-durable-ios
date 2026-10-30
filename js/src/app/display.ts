@@ -82,6 +82,7 @@ const cardTools = new Set([
 	"calendar_create_event",
 	"health_query",
 	"location_current",
+	"web_search",
 ]);
 
 /** Larger outputs keep only their text. */
