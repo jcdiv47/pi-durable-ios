@@ -90,6 +90,11 @@ final class ChatStore {
         }
     }
 
+    /// Where links in the chat open: Pi's browser, pushed on the chat (`BrowserView`), or the default browser.
+    var openLinksInApp: Bool {
+        didSet { settings.set(openLinksInApp, forKey: "openLinksInApp") }
+    }
+
     var custom: PiHarness.CustomProvider? {
         didSet {
             settings.set(try? JSONEncoder().encode(custom), forKey: "customProvider")
@@ -120,6 +125,7 @@ final class ChatStore {
         defaultModel = stored?.count == 2 ? ModelRef(provider: stored![0], modelId: stored![1]) : Self.offlineModel
         defaultThinking = settings.string(forKey: "defaultThinking") ?? "medium"
         searchProvider = settings.string(forKey: "searchProvider") ?? "off"
+        openLinksInApp = settings.object(forKey: "openLinksInApp") as? Bool ?? true
         custom = settings.data(forKey: "customProvider").flatMap { try? JSONDecoder().decode(PiHarness.CustomProvider.self, from: $0) }
         ProviderKeys.setCustomHost(custom.flatMap { URL(string: $0.baseUrl)?.host() })
         dial = settings.data(forKey: Self.dialKey).flatMap { try? JSONDecoder().decode(GenerativityDial.self, from: $0) } ?? GenerativityDial()

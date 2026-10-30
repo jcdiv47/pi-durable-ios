@@ -15,6 +15,8 @@ decisions that change the spec go in `docs/adr/`.
   folds tool calls into "Worked" rows (`TranscriptRow`), draws Apple tool results as native cards (`ResultCards`,
   from `cardTools` in display.ts) and assistant text as Markdown (`MarkdownText`). The composer's mic (`VoiceInput`)
   records, and OpenAI's transcription (`gpt-4o-transcribe`, the `openai` provider key, sent from Swift) fills the field.
+  Links go through the root's `openURL` action: with Settings › Links on Pi, web links push `Route.browser`
+  (`BrowserView`, a SwiftUI `WebPage`), so the stack's edge swipe returns to the chat.
   `App/Sources/M0/`: the headless check modes.
 - `App/Sources/System/`: M3's system integration: App Intents, entities, Siri phrases and snippets
   (`PiAppIntents`), BackgroundTasks from `onWake` (`BackgroundWork`), notifications with actions (`Notifications`),
