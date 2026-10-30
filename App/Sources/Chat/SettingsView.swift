@@ -81,6 +81,18 @@ struct SettingsView: View {
             }
 
             Section {
+                Picker("Open links in", selection: $store.openLinksInApp) {
+                    Text("Pi").tag(true)
+                    Text("Default browser").tag(false)
+                }
+                .accessibilityIdentifier("settings.links")
+            } header: {
+                Text("Links")
+            } footer: {
+                Text("In Pi, a page slides in over the chat; swipe right from the left edge to go back. Map links always open in Maps.")
+            }
+
+            Section {
                 ForEach(store.tools) { tool in
                     Picker(selection: Binding(get: { tool.policy }, set: { policy in Task { await store.setPolicy(policy, for: tool.name) } })) {
                         Text("Allow").tag("auto")

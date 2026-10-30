@@ -100,7 +100,7 @@ struct TranscriptItemView: View {
     }
 }
 
-/// A user message's attachments above its bubble: images open full size, links open in Safari.
+/// A user message's attachments above its bubble: images open full size, links open like any link (Settings › Links).
 private struct SentAttachments: View {
     let attachments: [DisplayAttachment]
     @State private var viewing: String?

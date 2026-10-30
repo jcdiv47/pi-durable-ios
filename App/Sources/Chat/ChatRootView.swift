@@ -10,6 +10,8 @@ enum Route: Hashable {
     case gallery
     case component(String)
     case tuning
+    /// A link, when links open in Pi (`BrowserView`).
+    case browser(URL)
 
     /// `pidurable://conversation/<id>` (widget and Live Activity taps), `pidurable://widgets`, `pidurable://tasks`.
     /// `pidurable://share/<id>` is no route: the share extension's item goes through `ChatStore.receiveShares`.
@@ -43,9 +45,16 @@ struct ChatRootView: View {
                     case .gallery: GalleryView()
                     case let .component(name): ComponentDetailView(store: store, name: name)
                     case .tuning: TuningView(store: store)
+                    case let .browser(url): BrowserView(url: url)
                     }
                 }
         }
+        .environment(\.openURL, OpenURLAction { url in
+            // Every link in the chat (Markdown, cards, attachments) comes through here.
+            guard store.openLinksInApp, BrowserView.opens(url) else { return .systemAction }
+            path.append(.browser(url))
+            return .handled
+        })
         .onOpenURL { url in
             if url.host() == "share" { Task { await store.receiveShares() } }
             if let route = Route(url: url) { path = [route] }
