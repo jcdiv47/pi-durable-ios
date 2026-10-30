@@ -93,6 +93,7 @@ targets:
         NSHealthShareUsageDescription: Pi reads the health data you ask it about.
         NSLocationWhenInUseUsageDescription: Pi looks up where you are only when a request needs it, such as nearby places or the weather.
         NSHealthUpdateUsageDescription: Pi saves health data only when you ask it to.
+        NSMicrophoneUsageDescription: Pi records you only while you dictate a message, and sends the recording to OpenAI to turn it into text.
     entitlements:
       path: App/PiApp.entitlements
       properties:

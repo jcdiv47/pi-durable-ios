@@ -18,6 +18,7 @@ struct ConversationView: View {
     /// Queued messages with a withdraw or steer in flight.
     @State private var queueActions: Set<Int> = []
     @State private var keyboardScroll = TranscriptKeyboardScroll()
+    @State private var voice = VoiceInput()
 
     private var state: ConversationState { store.state(conversationId) }
     private var meta: ConversationMeta? { store.conversations.first { $0.id == conversationId } }
@@ -93,7 +94,10 @@ struct ConversationView: View {
                 attachments += kept.attachments
             }
         }
-        .onDisappear { store.keepComposerDraft(.init(text: draft, attachments: attachments), for: conversationId) }
+        .onDisappear {
+            voice.cancel()
+            store.keepComposerDraft(.init(text: draft, attachments: attachments), for: conversationId)
+        }
         .onChange(of: store.drafts[conversationId], initial: true) { takeDraft() }
     }
 
@@ -228,6 +232,7 @@ struct ConversationView: View {
         .animation(.snappy, value: attachments)
         .animation(.snappy, value: hasDraft)
         .animation(.snappy, value: state.live.busy)
+        .modifier(VoiceFeedback(voice: voice))
         .photosPicker(isPresented: $choosingPhotos, selection: $photoItems, maxSelectionCount: 10, matching: .images)
         .onChange(of: photoItems) { attachPhotos(photoItems) }
         .fileImporter(isPresented: $importingFiles, allowedContentTypes: [.image, .pdf, .text, .json, .sourceCode], allowsMultipleSelection: true) {
@@ -250,24 +255,102 @@ struct ConversationView: View {
                 }
                 .padding([.horizontal, .top], 8)
             }
-            HStack(alignment: .bottom, spacing: 4) {
-                TextField(state.live.busy ? "Queue a message" : "Message", text: $draft, axis: .vertical)
-                    .lineLimit(1...6)
-                    .focused($composing)
-                    .padding(.leading, 16)
-                    .padding(.vertical, 11)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityIdentifier("composer")
-                if hasDraft || state.live.busy {
-                    primaryButton
-                        .padding(6)
-                        .transition(.scale.combined(with: .opacity))
+            if voice.phase == .idle {
+                HStack(alignment: .bottom, spacing: 4) {
+                    TextField(state.live.busy ? "Queue a message" : "Message", text: $draft, axis: .vertical)
+                        .lineLimit(1...6)
+                        .focused($composing)
+                        .padding(.leading, 16)
+                        .padding(.vertical, 11)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("composer")
+                    if draft.isEmpty {
+                        micButton
+                            .padding(.vertical, 6)
+                            .padding(.trailing, hasDraft || state.live.busy ? 0 : 6)
+                            .transition(.scale.combined(with: .opacity))
+                    }
+                    if hasDraft || state.live.busy {
+                        primaryButton
+                            .padding(6)
+                            .transition(.scale.combined(with: .opacity))
+                    }
                 }
+                .frame(minHeight: Self.fieldHeight)
+            } else {
+                recording
+                    .frame(minHeight: Self.fieldHeight)
             }
-            .frame(minHeight: Self.fieldHeight)
         }
         .contentShape(.rect(cornerRadius: Self.fieldHeight / 2))
         .glassEffect(.regular, in: .rect(cornerRadius: Self.fieldHeight / 2))
+    }
+
+    /// Starts voice input; the transcript goes into the field, to edit before sending.
+    private var micButton: some View {
+        Button {
+            composing = false
+            Task {
+                await voice.start(diagnostics: store.diagnostics) { [store, conversationId] text in
+                    store.addDraft(text, to: conversationId)
+                }
+            }
+        } label: {
+            Image(systemName: "mic")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 32, height: 32)
+                .contentShape(.circle)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Dictate")
+        .accessibilityIdentifier("voice.start")
+    }
+
+    /// In place of the text while voice input records (Cancel, the input level, the time, Done) or transcribes.
+    @ViewBuilder private var recording: some View {
+        if voice.phase == .recording {
+            HStack(spacing: 8) {
+                Button("Cancel", systemImage: "xmark") { voice.cancel() }
+                    .labelStyle(.iconOnly)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 32, height: 32)
+                    .contentShape(.circle)
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("voice.cancel")
+                VoiceLevels(levels: voice.levels)
+                    .frame(maxWidth: .infinity)
+                if let since = voice.startedAt {
+                    TimelineView(.periodic(from: since, by: 1)) { context in
+                        Text(Duration.seconds(context.date.timeIntervalSince(since)).formatted(.time(pattern: .minuteSecond)))
+                            .font(.subheadline)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Button { voice.finish() } label: {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 32, height: 32)
+                        .background(.tint, in: .circle)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Done")
+                .accessibilityIdentifier("voice.done")
+            }
+            .padding(.leading, 6)
+            .padding(.trailing, 6)
+        } else {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Transcribing…").foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("voice.transcribing")
+        }
     }
 
     /// Send, or Stop while an answer runs and the field is empty. Text typed during an answer is queued.
@@ -435,6 +518,46 @@ private struct TranscriptScrollProbe: UIViewRepresentable {
                 ancestor = candidate.superview
             }
         }
+    }
+}
+
+/// The composer's animation, haptics and alert for voice input.
+private struct VoiceFeedback: ViewModifier {
+    @Bindable var voice: VoiceInput
+
+    private var failed: Binding<Bool> {
+        Binding(get: { voice.error != nil }, set: { if !$0 { voice.error = nil } })
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .animation(.snappy, value: voice.phase)
+            .sensoryFeedback(trigger: voice.phase) { old, new in
+                new == .recording ? .start : old == .recording ? .stop : nil
+            }
+            .alert("Voice input", isPresented: failed) {
+                Button("OK") {}
+            } message: {
+                Text(voice.error ?? "")
+            }
+    }
+}
+
+/// The microphone's recent input levels as bars, newest on the right.
+private struct VoiceLevels: View {
+    let levels: [Float]
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(levels.indices, id: \.self) { index in
+                Capsule()
+                    .fill(.tint)
+                    .frame(width: 3, height: 4 + CGFloat(levels[index]) * 20)
+            }
+        }
+        .frame(height: 24)
+        .animation(.linear(duration: 0.06), value: levels)
+        .accessibilityHidden(true)
     }
 }
 

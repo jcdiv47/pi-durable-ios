@@ -647,6 +647,12 @@ final class ChatStore {
         }
     }
 
+    /// Dictated text for a conversation's composer, which takes it whether its view is still there or opens again.
+    func addDraft(_ text: String, to id: Int) {
+        let earlier = drafts[id]
+        drafts[id] = Draft(text: [earlier?.text ?? "", text].filter { !$0.isEmpty }.joined(separator: " "), attachments: earlier?.attachments ?? [])
+    }
+
     func takeDraft(_ id: Int) -> Draft? {
         drafts.removeValue(forKey: id)
     }
