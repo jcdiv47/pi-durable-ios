@@ -25,7 +25,7 @@ final class VoiceInput {
     static let provider = "openai"
     nonisolated static let model = "gpt-4o-transcribe"
     /// Well under the API's 25 MB upload limit at this recording's bit rate.
-    static let maxDuration: TimeInterval = 600
+    nonisolated static let maxDuration: TimeInterval = 600
     static let levelCount = 24
 
     private var recorder: AVAudioRecorder?
@@ -35,7 +35,8 @@ final class VoiceInput {
     private var onText: ((String) -> Void)?
     /// Between a tap on the mic and recording: permission and the audio session.
     private var starting = false
-    /// Activating and deactivating the audio session can block, so it happens here, in order, off the main thread.
+    /// Activating and deactivating the audio session can block (starting a recorder activates it too), so it happens
+    /// here, in order, off the main thread.
     private nonisolated static let sessionQueue = DispatchQueue(label: "dev.pi.durable.voice-session")
 
     /// Asks for the microphone on first use, then records until `finish()` or `cancel()`, the time limit, or an
@@ -54,16 +55,7 @@ final class VoiceInput {
             return
         }
         do {
-            try await Self.activateSession()
-            let url = FileManager.default.temporaryDirectory.appending(path: "voice-\(UUID().uuidString).m4a")
-            let recorder = try AVAudioRecorder(url: url, settings: [
-                AVFormatIDKey: kAudioFormatMPEG4AAC,
-                AVSampleRateKey: 16_000,
-                AVNumberOfChannelsKey: 1,
-                AVEncoderBitRateKey: 32_000,
-            ])
-            recorder.isMeteringEnabled = true
-            guard recorder.record(forDuration: Self.maxDuration) else { throw VoiceInputError("The microphone didn't start recording.") }
+            let recorder = try await Self.startRecorder()
             self.recorder = recorder
             self.key = key
             self.onText = onText
@@ -145,19 +137,34 @@ final class VoiceInput {
         diagnostics?.record("warn", "voice", message)
     }
 
-    private nonisolated static func activateSession() async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+    /// Activates the session and starts a recorder on `sessionQueue`; from then on the main actor owns the recorder.
+    private nonisolated static func startRecorder() async throws -> AVAudioRecorder {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<StartedRecorder, Error>) in
             sessionQueue.async {
                 do {
                     let session = AVAudioSession.sharedInstance()
                     try session.setCategory(.record, mode: .default)
                     try session.setActive(true)
-                    continuation.resume()
+                    let url = FileManager.default.temporaryDirectory.appending(path: "voice-\(UUID().uuidString).m4a")
+                    let recorder = try AVAudioRecorder(url: url, settings: [
+                        AVFormatIDKey: kAudioFormatMPEG4AAC,
+                        AVSampleRateKey: 16_000,
+                        AVNumberOfChannelsKey: 1,
+                        AVEncoderBitRateKey: 32_000,
+                    ])
+                    recorder.isMeteringEnabled = true
+                    guard recorder.record(forDuration: maxDuration) else { throw VoiceInputError("The microphone didn't start recording.") }
+                    continuation.resume(returning: StartedRecorder(recorder: recorder))
                 } catch {
                     continuation.resume(throwing: error)
                 }
             }
-        }
+        }.recorder
+    }
+
+    /// Hands the recorder from `sessionQueue` to the main actor; nothing on the queue touches it afterwards.
+    private struct StartedRecorder: @unchecked Sendable {
+        let recorder: AVAudioRecorder
     }
 
     /// `POST /v1/audio/transcriptions`, multipart: the model and the recording. The language is detected.
