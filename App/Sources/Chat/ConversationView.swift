@@ -48,6 +48,7 @@ struct ConversationView: View {
                 .padding(.horizontal)
                 .padding(.vertical, 8)
                 .background(TranscriptScrollProbe(scroll: keyboardScroll))
+                .environment(\.holdTranscriptPosition) { [keyboardScroll] in keyboardScroll.hold() }
             }
             .defaultScrollAnchor(.bottom)
             // Short conversations start at the top; overflowing transcripts still follow the latest content.
@@ -55,8 +56,8 @@ struct ConversationView: View {
             .onScrollGeometryChange(for: ScrollGeometry.self, of: { $0 }) { old, new in
                 keyboardScroll.resize(from: old, to: new)
                 // Follow the laid-out transcript, including thinking, tool calls and result cards.
-                // Model changes can arrive before the bottom anchor has moved.
-                if old.contentSize != new.contentSize, keyboardScroll.allowsAutomaticScrolling {
+                // Model changes can arrive before the bottom anchor has moved. A row the user opens stays where it is.
+                if old.contentSize != new.contentSize, keyboardScroll.followsContent {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
             }
@@ -346,10 +347,17 @@ private final class TranscriptKeyboardScroll: NSObject {
     private var interacting = false
     private var animationEnd = Date.distantPast
     private var animationOptions: UIView.AnimationOptions = []
+    private var heldUntil = Date.distantPast
 
     var allowsAutomaticScrolling: Bool {
         !interacting && view?.isTracking != true && view?.isDragging != true && view?.isDecelerating != true
     }
+
+    /// Whether a change in the transcript's height should take it to the end.
+    var followsContent: Bool { allowsAutomaticScrolling && Date() >= heldUntil }
+
+    /// A row the user opens or closes changes the transcript's height too; don't follow it through its animation.
+    func hold() { heldUntil = Date().addingTimeInterval(0.6) }
 
     func attach(_ view: UIScrollView) {
         guard self.view !== view else { return }
@@ -397,6 +405,11 @@ private final class TranscriptKeyboardScroll: NSObject {
             view.contentOffset = CGPoint(x: view.contentOffset.x, y: y)
         }
     }
+}
+
+extension EnvironmentValues {
+    /// Called by a transcript row the user opens or closes (thinking, tool calls), so the transcript stays put.
+    @Entry var holdTranscriptPosition: @MainActor @Sendable () -> Void = {}
 }
 
 /// Hands the transcript's UIScrollView to `TranscriptKeyboardScroll`.

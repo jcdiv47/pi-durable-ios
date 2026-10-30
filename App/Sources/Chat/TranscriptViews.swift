@@ -161,6 +161,7 @@ struct WorkRow: View {
     let state: ConversationState
     let store: ChatStore
     @State private var expanded = false
+    @Environment(\.holdTranscriptPosition) private var holdPosition
 
     var body: some View {
         let calls = steps.flatMap { $0.toolCalls ?? [] }
@@ -170,6 +171,7 @@ struct WorkRow: View {
         let waiting = Set(store.approvals.filter { $0.conversationId == state.id }.map(\.callId))
         VStack(alignment: .leading, spacing: 10) {
             Button {
+                holdPosition()
                 withAnimation(.snappy) { expanded.toggle() }
             } label: {
                 HStack(spacing: 8) {
@@ -306,11 +308,13 @@ struct AssistantView: View {
     let thinking: String
     let streaming: Bool
     @State private var showThinking = false
+    @Environment(\.holdTranscriptPosition) private var holdPosition
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if !thinking.isEmpty {
                 Button {
+                    holdPosition()
                     withAnimation(.snappy) { showThinking.toggle() }
                 } label: {
                     HStack(spacing: 8) {
@@ -346,6 +350,7 @@ struct ToolCallCard: View {
     let approval: ApprovalRequest?
     let store: ChatStore
     @State private var expanded = false
+    @Environment(\.holdTranscriptPosition) private var holdPosition
 
     private var status: (String, Color, String) {
         if let result {
@@ -359,6 +364,7 @@ struct ToolCallCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Button {
+                holdPosition()
                 withAnimation(.snappy) { expanded.toggle() }
             } label: {
                 HStack(spacing: 8) {
