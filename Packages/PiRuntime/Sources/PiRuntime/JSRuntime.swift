@@ -15,17 +15,21 @@ public struct JSRuntimeError: Error, CustomStringConvertible, Sendable {
 public final class JSRuntime: @unchecked Sendable {
     public struct Options: Sendable {
         public var keys: ProviderKeySource?
+        /// Counts keyed requests per service and month and enforces monthly caps; nil counts nothing.
+        public var usage: ServiceUsage?
         public var onEvent: (@Sendable (String) -> Void)?
         public var onLog: (@Sendable (String, String) -> Void)?
         /// Answers `hostCall(name, json)` from JS (Apple tools and the like) with JSON text, off the JS queue.
         public var hostCall: HostCallHandler?
         public init(
             keys: ProviderKeySource? = nil,
+            usage: ServiceUsage? = nil,
             onEvent: (@Sendable (String) -> Void)? = nil,
             onLog: (@Sendable (String, String) -> Void)? = nil,
             hostCall: HostCallHandler? = nil
         ) {
             self.keys = keys
+            self.usage = usage
             self.onEvent = onEvent
             self.onLog = onLog
             self.hostCall = hostCall
@@ -173,7 +177,7 @@ public final class JSRuntime: @unchecked Sendable {
         }
         context.isInspectable = true
 
-        fetch = FetchBridge(keys: options.keys) { [weak self] id, event in
+        fetch = FetchBridge(keys: options.keys, usage: options.usage) { [weak self] id, event in
             guard let self else { return }
             self.queue.async { self.deliverFetch(id, event) }
         }

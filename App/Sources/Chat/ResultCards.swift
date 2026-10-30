@@ -3,7 +3,7 @@ import MapKit
 import PiUI
 import SwiftUI
 
-// Native cards for Apple tool results, drawn under a run's "Worked" row. They read the result's parsed output
+// Native cards for Apple tool and web search results, drawn under a run's "Worked" row. They read the result's parsed output
 // (`cardTools` in js/src/app/display.ts); a result without one, or one that does not decode, shows no card.
 
 /// What a tool result shows as a card.
@@ -12,6 +12,7 @@ enum ResultCardContent {
     case events(title: String, [EventRow], days: Bool)
     case location(LocationResult)
     case health(HealthResult)
+    case web(WebSearchResult)
 
     init?(call: ToolCallItem, result: DisplayItem) {
         guard result.isError != true, let data = result.data else { return nil }
@@ -40,6 +41,9 @@ enum ResultCardContent {
         case "health_query":
             guard let value = data.decoded(HealthResult.self), !value.buckets.isEmpty else { return nil }
             self = .health(value)
+        case "web_search":
+            guard let value = data.decoded(WebSearchResult.self), !value.results.isEmpty else { return nil }
+            self = .web(value)
         default:
             return nil
         }
@@ -90,6 +94,8 @@ struct ResultCard: View {
             LocationCard(value: value)
         case let .health(value):
             HealthCard(value: value)
+        case let .web(value):
+            WebSearchCard(value: value)
         }
     }
 }
@@ -536,6 +542,74 @@ struct HealthCard: View {
             ? "\(first.formatted(.dateTime.month(.abbreviated).day())) – \(dates.last!.formatted(.dateTime.month(.abbreviated).day()))"
             : Calendar.current.isDateInToday(first) ? "Today" : first.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
         return summed ? range : "\(range) · average"
+    }
+}
+
+// MARK: Web
+
+struct WebSearchResult: Decodable {
+    struct Row: Decodable, Hashable {
+        let title: String
+        let url: String
+        let snippet: String?
+        let date: String?
+        let site: String?
+    }
+
+    let provider: String?
+    let query: String
+    let results: [Row]
+}
+
+struct WebSearchCard: View {
+    let value: WebSearchResult
+    @Environment(\.openURL) private var openURL
+    private static let collapsed = 4
+
+    var body: some View {
+        ResultCardShell(
+            source: "Web",
+            symbol: "globe",
+            tint: .teal,
+            title: value.query,
+            subtitle: [value.results.count == 1 ? "1 result" : "\(value.results.count) results", value.provider].compactMap(\.self).joined(separator: " · "),
+            share: value.results.map { "\($0.title)\n\($0.url)" }.joined(separator: "\n\n"),
+            expandable: value.results.count > Self.collapsed
+        ) { expanded in
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(expanded ? value.results : Array(value.results.prefix(Self.collapsed)), id: \.self) { row in
+                    Button {
+                        if let url = URL(string: row.url) { openURL(url) }
+                    } label: {
+                        result(row, expanded: expanded)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private func result(_ row: WebSearchResult.Row, expanded: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(source(row)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            Text(row.title.isEmpty ? row.url : row.title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.tint)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+            if expanded, let snippet = row.snippet, !snippet.isEmpty {
+                Text(snippet).font(.caption).foregroundStyle(.secondary).lineLimit(4)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(.rect)
+    }
+
+    /// "Earendil · Jun 1, 2026": the site, or the link's host, and the date when it parses.
+    private func source(_ row: WebSearchResult.Row) -> String {
+        let site = row.site ?? URL(string: row.url)?.host()
+        let date = row.date.flatMap(ISODate.date)?.formatted(.dateTime.month(.abbreviated).day().year())
+        return [site, date].compactMap(\.self).joined(separator: " · ")
     }
 }
 

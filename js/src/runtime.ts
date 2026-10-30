@@ -15,12 +15,13 @@ import {
 } from "@earendil-works/pi-durable";
 import { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
 import { AppleTools, appleToolInfo } from "./app/apple.ts";
-import { Approvals, type Decision, type ToolPolicy } from "./app/approvals.ts";
+import { Approvals, type Decision, defaultPolicies, type ToolPolicy } from "./app/approvals.ts";
 import type { InputAttachment } from "./app/attachments.ts";
 import { Chat, type OutsideInput, type WidgetAction } from "./app/chat.ts";
 import { type CustomProvider, ModelSetup } from "./app/models.ts";
 import { answerText, ScheduleTools, scheduleToolInfo } from "./app/schedule.ts";
 import { SurfaceTools, surfaceToolInfo } from "./app/surfaces.ts";
+import { fetchTrusted, type SearchProviderId, WebTools, webSettings, webToolInfo } from "./app/web.ts";
 import { createKillTestFaux, KillTestTools } from "./killtest.ts";
 import { fetchStats } from "./host/fetch.ts";
 import { native } from "./host/native.ts";
@@ -40,6 +41,8 @@ export interface OpenOptions {
 	/** Providers whose keys Swift holds; only these get a placeholder key. */
 	readonly keyedProviders?: readonly string[];
 	readonly customProvider?: CustomProvider;
+	/** Where `web_search` searches: Settings › Web search. */
+	readonly searchProvider?: SearchProviderId;
 	readonly policies?: Record<string, ToolPolicy>;
 	/** Milliseconds the kill test's tools take. */
 	readonly toolMs?: number;
@@ -49,6 +52,7 @@ let harness: Harness | undefined;
 let root: Conversation | undefined;
 let chat: Chat | undefined;
 const setup = new ModelSetup();
+webSettings.keyed = (service) => setup.keyed.has(service);
 const approvals = new Approvals((pending) => emit({ type: "approvals", pending }));
 let wakeTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -66,7 +70,8 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 	if (harness !== undefined) throw new Error("PiRuntime is already open");
 	const t0 = performance.now();
 	configureProviders(options.keyedProviders ?? [], options.customProvider);
-	if (options.policies !== undefined) approvals.policies = { ...options.policies };
+	if (options.policies !== undefined) approvals.policies = { ...defaultPolicies, ...options.policies };
+	webSettings.provider = options.searchProvider ?? "off";
 	const models = setup.models;
 	models.setProvider(createKillTestFaux().provider);
 
@@ -75,6 +80,7 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 	const approvalGate = approvals.extension();
 	registry.install(AppleTools);
 	registry.install(SurfaceTools);
+	registry.install(WebTools);
 	const scheduleTools = ScheduleTools((taskId) => requireOpen().harness.abortTask(taskId as never, context));
 	registry.install(scheduleTools);
 	registry.install(approvalGate);
@@ -98,10 +104,20 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 	root = await harness.root(context, {
 		agent: { model: { provider: options.provider, modelId: options.modelId }, extensions: [KillTestTools(0)] },
 	});
-	chat = new Chat(harness, approvals, [AppleTools, SurfaceTools, scheduleTools, approvalGate], emit, (model, level) =>
+	chat = new Chat(harness, approvals, [AppleTools, SurfaceTools, WebTools, scheduleTools, approvalGate], emit, (model, level) =>
 		setup.clampThinking(model, level),
 	);
 	await chat.upgrade();
+	approvals.trusted.web_fetch = async (args, conversationId, context) => {
+		const conversation = await harness?.conversation(conversationId as never, context);
+		if (conversation === undefined) return false;
+		const view = await conversation.viewState(context);
+		try {
+			return fetchTrusted(args, view.value.entries as unknown as EntryRecord[]);
+		} finally {
+			view.dispose();
+		}
+	};
 	const wake = harness.wake();
 	onWake(wake);
 	emit({
@@ -310,12 +326,15 @@ const app = {
 	answerApproval: async (id: number, decision: Decision) => requireChat().answerApproval(id, decision),
 	setPolicies: async (policies: Record<string, ToolPolicy>) => requireChat().setPolicies(policies),
 	tools: async () =>
-		[...appleToolInfo, ...surfaceToolInfo, ...scheduleToolInfo].map((tool) => ({ ...tool, policy: approvals.policy(tool.name) })),
+		[...appleToolInfo, ...webToolInfo, ...surfaceToolInfo, ...scheduleToolInfo].map((tool) => ({ ...tool, policy: approvals.policy(tool.name) })),
 	surfaces: (conversationId: number) => requireChat().surfaces(conversationId),
 	publishedSurfaces: () => requireChat().published(),
 	unpublishSurface: (publishedId: string) => requireChat().unpublish(publishedId),
 	surfaceValues: () => requireChat().values(),
 	configureProviders: async (keyedProviders: string[], custom?: CustomProvider) => configureProviders(keyedProviders, custom),
+	setSearchProvider: async (provider: SearchProviderId) => {
+		webSettings.provider = provider;
+	},
 	models: async () => setup.available(),
 	usage: async () => JSON.parse(JSON.stringify(await requireOpen().harness.usage(context))),
 	// Entry points outside the chat (App Intents, widget buttons, notification actions); each carries a request ID.

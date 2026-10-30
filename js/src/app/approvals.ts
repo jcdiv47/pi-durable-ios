@@ -28,10 +28,17 @@ export const defaultPolicies: Record<string, ToolPolicy> = {
 	publish_surface: "ask",
 	// A schedule runs the model unattended, on the user's key.
 	schedule_task: "ask",
+	// A page could use it to send data out; URLs the conversation already holds run without asking (`trusted`).
+	web_fetch: "ask",
 };
+
+/** A call of an "ask" tool that may run without asking. */
+export type TrustCheck = (args: JsonObject, conversationId: number, context: Context) => Promise<boolean>;
 
 export class Approvals {
 	policies: Record<string, ToolPolicy> = { ...defaultPolicies };
+	/** Per tool: calls its policy "ask" lets run without asking. */
+	trusted: Record<string, TrustCheck> = {};
 	readonly #waiting = new Map<number, { request: ApprovalRequest; answer: (decision: Decision) => void }>();
 	/**
 	 * Answers that came before their request: a notification action launches the app, and its answer can arrive
@@ -97,6 +104,8 @@ export class Approvals {
 						const policy = this.policy(call.name);
 						if (policy === "auto") return undefined;
 						if (policy === "deny") return { block: `The user has turned off ${call.name}.` };
+						const trusted = this.trusted[call.name];
+						if (trusted !== undefined && (await trusted(call.arguments, api.conversationId, context))) return undefined;
 						let decision = await api.memo<Decision>("approval", context);
 						if (decision === undefined) {
 							const early = this.#early.get(api.taskId);

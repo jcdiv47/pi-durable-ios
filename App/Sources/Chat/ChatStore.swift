@@ -31,6 +31,8 @@ final class ChatStore {
     static let providers: [(id: String, name: String)] = [
         ("anthropic", "Anthropic"), ("openai", "OpenAI"), ("openrouter", "OpenRouter"), ("deepseek", "DeepSeek"), ("custom", "Custom endpoint"),
     ]
+    /// Keyed HTTP APIs behind tools, which are not model providers (docs/adr/0004-http-api-services.md).
+    static let services: [(id: String, name: String)] = [("brave", "Brave Search")]
     static let offlineModel = ModelRef(provider: "scripted", modelId: "assistant")
 
     private(set) var phase = Phase.starting
@@ -80,6 +82,14 @@ final class ChatStore {
     /// Reminder lists' and calendars' colors by title, read when a card first needs them.
     private(set) var listColors: (reminders: [String: Color], calendars: [String: Color])?
 
+    /// Where `web_search` searches: `off`, `deepseek`, `brave`, or `scripted` (offline, debug builds).
+    var searchProvider: String {
+        didSet {
+            settings.set(searchProvider, forKey: "searchProvider")
+            Task { await applySearchProvider() }
+        }
+    }
+
     var custom: PiHarness.CustomProvider? {
         didSet {
             settings.set(try? JSONEncoder().encode(custom), forKey: "customProvider")
@@ -109,6 +119,7 @@ final class ChatStore {
         let stored = settings.string(forKey: "defaultModel")?.split(separator: "/", maxSplits: 1).map(String.init)
         defaultModel = stored?.count == 2 ? ModelRef(provider: stored![0], modelId: stored![1]) : Self.offlineModel
         defaultThinking = settings.string(forKey: "defaultThinking") ?? "medium"
+        searchProvider = settings.string(forKey: "searchProvider") ?? "off"
         custom = settings.data(forKey: "customProvider").flatMap { try? JSONDecoder().decode(PiHarness.CustomProvider.self, from: $0) }
         ProviderKeys.setCustomHost(custom.flatMap { URL(string: $0.baseUrl)?.host() })
         dial = settings.data(forKey: Self.dialKey).flatMap { try? JSONDecoder().decode(GenerativityDial.self, from: $0) } ?? GenerativityDial()
@@ -160,7 +171,7 @@ final class ChatStore {
 
     private func start() async {
         importKeysIfPresent()
-        keyedProviders = Set(Self.providers.map(\.id).filter { keys.hasKey(for: $0) })
+        keyedProviders = Set((Self.providers + Self.services).map(\.id).filter { keys.hasKey(for: $0) })
         do {
             let directory = try SharedContainer.directory("pi")
             let tools = appleTools
@@ -168,6 +179,7 @@ final class ChatStore {
             let notifications = notifications!
             let harness = try await PiHarness.load(bundle: AppModel.bundleURL, options: .init(
                 keys: keys,
+                usage: .shared,
                 onEvent: { [weak self] json in
                     DispatchQueue.main.async { MainActor.assumeIsolated { self?.handle(json) } }
                 },
@@ -187,6 +199,7 @@ final class ChatStore {
                 modelId: defaultModel.modelId,
                 keyedProviders: Array(keyedProviders),
                 customProvider: custom,
+                searchProvider: searchProvider,
                 policies: settings.dictionary(forKey: "toolPolicies") as? [String: String]
             ))
             self.harness = harness
@@ -488,6 +501,11 @@ final class ChatStore {
         } catch {
             report("providers", error)
         }
+    }
+
+    func applySearchProvider() async {
+        guard let harness else { return }
+        do { try await harness.perform("PiRuntime.setSearchProvider", [searchProvider]) } catch { report("search provider", error) }
     }
 
     func refreshModels() async {
@@ -874,7 +892,7 @@ final class ChatStore {
     /// it moves into the Keychain here and the file is deleted.
     private func importKeysIfPresent() {
         #if DEBUG
-        for (provider, _) in Self.providers {
+        for (provider, _) in Self.providers + Self.services {
             let url = M0Files.url("import-\(provider).key")
             guard let key = try? String(contentsOf: url, encoding: .utf8) else { continue }
             try? FileManager.default.removeItem(at: url)

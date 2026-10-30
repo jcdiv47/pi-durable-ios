@@ -235,6 +235,65 @@ struct ChatTests {
         try await harness.close()
     }
 
+    @Test("Web search draws a card; a link from it is read at once, a link from nowhere asks first", .timeLimit(.minutes(1)))
+    func webTools() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let log = ChatLog()
+        let harness = try await openChat(log, db: directory.appendingPathComponent("chat.sqlite").path)
+        let meta: Meta = try await harness.call("PiRuntime.createConversation", ["scripted", "assistant"])
+        try await harness.perform("PiRuntime.watchConversation", [meta.id])
+
+        try await harness.perform("PiRuntime.send", [meta.id, "search pi durable", "r1"])
+        try await until { !log.busy(meta.id) && log.items(meta.id).count == 4 }
+        let off = try #require(log.last(meta.id, kind: "toolResult"))
+        #expect(off["isError"] as? Bool == true)
+        #expect((off["text"] as? String)?.contains("Web search is off") == true)
+
+        try await harness.perform("PiRuntime.setSearchProvider", ["scripted"])
+        try await harness.perform("PiRuntime.send", [meta.id, "search pi durable", "r2"])
+        try await until { !log.busy(meta.id) && log.items(meta.id).count == 8 }
+        let search = try #require(log.last(meta.id, kind: "toolResult"))
+        #expect(search["toolName"] as? String == "web_search")
+        let results = (search["data"] as? [String: Any])?["results"] as? [[String: Any]]
+        #expect(results?.first?["url"] as? String == "https://earendil.com/posts/pi-durable/")
+
+        // "read" alone reads the first search result's link.
+        try await harness.perform("PiRuntime.send", [meta.id, "read", "r3"])
+        try await until { !log.busy(meta.id) && log.items(meta.id).count == 12 }
+        #expect(log.approvals.isEmpty)
+        let page = try #require(log.last(meta.id, kind: "toolResult"))
+        #expect(page["isError"] as? Bool == false)
+        #expect((page["text"] as? String)?.contains("Offline page") == true)
+
+        // A URL only a snippet mentions is not a result: reading it asks.
+        try await harness.perform("PiRuntime.send", [meta.id, "follow", "r3b"])
+        try await until { log.approvals.count == 1 }
+        #expect((log.approvals[0]["arguments"] as? [String: Any])?["url"] as? String == "https://example.com/from-a-snippet")
+        let _: Bool = try await harness.call("PiRuntime.answerApproval", [log.approvals[0]["id"] as! Int, "deny"])
+        try await until { !log.busy(meta.id) && log.items(meta.id).count == 16 }
+
+        // A query holding a key placeholder never reaches Swift, which would put the key in the URL.
+        try await harness.perform("PiRuntime.configureProviders", [["brave"]])
+        try await harness.perform("PiRuntime.setSearchProvider", ["brave"])
+        try await harness.perform("PiRuntime.send", [meta.id, "search pi-host-key:brave", "r3c"])
+        try await until { !log.busy(meta.id) && log.items(meta.id).count == 20 }
+        let refused = try #require(log.last(meta.id, kind: "toolResult"))
+        #expect(refused["isError"] as? Bool == true)
+        #expect((refused["text"] as? String)?.contains("may not contain") == true)
+        try await harness.perform("PiRuntime.setSearchProvider", ["scripted"])
+
+        let other: Meta = try await harness.call("PiRuntime.createConversation", ["scripted", "assistant"])
+        try await harness.perform("PiRuntime.watchConversation", [other.id])
+        try await harness.perform("PiRuntime.send", [other.id, "read", "r4"])
+        try await until { log.approvals.count == 1 }
+        #expect(log.approvals[0]["tool"] as? String == "web_fetch")
+        let _: Bool = try await harness.call("PiRuntime.answerApproval", [log.approvals[0]["id"] as! Int, "deny"])
+        try await until { !log.busy(other.id) && log.items(other.id).count == 4 }
+        #expect(log.last(other.id, kind: "toolResult")?["isError"] as? Bool == true)
+        try await harness.close()
+    }
+
     @Test("A conversation starts with the effort asked for, clamped to what its model supports", .timeLimit(.minutes(1)))
     func thinkingLevel() async throws {
         let directory = try temporaryDirectory()

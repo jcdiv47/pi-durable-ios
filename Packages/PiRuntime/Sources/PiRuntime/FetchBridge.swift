@@ -1,25 +1,32 @@
 import Foundation
 import os
 
-/// Supplies provider API keys to outgoing requests. Keys stay on the Swift side: JS sends a placeholder
-/// header value (`ProviderKeys.placeholder(for:)`) and the bridge substitutes the real key, but only
-/// for requests to that provider's hosts.
+/// Supplies API keys to outgoing requests. Keys stay on the Swift side: JS sends a placeholder
+/// (`ProviderKeys.placeholder(for:)`) in a header value or a URL query value, and the bridge substitutes the real
+/// key, but only for requests to that service's hosts.
 public protocol ProviderKeySource: Sendable {
     func apiKey(for provider: String) -> String?
 }
 
+/// The keyed services: model providers and the HTTP APIs behind tools (docs/adr/0004-http-api-services.md).
 public enum ProviderKeys {
     static let prefix = "pi-host-key:"
 
-    /// The value JS uses in place of a provider's key.
+    /// The value JS uses in place of a service's key.
     public static func placeholder(for provider: String) -> String { prefix + provider }
 
-    /// Hosts each provider's key may be sent to.
+    /// Hosts each service's key may be sent to.
     public static let allowedHosts: [String: Set<String>] = [
         "anthropic": ["api.anthropic.com"],
+        "brave": ["api.search.brave.com"],
         "deepseek": ["api.deepseek.com"],
         "openai": ["api.openai.com"],
         "openrouter": ["openrouter.ai"],
+    ]
+
+    /// Requests a service's key may be used for per calendar month (`ServiceUsage`). Brave: the free plan.
+    public static let monthlyCaps: [String: Int] = [
+        "brave": 2000,
     ]
 
     private static let customHost = OSAllocatedUnfairLock<String?>(initialState: nil)
@@ -34,29 +41,103 @@ public enum ProviderKeys {
         return allowedHosts[provider] ?? []
     }
 
-    /// Replaces placeholders in header values. Throws when a placeholder targets a host it is not allowed for.
-    static func substitute(_ value: String, host: String?, keys: ProviderKeySource?) throws -> String {
-        guard let range = value.range(of: prefix) else { return value }
-        let provider = String(value[range.upperBound...].prefix { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" })
-        guard let host, hosts(for: provider).contains(host.lowercased()) else {
-            throw FetchBridgeError.keyNotAllowed(provider: provider, host: host ?? "?")
+    /// Replaces placeholders in a header value and adds the services whose keys it used to `used`. Throws when a
+    /// placeholder targets a host it is not allowed for.
+    static func substitute(_ value: String, host: String?, keys: ProviderKeySource?, used: inout Set<String>) throws -> String {
+        var result = value
+        while let range = result.range(of: prefix) {
+            let provider = String(result[range.upperBound...].prefix { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" })
+            guard let host, hosts(for: provider).contains(host.lowercased()) else {
+                throw FetchBridgeError.keyNotAllowed(provider: provider, host: host ?? "?")
+            }
+            guard let key = keys?.apiKey(for: provider), !key.isEmpty else {
+                throw FetchBridgeError.missingKey(provider: provider)
+            }
+            result.replaceSubrange(range.lowerBound..<result.index(range.upperBound, offsetBy: provider.count), with: key)
+            used.insert(provider)
         }
-        guard let key = keys?.apiKey(for: provider), !key.isEmpty else {
-            throw FetchBridgeError.missingKey(provider: provider)
+        return result
+    }
+
+    /// Replaces placeholders in a URL's query (`key=pi-host-key:amap`, also percent-encoded as `%3A`).
+    static func substitute(url: URL, keys: ProviderKeySource?, used: inout Set<String>) throws -> URL {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let query = components.percentEncodedQuery else { return url }
+        let decoded = query.replacingOccurrences(of: "pi-host-key%3A", with: prefix, options: .caseInsensitive)
+        guard decoded.contains(prefix) else { return url }
+        var keysUsed = Set<String>()
+        let substituted = try substitute(decoded, host: url.host, keys: EncodedKeys(keys: keys), used: &keysUsed)
+        components.percentEncodedQuery = substituted
+        guard let result = components.url else { throw FetchBridgeError.badURL(url.absoluteString) }
+        used.formUnion(keysUsed)
+        return result
+    }
+
+    /// Keys percent-encoded for a query value.
+    private struct EncodedKeys: ProviderKeySource {
+        let keys: ProviderKeySource?
+        func apiKey(for provider: String) -> String? {
+            var allowed = CharacterSet.urlQueryAllowed
+            allowed.remove(charactersIn: "&=+#")
+            return keys?.apiKey(for: provider)?.addingPercentEncoding(withAllowedCharacters: allowed)
         }
-        return value.replacingOccurrences(of: prefix + provider, with: key)
+    }
+}
+
+/// Requests sent with each service's key, per calendar month, kept in UserDefaults. A service with a monthly cap
+/// (`ProviderKeys.monthlyCaps`) is refused once it reaches it, so a runaway schedule cannot spend a month's quota.
+public final class ServiceUsage: @unchecked Sendable {
+    public static let shared = ServiceUsage(defaults: .standard)
+
+    private let defaults: UserDefaults
+    private let lock = NSLock()
+    private let caps: [String: Int]
+
+    public init(defaults: UserDefaults, caps: [String: Int] = ProviderKeys.monthlyCaps) {
+        self.defaults = defaults
+        self.caps = caps
+    }
+
+    /// Requests sent with `service`'s key this month.
+    public func count(for service: String, at date: Date = .now) -> Int {
+        lock.withLock { defaults.integer(forKey: Self.key(service, date)) }
+    }
+
+    public func cap(for service: String) -> Int? { caps[service] }
+
+    /// Counts one request, or throws when the service's cap for this month is used up.
+    func record(_ service: String, at date: Date = .now) throws {
+        try lock.withLock {
+            let key = Self.key(service, date)
+            let count = defaults.integer(forKey: key)
+            if let cap = caps[service], count >= cap { throw FetchBridgeError.quotaUsedUp(provider: service, cap: cap) }
+            defaults.set(count + 1, forKey: key)
+        }
+    }
+
+    /// Takes the service's own count of requests left this month (`X-RateLimit-Remaining`) as the truth.
+    func correct(_ service: String, remaining: Int, at date: Date = .now) {
+        guard let cap = caps[service], remaining >= 0, remaining <= cap else { return }
+        lock.withLock { defaults.set(cap - remaining, forKey: Self.key(service, date)) }
+    }
+
+    private static func key(_ service: String, _ date: Date) -> String {
+        let parts = Calendar(identifier: .gregorian).dateComponents([.year, .month], from: date)
+        return String(format: "serviceUsage.%@.%04d-%02d", service, parts.year ?? 0, parts.month ?? 0)
     }
 }
 
 enum FetchBridgeError: Error, CustomStringConvertible {
     case keyNotAllowed(provider: String, host: String)
     case missingKey(provider: String)
+    case quotaUsedUp(provider: String, cap: Int)
     case badURL(String)
 
     var description: String {
         switch self {
         case let .keyNotAllowed(provider, host): "API key for \(provider) may not be sent to \(host)"
         case let .missingKey(provider): "No API key configured for \(provider)"
+        case let .quotaUsedUp(provider, cap): "Monthly quota used up: \(provider) allows \(cap) requests a month"
         case let .badURL(url): "Invalid URL: \(url)"
         }
     }
@@ -84,10 +165,19 @@ final class FetchBridge: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private struct State {
         var tasks: [Int: URLSessionDataTask] = [:]
         var ids: [Int: Int] = [:] // taskIdentifier -> fetch id
+        /// Requests that carry a key, by fetch id: never tell JS a URL with the key in it.
+        var keyed: [Int: Keyed] = [:]
+    }
+
+    private struct Keyed {
+        /// The URL as JS sent it, with placeholders.
+        let url: String
+        let services: Set<String>
     }
 
     private let deliver: @Sendable (Int, Event) -> Void
     private let keys: ProviderKeySource?
+    private let usage: ServiceUsage?
     private lazy var session: URLSession = {
         let configuration = URLSessionConfiguration.default
         configuration.urlCache = nil
@@ -101,8 +191,9 @@ final class FetchBridge: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         return URLSession(configuration: configuration, delegate: self, delegateQueue: queue)
     }()
 
-    init(keys: ProviderKeySource?, deliver: @escaping @Sendable (Int, Event) -> Void) {
+    init(keys: ProviderKeySource?, usage: ServiceUsage? = nil, deliver: @escaping @Sendable (Int, Event) -> Void) {
         self.keys = keys
+        self.usage = usage
         self.deliver = deliver
     }
 
@@ -111,21 +202,26 @@ final class FetchBridge: NSObject, URLSessionDataDelegate, @unchecked Sendable {
             deliver(request.id, .error(FetchBridgeError.badURL(request.url).description))
             return
         }
-        var urlRequest = URLRequest(url: url)
-        urlRequest.httpMethod = request.method
-        urlRequest.httpBody = request.body
+        var urlRequest: URLRequest
+        var used = Set<String>()
         do {
+            urlRequest = URLRequest(url: try ProviderKeys.substitute(url: url, keys: keys, used: &used))
             for (name, value) in request.headers {
-                urlRequest.addValue(try ProviderKeys.substitute(value, host: url.host, keys: keys), forHTTPHeaderField: name)
+                urlRequest.addValue(try ProviderKeys.substitute(value, host: url.host, keys: keys, used: &used), forHTTPHeaderField: name)
             }
+            for service in used.sorted() { try usage?.record(service) }
         } catch {
             deliver(request.id, .error(String(describing: error)))
             return
         }
+        urlRequest.httpMethod = request.method
+        urlRequest.httpBody = request.body
         let task = session.dataTask(with: urlRequest)
+        let keyed = used.isEmpty ? nil : Keyed(url: request.url, services: used)
         lock.withLock {
             $0.tasks[request.id] = task
             $0.ids[task.taskIdentifier] = request.id
+            $0.keyed[request.id] = keyed
         }
         task.resume()
     }
@@ -134,6 +230,7 @@ final class FetchBridge: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         let task = lock.withLock { state -> URLSessionDataTask? in
             guard let task = state.tasks.removeValue(forKey: id) else { return nil }
             state.ids.removeValue(forKey: task.taskIdentifier)
+            state.keyed.removeValue(forKey: id)
             return task
         }
         task?.cancel()
@@ -151,6 +248,24 @@ final class FetchBridge: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         lock.withLock { $0.ids[task.taskIdentifier] }
     }
 
+    private func keyed(_ id: Int) -> Keyed? {
+        lock.withLock { $0.keyed[id] }
+    }
+
+    /// A request that carries a key follows redirects only to its services' hosts; elsewhere JS gets the redirect
+    /// response itself. URLSession would copy the key's headers to the new request.
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        guard let id = fetchID(task), let keyed = keyed(id) else { return completionHandler(request) }
+        let host = request.url?.host?.lowercased() ?? ""
+        completionHandler(keyed.services.allSatisfy { ProviderKeys.hosts(for: $0).contains(host) } ? request : nil)
+    }
+
     func urlSession(
         _ session: URLSession,
         dataTask: URLSessionDataTask,
@@ -164,11 +279,18 @@ final class FetchBridge: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         for (key, value) in http?.allHeaderFields ?? [:] {
             headers.append(["\(key)".lowercased(), "\(value)"])
         }
+        let keyed = keyed(id)
+        if let keyed, let usage, let remaining = http?.value(forHTTPHeaderField: "X-RateLimit-Remaining") {
+            // Brave sends the per-second and the per-month window: "0, 1999".
+            if let month = remaining.split(separator: ",").last.flatMap({ Int($0.trimmingCharacters(in: .whitespaces)) }) {
+                for service in keyed.services { usage.correct(service, remaining: month) }
+            }
+        }
         deliver(id, .response(
             status: status,
             statusText: HTTPURLResponse.localizedString(forStatusCode: status),
             headers: headers,
-            url: response.url?.absoluteString ?? ""
+            url: keyed?.url ?? response.url?.absoluteString ?? ""
         ))
         completionHandler(.allow)
     }
@@ -182,6 +304,7 @@ final class FetchBridge: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         let id = lock.withLock { state -> Int? in
             guard let id = state.ids.removeValue(forKey: task.taskIdentifier) else { return nil }
             state.tasks.removeValue(forKey: id)
+            state.keyed.removeValue(forKey: id)
             return id
         }
         guard let id else { return }

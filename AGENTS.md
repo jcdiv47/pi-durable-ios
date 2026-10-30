@@ -42,7 +42,9 @@ decisions that change the spec go in `docs/adr/`.
   bootstrap) and `src/conformance.ts` (test suites) into `App/Resources/` and the PiRuntime test
   resources. `src/app/` is the chat API Swift calls (`PiRuntime.*`): conversations, display frames,
   providers, the Apple tool stubs, the UI tools (`surfaces.ts`: specs in Pi documents, JSON Patch), scheduled tasks
-  and `notify_schedule` (`schedule.ts`), the approval gate and the offline `scripted/assistant` model. `chat.ts`
+  and `notify_schedule` (`schedule.ts`), the web tools (`web.ts`: `web_search` through DeepSeek or Brave,
+  `web_fetch` through DeepSeek Fetch) over keyed HTTP services (`services.ts`), the approval gate and the offline
+  `scripted/assistant` model. `chat.ts`
   also has the entry points outside the chat (`ask` from intents and notification replies, `widgetAction`,
   `runSchedule`).
   pi-durable, pi-ai and chord stay pinned to the **same exact version** (1.4.0).
@@ -75,7 +77,8 @@ build and install. `PI_CONFIGURATION=Release` builds Release.
 - `scripts/m0-check.sh conformance|capabilities|measure|stream`: one headless mode of the app;
   prints its JSON report from `Documents/m0/`. (`stream` is M0's bare view, `-PiMode stream`; the
   default launch is the chat app.)
-- `scripts/push-key.sh <provider> <file>`: moves an API key into the app's Keychain (debug builds).
+- `scripts/push-key.sh <provider> <file>`: moves an API key into the app's Keychain (debug builds). `brave` works
+  too.
   Never put keys in the repo, in launch arguments or in JS. JS only sees `pi-host-key:<provider>`,
   and Swift substitutes the real key for that provider's allowlisted hosts.
 
@@ -109,6 +112,9 @@ intended rendering change, re-record with `PI_RECORD_SNAPSHOTS=1 swift test` and
   Notification identifiers are idempotency keys too.
 - Entry points that may run while the app is away call `ChatStore.ready()` (Pi may not be open yet) and wait for
   idle before returning, or iOS suspends the app mid-run.
+- A new HTTP API is a service ([ADR 0004](docs/adr/0004-http-api-services.md)): its hosts (and a monthly cap, if its
+  plan has one) in `ProviderKeys`, a key entry in `ChatStore.services`, and tools that call `serviceFetch` with the
+  key placeholder in a header or a URL query. Never a generic HTTP tool: a page could use it to send data out.
 - The `SqliteDatabase` facade must keep passing both Pi's storage conformance suite and
   `js/test/facade-cases.ts` (Pi's suite does not exercise rollback).
 - A new component, prop, family rule or data source goes in PiUI's catalog (`Schema/`), with a sample slot in

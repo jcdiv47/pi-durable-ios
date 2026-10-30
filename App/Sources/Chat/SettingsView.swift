@@ -51,6 +51,36 @@ struct SettingsView: View {
             }
 
             Section {
+                Picker("Search with", selection: $store.searchProvider) {
+                    Text("Off").tag("off")
+                    Text("DeepSeek").tag("deepseek")
+                    Text("Brave Search").tag("brave")
+                    #if DEBUG
+                    Text("Offline (scripted)").tag("scripted")
+                    #endif
+                }
+                ForEach(ChatStore.services, id: \.id) { service in
+                    NavigationLink {
+                        ProviderKeyView(store: store, provider: service.id, name: service.name)
+                    } label: {
+                        LabeledContent(service.name) {
+                            Text(store.hasKey(service.id) ? "Key saved" : "No key")
+                                .foregroundStyle(store.hasKey(service.id) ? .green : .secondary)
+                        }
+                    }
+                }
+                ForEach(ChatStore.services.filter { store.hasKey($0.id) && ServiceUsage.shared.cap(for: $0.id) != nil }, id: \.id) { service in
+                    LabeledContent("\(service.name) this month") {
+                        Text("\(ServiceUsage.shared.count(for: service.id)) of \(ServiceUsage.shared.cap(for: service.id)!) requests")
+                    }
+                }
+            } header: {
+                Text("Web search")
+            } footer: {
+                Text("DeepSeek search uses the DeepSeek key above, and reading pages always goes through DeepSeek. Pi asks before reading a page whose link didn't come from you or a search.")
+            }
+
+            Section {
                 ForEach(store.tools) { tool in
                     Picker(selection: Binding(get: { tool.policy }, set: { policy in Task { await store.setPolicy(policy, for: tool.name) } })) {
                         Text("Allow").tag("auto")
@@ -132,7 +162,7 @@ struct ProviderKeyView: View {
             } header: {
                 Text("\(name) API key")
             }
-            if store.hasKey(provider) {
+            if store.hasKey(provider), ChatStore.providers.contains(where: { $0.id == provider }) {
                 Section("Models") {
                     ForEach(store.models.filter { $0.provider == provider }.prefix(200)) { model in
                         LabeledContent(model.name) {
