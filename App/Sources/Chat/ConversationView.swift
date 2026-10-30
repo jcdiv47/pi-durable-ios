@@ -50,17 +50,18 @@ struct ConversationView: View {
                 .background(TranscriptScrollProbe(scroll: keyboardScroll))
             }
             .defaultScrollAnchor(.bottom)
+            // Short conversations start at the top; overflowing transcripts still follow the latest content.
+            .defaultScrollAnchor(.top, for: .alignment)
             .onScrollGeometryChange(for: ScrollGeometry.self, of: { $0 }) { old, new in
                 keyboardScroll.resize(from: old, to: new)
+                // Follow the laid-out transcript, including thinking, tool calls and result cards.
+                // Model changes can arrive before the bottom anchor has moved.
+                if old.contentSize != new.contentSize, keyboardScroll.allowsAutomaticScrolling {
+                    proxy.scrollTo("bottom", anchor: .bottom)
+                }
             }
             .onScrollPhaseChange { _, phase in keyboardScroll.phaseChanged(phase) }
             .scrollDismissesKeyboard(.interactively)
-            .onChange(of: state.items.count) {
-                if keyboardScroll.allowsAutomaticScrolling { proxy.scrollTo("bottom", anchor: .bottom) }
-            }
-            .onChange(of: state.live.generation?.text.count) {
-                if keyboardScroll.allowsAutomaticScrolling { proxy.scrollTo("bottom", anchor: .bottom) }
-            }
             .safeAreaInset(edge: .bottom) {
                 composer
             }
@@ -265,7 +266,6 @@ struct ConversationView: View {
             .frame(minHeight: Self.fieldHeight)
         }
         .contentShape(.rect(cornerRadius: Self.fieldHeight / 2))
-        .onTapGesture { composing = true }
         .glassEffect(.regular, in: .rect(cornerRadius: Self.fieldHeight / 2))
     }
 
@@ -278,6 +278,7 @@ struct ConversationView: View {
             } else {
                 let text = draft
                 let sent = attachments
+                composing = false
                 draft = ""
                 attachments = []
                 Task { await store.send(text, attachments: sent, to: conversationId) }
