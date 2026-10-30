@@ -4,7 +4,7 @@ import Observation
 import PiRuntime
 
 /// Voice input for the composer: records from the microphone, then OpenAI's transcription API turns the recording into
-/// text for the field, to edit before sending. It uses the OpenAI provider key from the Keychain, sent from Swift
+/// text for the conversation's draft, to edit before sending. It uses the OpenAI provider key from the Keychain, sent from Swift
 /// straight to api.openai.com, so like every key it never reaches JS. One per conversation view; nothing is kept.
 @MainActor
 @Observable
@@ -38,12 +38,13 @@ final class VoiceInput {
     /// interruption such as a call, which also finish. The transcript goes to `onText`.
     func start(diagnostics: DiagnosticsLog, onText: @escaping (String) -> Void) async {
         guard phase == .idle else { return }
+        self.diagnostics = diagnostics
         guard let key = KeychainKeys().apiKey(for: Self.provider), !key.isEmpty else {
-            error = "Voice input uses OpenAI's transcription. Add an OpenAI key in Settings › Providers."
+            fail(VoiceInputError("Voice input uses OpenAI's transcription. Add an OpenAI key in Settings › Providers."))
             return
         }
         guard await AVAudioApplication.requestRecordPermission() else {
-            error = "Pi can't use the microphone. Allow it in the Settings app › Apps › Pi."
+            fail(VoiceInputError("Pi can't use the microphone. Allow it in the Settings app › Apps › Pi."))
             return
         }
         do {
@@ -61,7 +62,6 @@ final class VoiceInput {
             guard recorder.record(forDuration: Self.maxDuration) else { throw VoiceInputError("The microphone didn't start recording.") }
             self.recorder = recorder
             self.key = key
-            self.diagnostics = diagnostics
             self.onText = onText
             levels = Array(repeating: 0, count: Self.levelCount)
             startedAt = .now

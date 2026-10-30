@@ -291,8 +291,8 @@ struct ConversationView: View {
         Button {
             composing = false
             Task {
-                await voice.start(diagnostics: store.diagnostics) { text in
-                    draft = [draft, text].filter { !$0.isEmpty }.joined(separator: " ")
+                await voice.start(diagnostics: store.diagnostics) { [store, conversationId] text in
+                    store.addDraft(text, to: conversationId)
                 }
             }
         } label: {
