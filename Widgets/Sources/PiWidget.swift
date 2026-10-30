@@ -162,7 +162,7 @@ struct PiWidgetView: View {
             }
         default:
             VStack(alignment: .leading, spacing: 6) {
-                Image(systemName: "sparkle").font(.title3)
+                PiLogo().frame(height: 20)
                 Text(text).font(.caption).foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

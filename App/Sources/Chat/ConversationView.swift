@@ -67,7 +67,15 @@ struct ConversationView: View {
         }
         .overlay {
             if state.loaded && state.items.isEmpty && !state.live.busy {
-                ContentUnavailableView("Ask Pi anything", systemImage: "sparkles", description: Text(modelLine))
+                ContentUnavailableView {
+                    Label {
+                        Text("Ask Pi anything")
+                    } icon: {
+                        PiLogo().frame(height: 48)
+                    }
+                } description: {
+                    Text(modelLine)
+                }
             }
         }
         .navigationTitle(meta?.title ?? "Conversation")
@@ -75,7 +83,15 @@ struct ConversationView: View {
         .toolbar {
             ToolbarItem(placement: .principal) { header }
         }
-        .onAppear { store.watch(conversationId) }
+        .onAppear {
+            store.watch(conversationId)
+            // What was left here last time; a view that stayed alive under a pushed screen still holds it.
+            if let kept = store.takeComposerDraft(conversationId), kept != .init(text: draft, attachments: attachments) {
+                draft = [draft, kept.text].filter { !$0.isEmpty }.joined(separator: "\n")
+                attachments += kept.attachments
+            }
+        }
+        .onDisappear { store.keepComposerDraft(.init(text: draft, attachments: attachments), for: conversationId) }
         .onChange(of: store.drafts[conversationId], initial: true) { takeDraft() }
     }
 

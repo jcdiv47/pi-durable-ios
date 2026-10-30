@@ -96,7 +96,11 @@ struct ConversationListView: View {
             }
         }
         .navigationTitle("Pi")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                PiLogo().frame(height: 24)
+            }
             ToolbarItem(placement: .topBarLeading) {
                 Menu {
                     Button("Widgets", systemImage: "square.grid.2x2") { path.append(.surfaces) }
@@ -110,8 +114,10 @@ struct ConversationListView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    Task {
-                        if let meta = await store.newConversation() { path.append(.conversation(meta.id)) }
+                    if let unused = store.unusedConversation {
+                        path.append(.conversation(unused.id))
+                    } else {
+                        Task { if let meta = await store.newConversation() { path.append(.conversation(meta.id)) } }
                     }
                 } label: {
                     Image(systemName: "square.and.pencil")

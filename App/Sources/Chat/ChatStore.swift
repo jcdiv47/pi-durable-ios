@@ -53,6 +53,8 @@ final class ChatStore {
         var text: String
         var attachments: [Attachment]
     }
+    /// What was left in a conversation's composer when its view went away, until it opens again. In memory only.
+    private var composerDrafts: [Int: Draft] = [:]
     /// Native and `$doc` values for drawing surfaces in the app (chat cards, the Widgets screen).
     private(set) var surfaceData = SurfaceData()
     let diagnostics = DiagnosticsLog()
@@ -285,6 +287,12 @@ final class ChatStore {
     func searchText(_ id: Int) async -> String? {
         guard let harness else { return nil }
         return try? await harness.call("PiRuntime.searchText", [id])
+    }
+
+    /// The newest conversation if nothing was ever sent in it: the compose button opens it instead of making another.
+    var unusedConversation: ConversationMeta? {
+        guard let top = conversations.first, top.forkOf == nil, top.updatedAt == top.createdAt else { return nil }
+        return top
     }
 
     func newConversation() async -> ConversationMeta? {
@@ -625,14 +633,23 @@ final class ChatStore {
         drafts.removeValue(forKey: id)
     }
 
+    func keepComposerDraft(_ draft: Draft, for id: Int) {
+        composerDrafts[id] = draft.text.isEmpty && draft.attachments.isEmpty ? nil : draft
+    }
+
+    func takeComposerDraft(_ id: Int) -> Draft? {
+        composerDrafts.removeValue(forKey: id)
+    }
+
     /// Deletes attachment images nothing shows or sends any more (`Attachments.sweep`), at most once a day, when Pi
     /// opens: the composer's own attachments are then all younger than the sweep's grace period. Removing a
     /// conversation lets its images go; a fork keeps the ones it shows.
     private func sweepAttachments() async {
         let key = "attachmentsSweptAt"
         guard let harness, Date().timeIntervalSince(settings.object(forKey: key) as? Date ?? .distantPast) > Attachments.sweepGrace else { return }
-        // Swift's references first: a share item moves from the inbox to `drafts` to a composer, never back.
-        var kept = Set(ShareInbox.pending().flatMap { Attachments.files($0.attachments) } + drafts.values.flatMap { Attachments.files($0.attachments) })
+        // Swift's references first: a share item moves from the inbox to `drafts` to a composer, and a composer's left-over
+        // draft waits in `composerDrafts`.
+        var kept = Set(ShareInbox.pending().flatMap { Attachments.files($0.attachments) } + (Array(drafts.values) + composerDrafts.values).flatMap { Attachments.files($0.attachments) })
         do {
             let files: [String] = try await harness.call("PiRuntime.attachmentFiles")
             kept.formUnion(files)
