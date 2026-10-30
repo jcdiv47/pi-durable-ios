@@ -33,11 +33,17 @@ final class VoiceInput {
     private var key: String?
     private var diagnostics: DiagnosticsLog?
     private var onText: ((String) -> Void)?
+    /// Between a tap on the mic and recording: permission and the audio session.
+    private var starting = false
+    /// Activating and deactivating the audio session can block, so it happens here, in order, off the main thread.
+    private nonisolated static let sessionQueue = DispatchQueue(label: "dev.pi.durable.voice-session")
 
     /// Asks for the microphone on first use, then records until `finish()` or `cancel()`, the time limit, or an
     /// interruption such as a call, which also finish. The transcript goes to `onText`.
     func start(diagnostics: DiagnosticsLog, onText: @escaping (String) -> Void) async {
-        guard phase == .idle else { return }
+        guard phase == .idle, !starting else { return }
+        starting = true
+        defer { starting = false }
         self.diagnostics = diagnostics
         guard let key = KeychainKeys().apiKey(for: Self.provider), !key.isEmpty else {
             fail(VoiceInputError("Voice input uses OpenAI's transcription. Add an OpenAI key in Settings › Providers."))
@@ -48,9 +54,7 @@ final class VoiceInput {
             return
         }
         do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.record, mode: .default)
-            try session.setActive(true)
+            try await Self.activateSession()
             let url = FileManager.default.temporaryDirectory.appending(path: "voice-\(UUID().uuidString).m4a")
             let recorder = try AVAudioRecorder(url: url, settings: [
                 AVFormatIDKey: kAudioFormatMPEG4AAC,
@@ -125,7 +129,7 @@ final class VoiceInput {
         meter = nil
         recorder?.stop()
         recorder = nil
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        Self.sessionQueue.async { try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }
     }
 
     private func reset() {
@@ -139,6 +143,21 @@ final class VoiceInput {
         let message = (error as? VoiceInputError)?.message ?? error.localizedDescription
         self.error = message
         diagnostics?.record("warn", "voice", message)
+    }
+
+    private nonisolated static func activateSession() async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            sessionQueue.async {
+                do {
+                    let session = AVAudioSession.sharedInstance()
+                    try session.setCategory(.record, mode: .default)
+                    try session.setActive(true)
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
     }
 
     /// `POST /v1/audio/transcriptions`, multipart: the model and the recording. The language is detected.
