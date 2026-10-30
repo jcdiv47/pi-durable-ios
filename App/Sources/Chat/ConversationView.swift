@@ -7,11 +7,12 @@ struct ConversationView: View {
     let conversationId: Int
     @Binding var path: [Route]
     @State private var draft = ""
-    /// Photos, pasted things and files for the next message.
+    /// Photos, camera shots and files for the next message.
     @State private var attachments: [Attachment] = []
     @State private var choosingPhotos = false
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var importingFiles = false
+    @State private var takingPhoto = false
     /// Attachments being read and downscaled.
     @State private var attaching = 0
     @FocusState private var composing: Bool
@@ -157,11 +158,12 @@ struct ConversationView: View {
         store.model(state.model)?.images == false && attachments.contains { if case .image = $0.content { true } else { false } }
     }
 
-    /// Photos, Paste (images, links and text from the clipboard) and Files (images, PDFs, text files).
+    /// Photos, Camera (one new photo) and Files (images, PDFs, text files).
     private var attachMenu: some View {
         Menu {
             Button("Photos", systemImage: "photo.on.rectangle") { choosingPhotos = true }
-            Button("Paste", systemImage: "doc.on.clipboard") { paste() }
+            Button("Camera", systemImage: "camera") { takingPhoto = true }
+                .disabled(!CameraPicker.isAvailable)
             Button("Files", systemImage: "folder") { importingFiles = true }
         } label: {
             Image(systemName: "plus")
@@ -183,10 +185,10 @@ struct ConversationView: View {
         }
     }
 
-    private func paste() {
-        // Not Sendable; only the loading task touches them from here on.
-        nonisolated(unsafe) let providers = UIPasteboard.general.itemProviders
-        attach { await Attachments.load(providers) }
+    private func attachPhoto(_ data: Data?) {
+        takingPhoto = false
+        guard let data else { return }
+        attach { Attachments.saveImage(data).map { [$0] } ?? [] }
     }
 
     private func attachPhotos(_ items: [PhotosPickerItem]) {
@@ -235,6 +237,9 @@ struct ConversationView: View {
         .modifier(VoiceFeedback(voice: voice))
         .photosPicker(isPresented: $choosingPhotos, selection: $photoItems, maxSelectionCount: 10, matching: .images)
         .onChange(of: photoItems) { attachPhotos(photoItems) }
+        .fullScreenCover(isPresented: $takingPhoto) {
+            CameraPicker { attachPhoto($0) }.ignoresSafeArea()
+        }
         .fileImporter(isPresented: $importingFiles, allowedContentTypes: [.image, .pdf, .text, .json, .sourceCode], allowsMultipleSelection: true) {
             attachFiles($0)
         }
