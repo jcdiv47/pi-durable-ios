@@ -36,6 +36,8 @@ targets:
       - Shared/Sources
       # Attachments: shared with the share extension.
       - Shared/Attachments
+      # The app icon, rendered from App/Icon/pi-logo-color.svg (light, dark and tinted).
+      - App/Assets.xcassets
       # Built by the "Bundle JS" phase; optional so a fresh clone can generate the project.
       - path: App/Resources/pi-runtime.js
         optional: true
@@ -62,6 +64,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.jcdiv47.pidurable
         PRODUCT_NAME: PiDurable
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_USER_SCRIPT_SANDBOXING: NO # "Bundle JS" writes into the source tree
     info:
       path: App/Info.plist

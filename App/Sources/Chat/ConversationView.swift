@@ -67,7 +67,15 @@ struct ConversationView: View {
         }
         .overlay {
             if state.loaded && state.items.isEmpty && !state.live.busy {
-                ContentUnavailableView("Ask Pi anything", systemImage: "sparkles", description: Text(modelLine))
+                ContentUnavailableView {
+                    Label {
+                        Text("Ask Pi anything")
+                    } icon: {
+                        PiLogo().frame(height: 48)
+                    }
+                } description: {
+                    Text(modelLine)
+                }
             }
         }
         .navigationTitle(meta?.title ?? "Conversation")

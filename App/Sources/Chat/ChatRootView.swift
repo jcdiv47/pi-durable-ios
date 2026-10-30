@@ -96,7 +96,11 @@ struct ConversationListView: View {
             }
         }
         .navigationTitle("Pi")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                PiLogo().frame(height: 24)
+            }
             ToolbarItem(placement: .topBarLeading) {
                 Menu {
                     Button("Widgets", systemImage: "square.grid.2x2") { path.append(.surfaces) }
