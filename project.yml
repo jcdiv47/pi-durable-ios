@@ -71,7 +71,12 @@ targets:
       properties:
         CFBundleDisplayName: Pi
         UILaunchScreen: {}
-        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        # All four, as iOS asks; PiAppDelegate keeps the app in portrait.
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         UIBackgroundModes: [fetch, processing]
         BGTaskSchedulerPermittedIdentifiers:
           - dev.jcdiv47.pidurable.refresh

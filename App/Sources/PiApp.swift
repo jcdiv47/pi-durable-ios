@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct PiApp: App {
+    @UIApplicationDelegateAdaptor private var appDelegate: PiAppDelegate
     @State private var model = AppModel()
     @Environment(\.scenePhase) private var scenePhase
 
@@ -57,5 +58,13 @@ enum LaunchMode: String {
         case .streamKillResume: ["streamkill-resume.jsonl", "streamkill-result.json"]
         case .measure: ["metrics.json"]
         }
+    }
+}
+
+/// Portrait only. Info.plist lists every orientation (iOS warns otherwise); this is what the app allows.
+final class PiAppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication,
+                     supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+        .portrait
     }
 }
