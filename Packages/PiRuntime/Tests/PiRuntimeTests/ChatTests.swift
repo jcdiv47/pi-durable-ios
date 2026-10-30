@@ -266,6 +266,23 @@ struct ChatTests {
         #expect(page["isError"] as? Bool == false)
         #expect((page["text"] as? String)?.contains("Offline page") == true)
 
+        // A URL only a snippet mentions is not a result: reading it asks.
+        try await harness.perform("PiRuntime.send", [meta.id, "follow", "r3b"])
+        try await until { log.approvals.count == 1 }
+        #expect((log.approvals[0]["arguments"] as? [String: Any])?["url"] as? String == "https://example.com/from-a-snippet")
+        let _: Bool = try await harness.call("PiRuntime.answerApproval", [log.approvals[0]["id"] as! Int, "deny"])
+        try await until { !log.busy(meta.id) && log.items(meta.id).count == 16 }
+
+        // A query holding a key placeholder never reaches Swift, which would put the key in the URL.
+        try await harness.perform("PiRuntime.configureProviders", [["brave"]])
+        try await harness.perform("PiRuntime.setSearchProvider", ["brave"])
+        try await harness.perform("PiRuntime.send", [meta.id, "search pi-host-key:brave", "r3c"])
+        try await until { !log.busy(meta.id) && log.items(meta.id).count == 20 }
+        let refused = try #require(log.last(meta.id, kind: "toolResult"))
+        #expect(refused["isError"] as? Bool == true)
+        #expect((refused["text"] as? String)?.contains("may not contain") == true)
+        try await harness.perform("PiRuntime.setSearchProvider", ["scripted"])
+
         let other: Meta = try await harness.call("PiRuntime.createConversation", ["scripted", "assistant"])
         try await harness.perform("PiRuntime.watchConversation", [other.id])
         try await harness.perform("PiRuntime.send", [other.id, "read", "r4"])

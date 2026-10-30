@@ -21,6 +21,20 @@ export const services = {
 /** The value to put where the service's key goes; also valid inside a URL query. */
 export const servicePlaceholder = (service: Service) => keyPlaceholder(service.id);
 
+/**
+ * A service URL with query values from the model. Swift would put the key in place of any placeholder in the query, and
+ * an API may echo the query back (Brave's `query.original`), so a value holding one is refused. `keyParam` adds the
+ * service's key placeholder as that parameter, for APIs that take the key in the URL.
+ */
+export function serviceUrl(service: Service, base: string, params: Record<string, string>, keyParam?: string): string {
+	for (const value of Object.values(params)) {
+		if (value.toLowerCase().includes("pi-host-key:")) throw new ServiceError(`${service.name}: the request may not contain "pi-host-key:".`);
+	}
+	const query = new URLSearchParams(params);
+	if (keyParam !== undefined) query.set(keyParam, servicePlaceholder(service));
+	return `${base}?${query}`;
+}
+
 /** Longest `Retry-After` worth waiting for inside a tool call. */
 const MAX_RETRY_WAIT_MS = 10_000;
 

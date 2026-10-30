@@ -9,7 +9,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool, type EntryRecord, section } from "@earendil-works/pi-durable";
 import { textOf } from "./display.ts";
 import { OriginInput } from "./schedule.ts";
-import { type Service, ServiceError, serviceFetch, servicePlaceholder, services } from "./services.ts";
+import { type Service, ServiceError, serviceFetch, servicePlaceholder, services, serviceUrl } from "./services.ts";
 
 export type SearchProviderId = "off" | "deepseek" | "brave" | "scripted";
 
@@ -82,16 +82,16 @@ const braveFreshness: Record<Freshness, string> = { day: "pd", week: "pw", month
 const braveSearch: SearchProvider = {
 	service: services.brave,
 	async search({ query, count, freshness }, signal) {
-		const params = new URLSearchParams({
+		const params: Record<string, string> = {
 			q: query.slice(0, 400),
 			count: String(Math.min(count, 20)),
 			extra_snippets: "true",
 			text_decorations: "false",
-		});
-		if (freshness) params.set("freshness", braveFreshness[freshness]);
+		};
+		if (freshness) params.freshness = braveFreshness[freshness];
 		const response = await serviceFetch(
 			services.brave,
-			`https://api.search.brave.com/res/v1/web/search?${params}`,
+			serviceUrl(services.brave, "https://api.search.brave.com/res/v1/web/search", params),
 			{ headers: { accept: "application/json", "x-subscription-token": servicePlaceholder(services.brave) } },
 			signal,
 		);
@@ -133,7 +133,7 @@ const scriptedSearch: SearchProvider = {
 			{
 				title: "Pi 1.0",
 				url: "https://earendil.com/posts/pi-1-0/",
-				snippet: "The first stable release of Pi.",
+				snippet: "The first stable release of Pi. More at https://example.com/from-a-snippet",
 				site: "Earendil",
 			},
 		];
@@ -293,14 +293,25 @@ function urlsIn(text: string): string[] {
 	return [...text.matchAll(URL_PATTERN)].flatMap((match) => normalizeUrl(match[0].replace(/[.,;:!?]+$/, "")) ?? []);
 }
 
+/** The results' own links in `web_search` output; a URL in the query or a snippet is not one. */
+function resultUrls(text: string): string[] {
+	try {
+		const results = (JSON.parse(text) as { results?: { url?: unknown }[] }).results ?? [];
+		return results.flatMap((result) => (typeof result.url === "string" ? (normalizeUrl(result.url) ?? []) : []));
+	} catch {
+		return [];
+	}
+}
+
 /** URLs a conversation's user messages and search results hold: what `web_fetch` may read without asking. */
 export function seenUrls(entries: readonly EntryRecord[]): Set<string> {
 	const urls = new Set<string>();
 	for (const entry of entries) {
 		const message = entry.model?.[0] as { content?: unknown; toolName?: string; isError?: boolean } | undefined;
-		const fromUser = entry.kind === "pi.user" || entry.kind === OriginInput;
-		const fromSearch = entry.kind === "pi.tool-result" && message?.toolName === "web_search" && message.isError !== true;
-		if (fromUser || fromSearch) for (const url of urlsIn(textOf(message?.content))) urls.add(url);
+		if (entry.kind === "pi.user" || entry.kind === OriginInput) for (const url of urlsIn(textOf(message?.content))) urls.add(url);
+		if (entry.kind === "pi.tool-result" && message?.toolName === "web_search" && message.isError !== true) {
+			for (const url of resultUrls(textOf(message.content))) urls.add(url);
+		}
 	}
 	return urls;
 }
