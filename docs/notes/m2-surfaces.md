@@ -45,8 +45,8 @@ offline `scripted/assistant` model and DeepSeek `deepseek-flash`. **Not yet run 
 ## Live run (DeepSeek `deepseek-flash`, simulator)
 
 Prompt: "Design a medium widget with my steps today and my next event, then publish it." The model called
-`list_components`, `current_time`, `create_surface` (valid first time), `preview_surface` (no images:
-text-only model), `bind_data` twice (Health, then Calendar permission, each on first use), `preview_surface`
+`list_components`, `current_time`, `create_surface` (valid first time), `preview_surface` (DeepSeek V4.1
+Flash takes images, so it gets the rendered PNGs), `bind_data` twice (Health, then Calendar permission, each on first use), `preview_surface`
 again, then `publish_surface` (approved). Result: a `MetricTile` + `NextUp` with countdown, `refresh: 30m`,
 `tapAction: conversation`. It then told the user how to add the widget.
 
