@@ -50,7 +50,7 @@ struct ConversationView: View {
                 .padding(.horizontal)
                 .padding(.vertical, 8)
                 .background(TranscriptScrollProbe(scroll: keyboardScroll))
-                .environment(\.holdTranscriptPosition) { [keyboardScroll] in keyboardScroll.hold() }
+                .environment(\.holdTranscriptPosition, TranscriptPositionHold(scroll: keyboardScroll))
             }
             .defaultScrollAnchor(.bottom)
             // Short conversations start at the top; overflowing transcripts still follow the latest content.
@@ -495,9 +495,18 @@ private final class TranscriptKeyboardScroll: NSObject {
     }
 }
 
+/// Called by a transcript row the user opens or closes (thinking, tool calls), so the transcript stays put. Equal when
+/// it holds the same transcript, so setting it again doesn't invalidate every row that reads it, as a closure would.
+struct TranscriptPositionHold: Equatable {
+    fileprivate weak var scroll: TranscriptKeyboardScroll?
+
+    @MainActor func callAsFunction() { scroll?.hold() }
+
+    static func == (a: Self, b: Self) -> Bool { a.scroll === b.scroll }
+}
+
 extension EnvironmentValues {
-    /// Called by a transcript row the user opens or closes (thinking, tool calls), so the transcript stays put.
-    @Entry var holdTranscriptPosition: @MainActor @Sendable () -> Void = {}
+    @Entry var holdTranscriptPosition = TranscriptPositionHold()
 }
 
 /// Hands the transcript's UIScrollView to `TranscriptKeyboardScroll`.
