@@ -5,7 +5,7 @@
 // `web_fetch` is how a page could send data out (`evil.example/?d=…`). It asks for approval by default, except for
 // URLs that came from a search result or a user message in the conversation (`fetchTrusted`, used by the approval gate).
 
-import { Type } from "@earendil-works/pi-ai";
+import { lit, num, obj, opt, str, union } from "@earendil-works/pi-schema";
 import { defineExtension, defineTool, type EntryRecord, section } from "@earendil-works/pi-durable";
 import { textOf } from "./display.ts";
 import { OriginInput } from "./schedule.ts";
@@ -193,8 +193,8 @@ function failed(error: unknown): never {
 	throw error instanceof ServiceError ? new Error(error.message) : error;
 }
 
-const freshnessType = Type.Union(
-	(Object.keys(freshnessDays) as Freshness[]).map((f) => Type.Literal(f)),
+const freshnessType = union(
+	(Object.keys(freshnessDays) as Freshness[]).map((f) => lit(f)),
 	{ description: "Only pages from the past day, week, month or year" },
 );
 
@@ -203,10 +203,10 @@ const webSearch = defineTool({
 	description:
 		"Search the web. Returns results with title, url, snippet and, when known, date and site. " +
 		'The query may use site:example.com, "exact phrase" and -word. Cite the URLs you use.',
-	parameters: Type.Object({
-		query: Type.String({ description: "What to search for" }),
-		count: Type.Optional(Type.Number({ description: "How many results, 1 to 20 (default 8)" })),
-		freshness: Type.Optional(freshnessType),
+	parameters: obj({
+		query: str({ description: "What to search for" }),
+		count: opt(num({ description: "How many results, 1 to 20 (default 8)" })),
+		freshness: opt(freshnessType),
 	}),
 	replay: "safe",
 	execute: async (args, _api, context) => {
@@ -226,8 +226,8 @@ const webFetch = defineTool({
 	description:
 		"Read a web page as Markdown. URLs from web_search results or from the user's messages run at once; " +
 		"any other URL asks the user first.",
-	parameters: Type.Object({
-		url: Type.String({ description: "An http or https URL" }),
+	parameters: obj({
+		url: str({ description: "An http or https URL" }),
 	}),
 	replay: "safe",
 	execute: async (args, _api, context) => {

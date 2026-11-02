@@ -344,8 +344,8 @@ public final class JSRuntime: @unchecked Sendable {
         }
         set("sqliteExec", exec)
 
-        let run: @convention(block) (Int, String, JSValue) -> Void = { [weak self] handle, sql, params in
-            self?.withDatabase(handle) { try $0.run(sql, params) }
+        let run: @convention(block) (Int, String, JSValue) -> Int = { [weak self] handle, sql, params in
+            self?.withDatabase(handle) { try $0.run(sql, params) } ?? 0
         }
         set("sqliteRun", run)
 

@@ -526,17 +526,6 @@ final class ChatStore {
         do { tasks = try await harness.call("PiRuntime.tasks") } catch { report("tasks", error) }
     }
 
-    func retry(_ task: TaskInfo) async {
-        guard let harness else { return }
-        do {
-            try await harness.perform("PiRuntime.retryTask", [task.id])
-            diagnostics.record("info", "task", "Retried parked task \(task.id) (\(task.kind))")
-        } catch {
-            report("retry", error)
-        }
-        await refreshTasks()
-    }
-
     func abortTask(_ task: TaskInfo) async {
         guard let harness else { return }
         do {

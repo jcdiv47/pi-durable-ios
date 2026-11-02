@@ -61,7 +61,8 @@ an explicit, tunable setting (see "Generativity dial").
   and git-ignored) so agents can edit the project configuration as text.
 - JS toolchain: Bun or Node + esbuild. Pin `@earendil-works/pi-durable`,
   `@earendil-works/pi-ai` and `@earendil-works/chord` to the **same exact version**
-  (1.4.0 at time of writing). Pi Durable is marked experimental; upgrade on purpose.
+  (1.4.0 at time of writing; 1.5.0 since [ADR 0005](../adr/0005-pi-1.5.md)). Pi Durable is marked experimental;
+  upgrade on purpose.
 - Signing: personal team. **Milestone 0 must check** that the capabilities we need
   work under the chosen signing: App Groups, HealthKit, widget extension, background
   modes, Live Activities, Keychain sharing. Free Apple ID builds expire after 7 days
@@ -143,7 +144,7 @@ Pi Durable has no cross-process locking: **one process owns the storage**.
 | Tool `replay: "safe"` | Read-only Apple queries; idempotent writes |
 | No `replay` (interrupted → model told) | Non-idempotent side effects |
 | `requestId` exactly-once | Every entry point: Siri/Shortcuts intents, widget buttons, notification actions, share sheet. Derive the id from the intent invocation and payload. |
-| `settings.restartLimit` / parked tasks | Show parked tasks in the UI with Retry (`harness.retryTask`) |
+| `settings.restartLimit` | A task cut off that often in a row ends (1.5.0 removed parking and `harness.retryTask`, [ADR 0005](../adr/0005-pi-1.5.md)); Diagnostics lists live tasks with Abort |
 | `onReport` | A persistent diagnostics log in the app, plus OSLog |
 | Hooks + `api.memo` | Approval gates for sensitive tools; the decision survives restarts |
 

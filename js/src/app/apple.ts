@@ -3,7 +3,7 @@
 // tool task's ID and finds it instead of creating a second one when a crash makes the call run again.
 // reminders_complete sets a state, so running it twice is the same as once.
 
-import { Type } from "@earendil-works/pi-ai";
+import { bool, lit, num, obj, opt, str, union } from "@earendil-works/pi-schema";
 import { defineExtension, defineTool, section } from "@earendil-works/pi-durable";
 import { hostCall } from "../host/hostcall.ts";
 
@@ -11,16 +11,16 @@ function json(value: unknown) {
 	return { output: [{ type: "text" as const, text: JSON.stringify(value, null, 1) }] };
 }
 
-const isoDate = (description: string) => Type.String({ description: `${description}, ISO 8601 with a UTC offset` });
+const isoDate = (description: string) => str({ description: `${description}, ISO 8601 with a UTC offset` });
 
 const calendarQuery = defineTool({
 	name: "calendar_query",
 	description: "List calendar events that overlap a time range, optionally filtered by text in the title, location or notes.",
-	parameters: Type.Object({
+	parameters: obj({
 		start: isoDate("Range start"),
 		end: isoDate("Range end"),
-		search: Type.Optional(Type.String({ description: "Case-insensitive text to match" })),
-		limit: Type.Optional(Type.Number({ description: "Maximum events to return (default 50)" })),
+		search: opt(str({ description: "Case-insensitive text to match" })),
+		limit: opt(num({ description: "Maximum events to return (default 50)" })),
 	}),
 	replay: "safe",
 	execute: async (args, _api, context) => json(await hostCall("calendar.query", args, context.abortSignal)),
@@ -29,11 +29,11 @@ const calendarQuery = defineTool({
 const remindersQuery = defineTool({
 	name: "reminders_query",
 	description: "List reminders. By default only incomplete ones; optionally only those due before a date, or in one list.",
-	parameters: Type.Object({
-		includeCompleted: Type.Optional(Type.Boolean()),
-		dueBefore: Type.Optional(isoDate("Only reminders due before this")),
-		list: Type.Optional(Type.String({ description: "Reminder list name" })),
-		limit: Type.Optional(Type.Number({ description: "Maximum reminders to return (default 50)" })),
+	parameters: obj({
+		includeCompleted: opt(bool()),
+		dueBefore: opt(isoDate("Only reminders due before this")),
+		list: opt(str({ description: "Reminder list name" })),
+		limit: opt(num({ description: "Maximum reminders to return (default 50)" })),
 	}),
 	replay: "safe",
 	execute: async (args, _api, context) => json(await hostCall("reminders.query", args, context.abortSignal)),
@@ -42,13 +42,13 @@ const remindersQuery = defineTool({
 const calendarCreateEvent = defineTool({
 	name: "calendar_create_event",
 	description: "Create a calendar event in the default calendar. The user may be asked to approve it first.",
-	parameters: Type.Object({
-		title: Type.String(),
+	parameters: obj({
+		title: str(),
 		start: isoDate("Start"),
 		end: isoDate("End"),
-		allDay: Type.Optional(Type.Boolean()),
-		location: Type.Optional(Type.String()),
-		notes: Type.Optional(Type.String()),
+		allDay: opt(bool()),
+		location: opt(str()),
+		notes: opt(str()),
 	}),
 	replay: "safe",
 	execute: async (args, api, context) =>
@@ -58,14 +58,14 @@ const calendarCreateEvent = defineTool({
 const remindersCreate = defineTool({
 	name: "reminders_create",
 	description: "Add a reminder, by default to the default list. The user may be asked to approve it first.",
-	parameters: Type.Object({
-		title: Type.String(),
-		due: Type.Optional(
-			Type.String({ description: "When it is due: an ISO 8601 date-time with a UTC offset (alerts then), or a date YYYY-MM-DD (no alert)" }),
+	parameters: obj({
+		title: str(),
+		due: opt(
+			str({ description: "When it is due: an ISO 8601 date-time with a UTC offset (alerts then), or a date YYYY-MM-DD (no alert)" }),
 		),
-		list: Type.Optional(Type.String({ description: "Reminder list name" })),
-		notes: Type.Optional(Type.String()),
-		priority: Type.Optional(Type.Union([Type.Literal("none"), Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")])),
+		list: opt(str({ description: "Reminder list name" })),
+		notes: opt(str()),
+		priority: opt(union([lit("none"), lit("low"), lit("medium"), lit("high")])),
 	}),
 	replay: "safe",
 	execute: async (args, api, context) =>
@@ -75,9 +75,9 @@ const remindersCreate = defineTool({
 const remindersComplete = defineTool({
 	name: "reminders_complete",
 	description: "Mark a reminder done, or not done with completed: false. Takes the id from reminders_query.",
-	parameters: Type.Object({
-		id: Type.String({ description: "The reminder's id" }),
-		completed: Type.Optional(Type.Boolean({ description: "Default true" })),
+	parameters: obj({
+		id: str({ description: "The reminder's id" }),
+		completed: opt(bool({ description: "Default true" })),
 	}),
 	replay: "safe",
 	execute: async (args, _api, context) => json(await hostCall("reminders.complete", args, context.abortSignal)),
@@ -100,11 +100,11 @@ const healthQuery = defineTool({
 		"Read Apple Health data for a time range. Cumulative metrics (steps, activeEnergy kcal, distanceWalkingRunning m, flightsClimbed) are summed; " +
 		"heartRate and restingHeartRate (bpm) and bodyMass (kg) are averaged with min and max; sleep gives hours asleep. " +
 		"`interval` splits the range into days or hours. The first Health read asks the user for permission for all of these metrics in one sheet.",
-	parameters: Type.Object({
-		metric: Type.Union(healthMetrics.map((m) => Type.Literal(m))),
+	parameters: obj({
+		metric: union(healthMetrics.map((m) => lit(m))),
 		start: isoDate("Range start"),
 		end: isoDate("Range end"),
-		interval: Type.Optional(Type.Union([Type.Literal("total"), Type.Literal("day"), Type.Literal("hour")])),
+		interval: opt(union([lit("total"), lit("day"), lit("hour")])),
 	}),
 	replay: "safe",
 	execute: async (args, _api, context) => json(await hostCall("health.query", args, context.abortSignal)),
@@ -115,8 +115,8 @@ const locationCurrent = defineTool({
 	description:
 		"The iPhone's current location: coordinates, accuracy and, unless placeName is false, the address and city. " +
 		"Only when the user's request needs it (weather, nearby places, travel time). The first call asks the user for permission.",
-	parameters: Type.Object({
-		placeName: Type.Optional(Type.Boolean({ description: "Look up the address too (default true)" })),
+	parameters: obj({
+		placeName: opt(bool({ description: "Look up the address too (default true)" })),
 	}),
 	replay: "safe",
 	execute: async (args, _api, context) => json(await hostCall("location.current", args, context.abortSignal)),
@@ -125,7 +125,7 @@ const locationCurrent = defineTool({
 const currentTime = defineTool({
 	name: "current_time",
 	description: "The current local date and time, with the time zone.",
-	parameters: Type.Object({}),
+	parameters: obj({}),
 	replay: "safe",
 	execute: async () => json(now()),
 });

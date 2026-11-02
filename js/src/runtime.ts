@@ -8,10 +8,9 @@ import {
 	AssistantEntry,
 	type Conversation,
 	createRegistry,
-	type EntryRecord,
 	Harness,
+	type LiveState,
 	type Wake,
-	watchEvents,
 } from "@earendil-works/pi-durable";
 import { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
 import { AppleTools, appleToolInfo } from "./app/apple.ts";
@@ -94,7 +93,7 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 			registry,
 			// iOS suspends and evicts the process; see onWake above.
 			onWake,
-			onReport: (error, info) =>
+			onReport: ({ error, ...info }) =>
 				emit({ type: "report", info, error: error instanceof Error ? `${error.name}: ${error.message}` : String(error) }),
 			settings: { toolExecution: "parallel" },
 		},
@@ -111,12 +110,8 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 	approvals.trusted.web_fetch = async (args, conversationId, context) => {
 		const conversation = await harness?.conversation(conversationId as never, context);
 		if (conversation === undefined) return false;
-		const view = await conversation.viewState(context);
-		try {
-			return fetchTrusted(args, view.value.entries as unknown as EntryRecord[]);
-		} finally {
-			view.dispose();
-		}
+		// The URLs the model has seen: its active transcript.
+		return fetchTrusted(args, (await conversation.context(context)).entries);
 	};
 	const wake = harness.wake();
 	onWake(wake);
@@ -146,22 +141,12 @@ function requireOpen(): { harness: Harness; root: Conversation } {
 	return { harness, root };
 }
 
-/** Streams agent events to Swift as `{ type: "agent", events }` batches until `stop()`. */
-async function watch(): Promise<() => Promise<unknown>> {
-	const { harness, root } = requireOpen();
-	const stream = await watchEvents(harness, root.id, context);
-	stream.start(async (events) => {
-		emit({ type: "agent", events });
-	});
-	return () => stream.stop();
-}
-
 /**
  * Submits one input and waits for its answer, timing the stream. Reasoning models (DeepSeek) stream
  * thinking before text, and their output token count includes it, so time per token spans both.
  */
 async function ask(text: string, requestId: string): Promise<Record<string, unknown>> {
-	const { harness, root } = requireOpen();
+	const { root } = requireOpen();
 	const t0 = performance.now();
 	const network0 = { ...fetchStats };
 	// Measure network timing from this call's chunks only.
@@ -173,26 +158,37 @@ async function ask(text: string, requestId: string): Promise<Record<string, unkn
 	let thinkingDeltas = 0;
 	let textChars = 0;
 	let thinkingChars = 0;
-	const stream = await watchEvents(harness, root.id, context);
-	stream.start(async (events) => {
-		for (const event of events) {
-			if (event.type !== "message_update") continue;
-			for (const change of event.changes) {
-				if (change.type !== "text_delta" && change.type !== "thinking_delta") continue;
-				const now = performance.now() - t0;
-				firstDeltaMs ??= now;
-				lastDeltaMs = now;
-				if (change.type === "text_delta") {
-					firstTextMs ??= now;
-					textDeltas++;
-					textChars += change.delta.length;
-				} else {
-					thinkingDeltas++;
-					thinkingChars += change.delta.length;
-				}
-				emit({ type: "delta", kind: change.type === "text_delta" ? "text" : "thinking", text: change.delta, ms: now });
-			}
+	// The streamed answer is `pi.live.generation.message`; a delta is what its text or thinking gained since the last
+	// value the watch delivered (commits made while the listener ran arrive folded into one).
+	let seen = { text: 0, thinking: 0 };
+	const delta = (kind: "text" | "thinking", value: string) => {
+		if (value.length <= seen[kind]) return;
+		const text = value.slice(seen[kind]);
+		seen[kind] = value.length;
+		const now = performance.now() - t0;
+		firstDeltaMs ??= now;
+		lastDeltaMs = now;
+		if (kind === "text") {
+			firstTextMs ??= now;
+			textDeltas++;
+			textChars += text.length;
+		} else {
+			thinkingDeltas++;
+			thinkingChars += text.length;
 		}
+		emit({ type: "delta", kind, text, ms: now });
+	};
+	const stream = await root.watch(context, { min: 1 });
+	stream.start(async (call) => {
+		if (call.kind !== "value") return;
+		const message = (call.value.docs["pi.live"] as LiveState | undefined)?.generation?.message;
+		const blocks = (message?.content ?? []) as { type: string; text?: string; thinking?: string }[];
+		const text = blocks.map((block) => (block.type === "text" ? (block.text ?? "") : "")).join("");
+		const thinking = blocks.map((block) => (block.type === "thinking" ? (block.thinking ?? "") : "")).join("");
+		// A new message (the next turn, a retry) starts over.
+		if (message === undefined || text.length < seen.text || thinking.length < seen.thinking) seen = { text: 0, thinking: 0 };
+		delta("thinking", thinking);
+		delta("text", text);
 	});
 	try {
 		const submission = await root.submit({ type: "input", content: text, requestId }, context);
@@ -246,9 +242,7 @@ async function settle(text: string, requestId: string): Promise<Record<string, u
 	// The same requestId finds the submission the killed process admitted instead of submitting twice.
 	const submission = await root.submit({ type: "input", content: text, requestId }, context);
 	const settled = await submission.wait(context);
-	const view = await root.viewState(context);
-	const entries = view.value.entries as unknown as EntryRecord[];
-	view.dispose();
+	const { entries } = await root.context(context);
 	const toolResults = entries
 		.filter((entry) => entry.kind === "pi.tool-result")
 		.map((entry) => {
@@ -286,10 +280,8 @@ function summarizeInspection(inspection: unknown): unknown {
 async function entries(): Promise<unknown> {
 	const { harness, root } = requireOpen();
 	await harness.waitForIdle(context);
-	const view = await root.viewState(context);
-	const list = (view.value.entries as unknown as EntryRecord[]).map((e) => ({ id: e.id, kind: e.kind, model: JSON.stringify(e.model).slice(0, 160) }));
-	view.dispose();
-	return list;
+	const { entries } = await root.context(context);
+	return entries.map((e) => ({ id: e.id, kind: e.kind, model: JSON.stringify(e.model).slice(0, 160) }));
 }
 
 async function close(): Promise<void> {
@@ -320,7 +312,6 @@ const app = {
 	rename: (id: number, title: string) => requireChat().rename(id, title),
 	removeConversation: (id: number) => requireChat().remove(id),
 	tasks: () => requireChat().tasks(),
-	retryTask: (id: number) => requireChat().retryTask(id),
 	abortTask: (id: number) => requireChat().abortTask(id),
 	approvals: async () => approvals.pending(),
 	answerApproval: async (id: number, decision: Decision) => requireChat().answerApproval(id, decision),
@@ -354,4 +345,4 @@ const app = {
 	wake: async () => requireOpen().harness.wake(),
 };
 
-(globalThis as Record<string, unknown>).PiRuntime = { open, watch, ask, submit, settle, entries, close, ...app };
+(globalThis as Record<string, unknown>).PiRuntime = { open, ask, submit, settle, entries, close, ...app };

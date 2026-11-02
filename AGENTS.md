@@ -50,7 +50,7 @@ decisions that change the spec go in `docs/adr/`.
   `scripted/assistant` model. `chat.ts`
   also has the entry points outside the chat (`ask` from intents and notification replies, `widgetAction`,
   `runSchedule`).
-  pi-durable, pi-ai and chord stay pinned to the **same exact version** (1.4.0).
+  pi-durable, pi-ai, pi-schema (tool schemas) and chord stay pinned to the **same exact version** (1.5.0).
 - `scripts/`: simulator and device drivers.
 
 ## Build and test

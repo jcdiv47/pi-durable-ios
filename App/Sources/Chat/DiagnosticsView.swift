@@ -20,7 +20,7 @@ struct DiagnosticsView: View {
                         HStack {
                             Text(task.kind).font(.subheadline.monospaced())
                             Spacer()
-                            Text(task.parked ? "parked" : task.reason.map { "blocked: \($0)" } ?? task.state)
+                            Text(task.reason.map { "blocked: \($0)" } ?? task.state)
                                 .font(.caption)
                                 .foregroundStyle(task.state == "blocked" ? .orange : .secondary)
                         }
@@ -30,11 +30,6 @@ struct DiagnosticsView: View {
                         if let error = task.error {
                             Text(error).font(.caption2).foregroundStyle(.red).lineLimit(3)
                         }
-                        if task.parked {
-                            Button("Retry") { Task { await store.retry(task) } }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                        }
                     }
                     .swipeActions {
                         Button("Abort", role: .destructive) { Task { await store.abortTask(task) } }
@@ -43,7 +38,7 @@ struct DiagnosticsView: View {
             } header: {
                 Text("Tasks")
             } footer: {
-                Text("A task the process kept dying in is parked after five restarts. Retry runs it again; Abort ends it.")
+                Text("A task the process keeps dying in ends after five restarts in a row. Abort ends a task now.")
             }
 
             Section {

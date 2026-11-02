@@ -46,6 +46,7 @@ final class ChatLog: @unchecked Sendable {
 
     func items(_ id: Int) -> [[String: Any]] { lock.withLock { items[id] ?? [] } }
     func busy(_ id: Int) -> Bool { lock.withLock { live[id]?["busy"] as? Bool ?? false } }
+    func framed(_ id: Int) -> Bool { lock.withLock { live[id] != nil } }
     func queue(_ id: Int) -> [[String: Any]] { lock.withLock { queues[id] ?? [] } }
     func thinking(_ id: Int) -> String? { lock.withLock { thinkingLevels[id] } }
     func liveText(_ id: Int) -> String { lock.withLock { (live[id]?["generation"] as? [String: Any])?["text"] as? String ?? "" } }
@@ -456,8 +457,8 @@ struct ChatTests {
     }
 }
 
-@Suite("Parked tasks inside JavaScriptCore")
-struct ParkedTaskTests {
+@Suite("Restart-limited runs inside JavaScriptCore")
+struct RestartLimitTests {
     struct TaskInfo: Decodable {
         let id: Int
         let kind: String
@@ -465,8 +466,8 @@ struct ParkedTaskTests {
         let reason: String?
     }
 
-    @Test("A run cut off five times is parked; retry finishes it", .timeLimit(.minutes(1)))
-    func parkAndRetry() async throws {
+    @Test("A run cut off again and again ends instead of keeping the conversation busy", .timeLimit(.minutes(1)))
+    func endsInsteadOfParking() async throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let db = directory.appendingPathComponent("chat.sqlite").path
@@ -475,24 +476,23 @@ struct ParkedTaskTests {
         var harness = try await openChat(log, db: db)
         let meta: Meta = try await harness.call("PiRuntime.createConversation", ["scripted", "assistant"])
         try await harness.perform("PiRuntime.send", [meta.id, "slow", "r1"])
-        // Each process dies while the generation runs; the restart limit (5) parks it.
+        // Each process dies while the generation runs. Pi charges an interrupted request to the retry policy and ends a
+        // task cut off `restartLimit` (5) times in a row, so the last process either answers on a retry or ends the run;
+        // nothing stays parked (1.4 kept the conversation busy until `retryTask`).
         for _ in 0..<6 {
             try await Task.sleep(for: .milliseconds(150))
             harness.runtime.terminate()
             log = ChatLog()
             harness = try await openChat(log, db: db)
         }
-        let tasks: [TaskInfo] = try await harness.call("PiRuntime.tasks")
-        let parked = tasks.filter { $0.reason == "restart_limit" }
-        #expect(parked.count == 1, "tasks: \(tasks)")
         try await harness.perform("PiRuntime.watchConversation", [meta.id])
-        try await Task.sleep(for: .milliseconds(300))
-        #expect(!log.items(meta.id).contains { $0["stopReason"] as? String == "stop" }, "a parked run does not continue by itself")
+        try await until(.seconds(30)) { log.framed(meta.id) && !log.busy(meta.id) }
+        let tasks: [TaskInfo] = try await harness.call("PiRuntime.tasks")
+        #expect(tasks.isEmpty, "tasks: \(tasks)")
 
-        try await harness.perform("PiRuntime.retryTask", [parked[0].id])
+        // The conversation takes the next message.
+        try await harness.perform("PiRuntime.send", [meta.id, "hello", "r2"])
         try await until(.seconds(30)) { !log.busy(meta.id) && log.last(meta.id, kind: "assistant")?["stopReason"] as? String == "stop" }
-        let after: [TaskInfo] = try await harness.call("PiRuntime.tasks")
-        #expect(after.isEmpty)
         try await harness.close()
     }
 }

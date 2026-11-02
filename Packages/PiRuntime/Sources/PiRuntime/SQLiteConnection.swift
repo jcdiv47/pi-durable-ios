@@ -53,12 +53,14 @@ final class SQLiteConnection {
         }
     }
 
-    func run(_ sql: String, _ params: JSValue) throws {
+    /// Runs one statement; returns the rows it changed (`sqlite3_changes`).
+    @discardableResult
+    func run(_ sql: String, _ params: JSValue) throws -> Int {
         let statement = try prepare(sql, params)
         defer { sqlite3_reset(statement) }
         while true {
             let rc = sqlite3_step(statement)
-            if rc == SQLITE_DONE { return }
+            if rc == SQLITE_DONE { return Int(sqlite3_changes(db)) }
             if rc != SQLITE_ROW { throw currentError(rc) }
         }
     }

@@ -54,6 +54,18 @@ export function createFacadeCases(directory: string, t: StorageConformanceAssert
 			},
 		},
 		{
+			name: "runCounted resolves with the rows a statement changed, also in a transaction",
+			async run() {
+				const db = await fresh();
+				for (const id of [1, 2, 3]) await db.run("INSERT INTO t (id, v) VALUES (?, ?)", id, "a");
+				t.strictEqual(await db.runCounted("UPDATE t SET v = ? WHERE id >= ?", "b", 2), 2);
+				t.strictEqual(await db.runCounted("UPDATE t SET v = ? WHERE id = ?", "c", 99), 0);
+				const deleted = await db.transaction((tx) => tx.runCounted("DELETE FROM t WHERE v = ?", "b"));
+				t.strictEqual(deleted, 2);
+				await db.close();
+			},
+		},
+		{
 			name: "rejects a wrong number of bindings and unsupported values",
 			async run() {
 				const db = await fresh();

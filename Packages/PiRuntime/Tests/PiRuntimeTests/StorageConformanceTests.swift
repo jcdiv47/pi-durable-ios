@@ -55,7 +55,7 @@ struct ConformanceTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         let report = try await runSuite("runStorage", [directory.path])
         #expect(report.failed == 0)
-        #expect(report.passed == 25)
+        #expect(report.passed == 32)
     }
 
     @Test("SqliteDatabase facade contract", .timeLimit(.minutes(1)))

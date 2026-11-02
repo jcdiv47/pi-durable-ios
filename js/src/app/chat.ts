@@ -3,20 +3,21 @@
 // `approvals` when a tool call waits for the user.
 
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
-import type { AttachedReplicatedState } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord";
 import {
 	AssistantEntry,
 	type Conversation,
-	type ConversationView,
+	type ConversationWatch,
 	defineDoc,
 	type EntryRecord,
 	type Extension,
 	type Harness,
 	InboxDoc,
 	type InboxState,
+	LiveDoc,
 	type Submission,
+	type TranscriptView,
 } from "@earendil-works/pi-durable";
 import { type Approvals, type Decision, defaultPolicies, type ToolPolicy } from "./approvals.ts";
 import {
@@ -32,6 +33,7 @@ import {
 import { type DisplaySurface, FrameBuilder, textOf } from "./display.ts";
 import { answerText, OriginInput, SchedulesDoc } from "./schedule.ts";
 import { PublishedDoc, SurfacesDoc, ValuesDoc } from "./surfaces.ts";
+import { complete, entriesOf, readView, transcriptOf } from "./view.ts";
 import { hostCall } from "../host/hostcall.ts";
 
 const context = BACKGROUND_CONTEXT;
@@ -113,7 +115,7 @@ function titleFrom(text: string): string {
 }
 
 export class Chat {
-	readonly #watches = new Map<number, { view: AttachedReplicatedState<ConversationView>; unsubscribe: () => void }>();
+	readonly #watches = new Map<number, ConversationWatch>();
 
 	constructor(
 		private readonly harness: Harness,
@@ -175,12 +177,20 @@ export class Chat {
 	async watch(id: number): Promise<void> {
 		this.unwatch(id);
 		const conversation = await this.#conversation(id);
-		const view = await conversation.viewState(context);
+		const transcript = transcriptOf(conversation);
+		const watch = await conversation.watch(context);
+		this.#watches.set(id, watch);
 		const builder = new FrameBuilder(id);
-		const send = (value: ConversationView) => this.emit({ type: "frame", frame: builder.frame(value) });
-		const unsubscribe = view.subscribe((value) => send(value));
-		this.#watches.set(id, { view, unsubscribe });
-		send(view.value);
+		const send = (view: TranscriptView) => {
+			if (this.#watches.get(id) !== watch) return;
+			this.emit({ type: "frame", frame: builder.frame({ entries: entriesOf(view), docs: view.docs }) });
+		};
+		// The view's window holds the newest entries only; the transcript pages in the rest.
+		send(await complete(transcript, transcript.merge(watch.value), context));
+		if (this.#watches.get(id) !== watch) return;
+		watch.start(async (call) => {
+			if (call.kind === "value") send(await complete(transcript, transcript.merge(call.value), context));
+		});
 	}
 
 	/** Spotlight's text for a conversation: its messages from the start, user and assistant text only, cut at `limit`. */
@@ -197,20 +207,15 @@ export class Chat {
 
 	/** The whole transcript and live state once, as one frame (headless checks read this). */
 	async transcript(id: number) {
-		const view = await (await this.#conversation(id)).viewState(context);
-		try {
-			return new FrameBuilder(id).frame(view.value);
-		} finally {
-			view.dispose();
-		}
+		const view = await readView(await this.#conversation(id), context);
+		return new FrameBuilder(id).frame({ entries: entriesOf(view), docs: view.docs });
 	}
 
 	unwatch(id: number): void {
 		const watch = this.#watches.get(id);
 		if (watch === undefined) return;
 		this.#watches.delete(id);
-		watch.unsubscribe();
-		watch.view.dispose();
+		void watch.stop();
 	}
 
 	/**
@@ -400,13 +405,11 @@ export class Chat {
 	 */
 	async steer(id: number, submissionId: number): Promise<void> {
 		const conversation = await this.#conversation(id);
-		const view = await conversation.viewState(context);
-		const docs = view.value.docs;
-		view.dispose();
-		const inputs = ((docs["pi.inbox"] as InboxState | undefined)?.items ?? []).filter((item) => item.mode !== "write");
+		const inbox: InboxState | undefined = await this.harness.snapshot(InboxDoc, id as never, context);
+		const inputs = (inbox?.items ?? []).filter((item) => item.mode !== "write");
 		const target = inputs.find((item) => item.id === submissionId);
 		if (target === undefined || !(await this.withdraw(id, submissionId))) return;
-		const live = docs["pi.live"] as { run?: unknown; tools?: { status: string }[] } | undefined;
+		const live = await this.harness.snapshot(LiveDoc, id as never, context);
 		// The entry keeps where a message came from (Siri, a widget, a notification reply).
 		const submit = ({ content, entry }: (typeof inputs)[number], whenBusy?: "steer" | "followUp") =>
 			conversation.submit(
@@ -475,7 +478,7 @@ export class Chat {
 		await this.#changed();
 	}
 
-	/** Live tasks with what the scheduler would do with them; parked ones (`restart_limit`) can be retried. */
+	/** Live tasks with what the scheduler would do with them. */
 	async tasks(): Promise<unknown[]> {
 		const inspection = await this.harness.inspect(context);
 		return inspection.tasks.map(({ record, state }) => ({
@@ -486,10 +489,6 @@ export class Chat {
 			reason: state.kind === "blocked" ? state.reason : undefined,
 			error: state.kind === "blocked" && state.error !== undefined ? String(state.error) : undefined,
 		}));
-	}
-
-	async retryTask(id: number): Promise<void> {
-		await this.harness.retryTask(id as never, context);
 	}
 
 	async abortTask(id: number): Promise<string> {

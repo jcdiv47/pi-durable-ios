@@ -403,8 +403,6 @@ struct TaskInfo: Decodable, Identifiable, Hashable {
     let state: String
     let reason: String?
     let error: String?
-
-    var parked: Bool { state == "blocked" && reason == "restart_limit" }
 }
 
 extension JSONValue {

@@ -27,7 +27,8 @@ export interface NativeBindings {
 	fetchCancel(id: number): void;
 	sqliteOpen(path: string): number;
 	sqliteExec(handle: number, sql: string): void;
-	sqliteRun(handle: number, sql: string, params: NativeSqliteValue[]): void;
+	/** Resolves with the rows the statement changed. */
+	sqliteRun(handle: number, sql: string, params: NativeSqliteValue[]): number;
 	sqliteGet(handle: number, sql: string, params: NativeSqliteValue[]): Record<string, NativeSqliteValue> | undefined;
 	sqliteAll(handle: number, sql: string, params: NativeSqliteValue[]): Record<string, NativeSqliteValue>[];
 	sqliteClose(handle: number): void;

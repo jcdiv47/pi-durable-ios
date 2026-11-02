@@ -1,6 +1,6 @@
-// Turns a conversation's structural view (`viewState()`) into the small display model the SwiftUI
-// transcript renders. Entries are immutable, so frames carry only the entries appended since the last
-// frame, plus the whole live state (streamed partial, running tools), which is small.
+// Turns a conversation's transcript and documents (`Conversation.watch()`, completed in view.ts) into the small
+// display model the SwiftUI transcript renders. Entries are immutable, so frames carry only the entries appended
+// since the last frame, plus the whole live state (streamed partial, running tools), which is small.
 
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { EntryRecord, InboxState } from "@earendil-works/pi-durable";

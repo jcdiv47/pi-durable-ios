@@ -5,7 +5,7 @@
 
 import type { JsonValue } from "@earendil-works/chord";
 import type { Context } from "@earendil-works/chord/context";
-import { Type } from "@earendil-works/pi-ai";
+import { arr, lit, map, num, obj, opt, str, union, unknown } from "@earendil-works/pi-schema";
 import { defineDoc, defineExtension, defineTool, section, type ToolExecutionApi } from "@earendil-works/pi-durable";
 import { hostCall } from "../host/hostcall.ts";
 import { applyPatch, type PatchOperation } from "./jsonpatch.ts";
@@ -118,12 +118,12 @@ function summary(surface: SurfaceRecord, report: Report) {
 	};
 }
 
-const families = Type.Optional(Type.Array(Type.String(), { description: "Widget families; omitted: all of the spec's" }));
+const families = opt(arr(str(), { description: "Widget families; omitted: all of the spec's" }));
 
 const listComponents = defineTool({
 	name: "list_components",
 	description: "The surface spec format, each family's slots and design level, the components with their props, and the data sources. Call it before designing a surface.",
-	parameters: Type.Object({ families }),
+	parameters: obj({ families }),
 	replay: "safe",
 	execute: async (args, _api, context) => {
 		const catalog = await hostCall<{ text: string }>("ui.catalog", { families: args.families ?? [] }, context.abortSignal);
@@ -136,8 +136,8 @@ const createSurface = defineTool({
 	description:
 		"Create a surface from a spec: a widget (Home Screen / Lock Screen) or a card shown in this chat. Returns its id and version, " +
 		"with errors to fix (patch_surface) and layout warnings. It is stored even when invalid; publishing needs it valid.",
-	parameters: Type.Object({
-		spec: Type.Record(Type.String(), Type.Unknown(), { description: "The spec (see list_components)" }),
+	parameters: obj({
+		spec: map(unknown(), { description: "The spec (see list_components)" }),
 	}),
 	prepareArguments: (args) => {
 		const input = (args ?? {}) as Record<string, unknown>;
@@ -167,15 +167,15 @@ const patchSurface = defineTool({
 	description:
 		"Change a surface with a JSON Patch (RFC 6902; paths like /slots/0/goal, /slots/- to append). baseVersion must be the version you last saw; " +
 		"a mismatch fails with the current spec. Returns the new version with errors and warnings.",
-	parameters: Type.Object({
-		id: Type.String(),
-		baseVersion: Type.Number(),
-		patch: Type.Array(
-			Type.Object({
-				op: Type.Union(["add", "remove", "replace", "move", "copy", "test"].map((op) => Type.Literal(op))),
-				path: Type.String(),
-				value: Type.Optional(Type.Unknown()),
-				from: Type.Optional(Type.String()),
+	parameters: obj({
+		id: str(),
+		baseVersion: num(),
+		patch: arr(
+			obj({
+				op: union(["add", "remove", "replace", "move", "copy", "test"].map((op) => lit(op))),
+				path: str(),
+				value: opt(unknown()),
+				from: opt(str()),
 			}),
 		),
 	}),
@@ -217,10 +217,10 @@ const bindData = defineTool({
 	description:
 		"Bind a prop to a data source the widget resolves itself, e.g. path /slots/0/value to $health.stepsToday. Checks that the source exists, " +
 		"asks the user for the permission it needs (the first time), and returns the current value.",
-	parameters: Type.Object({
-		id: Type.String(),
-		path: Type.String({ description: "JSON Pointer of the prop, e.g. /slots/0/value" }),
-		source: Type.String({ description: "e.g. $health.stepsToday, $calendar.next.title, $doc.nudge" }),
+	parameters: obj({
+		id: str(),
+		path: str({ description: "JSON Pointer of the prop, e.g. /slots/0/value" }),
+		source: str({ description: "e.g. $health.stepsToday, $calendar.next.title, $doc.nudge" }),
 	}),
 	replay: "safe",
 	execute: async (args, api, context) => {
@@ -259,7 +259,7 @@ const bindData = defineTool({
 const validateSurface = defineTool({
 	name: "validate_surface",
 	description: "Check a surface against the components, its families' slot limits and design levels. Lists errors to fix and layout warnings.",
-	parameters: Type.Object({ id: Type.String() }),
+	parameters: obj({ id: str() }),
 	replay: "safe",
 	execute: async (args, api, context) => {
 		const surface = await record(api, args.id, context);
@@ -273,10 +273,10 @@ const previewSurface = defineTool({
 	description:
 		"Render a surface to PNG images, as the iPhone would show it, with the user's current data, plus layout warnings (overflow). " +
 		"Look at them to check your work. Lock Screen families render once (tinted); others in each requested appearance.",
-	parameters: Type.Object({
-		id: Type.String(),
+	parameters: obj({
+		id: str(),
 		families,
-		appearances: Type.Optional(Type.Array(Type.Union([Type.Literal("light"), Type.Literal("dark"), Type.Literal("tinted")]), { description: "Default light" })),
+		appearances: opt(arr(union([lit("light"), lit("dark"), lit("tinted")]), { description: "Default light" })),
 	}),
 	replay: "safe",
 	execute: async (args, api, context) => {
@@ -320,7 +320,7 @@ const publishSurface = defineTool({
 	description:
 		"Put a valid widget surface on the Home Screen and Lock Screen: it becomes a choice in the \"Pi\" widget's settings, and widgets " +
 		"showing it update. Publishing again updates it. The user may be asked to approve.",
-	parameters: Type.Object({ id: Type.String() }),
+	parameters: obj({ id: str() }),
 	replay: "safe",
 	execute: async (args, api, context) => {
 		const surface = await record(api, args.id, context);
@@ -371,9 +371,9 @@ const setValue = defineTool({
 	description:
 		"Store a value that surfaces show through $doc.<key>, e.g. a nudge, a summary or a goal you computed. Widgets showing it update. " +
 		"null removes the key.",
-	parameters: Type.Object({
-		key: Type.String({ description: "Letters, digits and _; e.g. nudge" }),
-		value: Type.Unknown(),
+	parameters: obj({
+		key: str({ description: "Letters, digits and _; e.g. nudge" }),
+		value: unknown(),
 	}),
 	replay: "safe",
 	execute: async (args, api, context) => {

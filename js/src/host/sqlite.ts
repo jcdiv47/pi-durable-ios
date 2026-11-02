@@ -61,6 +61,11 @@ abstract class IOSSqliteExecutor implements SqliteExecutor {
 		return this.runOperation(() => native.sqliteExec(this.handle, sql));
 	}
 	run(sql: string, ...params: SqliteValue[]): Promise<void> {
+		return this.runOperation(() => {
+			native.sqliteRun(this.handle, sql, params);
+		});
+	}
+	runCounted(sql: string, ...params: SqliteValue[]): Promise<number> {
 		return this.runOperation(() => native.sqliteRun(this.handle, sql, params));
 	}
 	get<T extends object>(sql: string, ...params: SqliteValue[]): Promise<T | undefined> {

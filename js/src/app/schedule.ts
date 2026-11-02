@@ -6,7 +6,7 @@
 // not submitted twice.
 
 import type { JsonValue } from "@earendil-works/chord";
-import { Type } from "@earendil-works/pi-ai";
+import { bool, obj, opt, str } from "@earendil-works/pi-schema";
 import { AssistantEntry, defineDoc, defineExtension, defineTask, defineTool, type EntryRecord, section } from "@earendil-works/pi-durable";
 import { hostCall } from "../host/hostcall.ts";
 
@@ -145,7 +145,7 @@ function failure(message: string) {
 	return { output: [{ type: "text" as const, text: message }], isError: true };
 }
 
-const isoDate = (description: string) => Type.String({ description: `${description}, ISO 8601 with a UTC offset` });
+const isoDate = (description: string) => str({ description: `${description}, ISO 8601 with a UTC offset` });
 
 function describe(entry: ScheduleEntry) {
 	return {
@@ -169,12 +169,12 @@ export function ScheduleTools(abortTask: (taskId: number) => Promise<unknown>) {
 			"Run a prompt in this conversation later, once (`at`) or repeatedly (`every`: 30m, 3h, 1d; at least 15m), even while the app is closed. " +
 			"Use it to refresh $doc values widgets show (the prompt says which set_value to call), or for briefings. " +
 			"iOS runs it at or after the time, not exactly on it. `notify` posts the answer as a notification. The user may be asked to approve.",
-		parameters: Type.Object({
-			name: Type.String({ description: "Short and unique in this conversation, e.g. nudge" }),
-			prompt: Type.String({ description: "What to do on each run, written to yourself" }),
-			at: Type.Optional(isoDate("First run; omitted: one interval from now")),
-			every: Type.Optional(Type.String({ description: "Repeat interval; omitted: run once" })),
-			notify: Type.Optional(Type.Boolean({ description: "Post each answer as a notification (default false)" })),
+		parameters: obj({
+			name: str({ description: "Short and unique in this conversation, e.g. nudge" }),
+			prompt: str({ description: "What to do on each run, written to yourself" }),
+			at: opt(isoDate("First run; omitted: one interval from now")),
+			every: opt(str({ description: "Repeat interval; omitted: run once" })),
+			notify: opt(bool({ description: "Post each answer as a notification (default false)" })),
 		}),
 		replay: "safe",
 		execute: async (args, api, context) => {
@@ -226,7 +226,7 @@ export function ScheduleTools(abortTask: (taskId: number) => Promise<unknown>) {
 	const listTasks = defineTool({
 		name: "list_scheduled_tasks",
 		description: "The scheduled tasks of this conversation, with their next run.",
-		parameters: Type.Object({}),
+		parameters: obj({}),
 		replay: "safe",
 		execute: async (_args, api, context) => {
 			const items = (await api.snapshot(SchedulesDoc, context))?.items ?? [];
@@ -237,7 +237,7 @@ export function ScheduleTools(abortTask: (taskId: number) => Promise<unknown>) {
 	const cancelTask = defineTool({
 		name: "cancel_scheduled_task",
 		description: "Stop a scheduled task of this conversation.",
-		parameters: Type.Object({ name: Type.String() }),
+		parameters: obj({ name: str() }),
 		replay: "safe",
 		execute: async (args, api, context) => {
 			const items = (await api.snapshot(SchedulesDoc, context))?.items ?? [];
@@ -254,11 +254,11 @@ export function ScheduleTools(abortTask: (taskId: number) => Promise<unknown>) {
 		description:
 			"Show the user a notification at a time, e.g. a reminder. It needs no model run, so it arrives on time even if the app is closed. " +
 			"The same id replaces an earlier notification; omit it for a new one. Tapping it opens this conversation.",
-		parameters: Type.Object({
-			title: Type.String(),
-			body: Type.String(),
+		parameters: obj({
+			title: str(),
+			body: str(),
 			at: isoDate("When to show it"),
-			id: Type.Optional(Type.String({ description: "Letters, digits and _; reuse it to change or replace the notification" })),
+			id: opt(str({ description: "Letters, digits and _; reuse it to change or replace the notification" })),
 		}),
 		replay: "safe",
 		execute: async (args, api, context) => {

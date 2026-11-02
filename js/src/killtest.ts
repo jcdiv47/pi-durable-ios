@@ -3,7 +3,7 @@
 // safe tool reran and the unsafe one came back to the model as interrupted.
 
 import type { Context } from "@earendil-works/chord/context";
-import { Type } from "@earendil-works/pi-ai";
+import { obj, str } from "@earendil-works/pi-schema";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { defineExtension, defineTool } from "@earendil-works/pi-durable";
 import { native } from "./host/native.ts";
@@ -32,7 +32,7 @@ export function KillTestTools(toolMs: number) {
 	const slowLookup = defineTool({
 		name: "slow_lookup",
 		description: "Look up a value. Slow, read-only, safe to repeat.",
-		parameters: Type.Object({ query: Type.String() }),
+		parameters: obj({ query: str() }),
 		replay: "safe",
 		execute: async (args, api, context) => {
 			marker("slow_lookup", "start", api.taskId);
@@ -45,7 +45,7 @@ export function KillTestTools(toolMs: number) {
 	const sendMessage = defineTool({
 		name: "send_message",
 		description: "Send a message. Slow, has an external side effect, must not run twice.",
-		parameters: Type.Object({ to: Type.String(), text: Type.String() }),
+		parameters: obj({ to: str(), text: str() }),
 		execute: async (args, api, context) => {
 			marker("send_message", "start", api.taskId);
 			await sleep(toolMs, context);
