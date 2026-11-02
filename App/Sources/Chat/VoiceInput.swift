@@ -23,7 +23,7 @@ final class VoiceInput {
     var error: String?
 
     static let provider = "openai"
-    nonisolated static let model = "gpt-4o-transcribe"
+    nonisolated static let model = "gpt-transcribe"
     /// Well under the API's 25 MB upload limit at this recording's bit rate.
     nonisolated static let maxDuration: TimeInterval = 600
     static let levelCount = 24
@@ -183,7 +183,6 @@ final class VoiceInput {
             body.append(Data("\r\n".utf8))
         }
         part("Content-Disposition: form-data; name=\"model\"", Data(model.utf8))
-        part("Content-Disposition: form-data; name=\"response_format\"", Data("json".utf8))
         part("Content-Disposition: form-data; name=\"file\"; filename=\"voice.m4a\"\r\nContent-Type: audio/mp4", try Data(contentsOf: file))
         body.append(Data("--\(boundary)--\r\n".utf8))
 
