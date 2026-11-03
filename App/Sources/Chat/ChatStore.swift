@@ -313,11 +313,11 @@ final class ChatStore {
         return try? await harness.call("PiRuntime.searchText", [id])
     }
 
-    /// The newest conversation if nothing was ever sent in it: the compose button opens it instead of making another.
-    var unusedConversation: ConversationMeta? {
-        guard let top = conversations.first, top.forkOf == nil, top.updatedAt == top.createdAt else { return nil }
-        return top
-    }
+    /// The conversations the list shows: every one but those nothing was sent in yet.
+    var startedConversations: [ConversationMeta] { conversations.filter(\.started) }
+
+    /// The newest conversation nothing was ever sent in: the compose button opens it instead of making another.
+    var unusedConversation: ConversationMeta? { conversations.first { !$0.started } }
 
     func newConversation() async -> ConversationMeta? {
         guard let harness else { return nil }
@@ -688,7 +688,7 @@ final class ChatStore {
 
     /// The share sheet's conversation picker reads these from the App Group.
     private func publishRecent() {
-        RecentConversation.write(conversations.prefix(12).map { RecentConversation(id: $0.id, title: $0.title) })
+        RecentConversation.write(startedConversations.prefix(12).map { RecentConversation(id: $0.id, title: $0.title) })
     }
 
     /// Widget and Live Activity buttons (`SharedIntents`).

@@ -17,6 +17,9 @@ struct ConversationMeta: Decodable, Identifiable, Hashable {
     let forkOf: ForkOf?
 
     var updated: Date { Date(timeIntervalSince1970: updatedAt / 1000) }
+    /// Something was sent in it, or it is a fork. The compose button makes a conversation before its first message;
+    /// until then the list, recents, Spotlight and Siri leave it out.
+    var started: Bool { forkOf != nil || updatedAt != createdAt }
 }
 
 struct ModelRef: Codable, Hashable {

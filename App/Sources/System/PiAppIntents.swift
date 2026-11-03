@@ -45,11 +45,11 @@ struct ConversationQuery: EntityStringQuery {
     }
 
     @MainActor func suggestedEntities() async throws -> [ConversationEntity] {
-        await ChatStore.ready().conversations.prefix(12).map(ConversationEntity.init)
+        await ChatStore.ready().startedConversations.prefix(12).map(ConversationEntity.init)
     }
 
     @MainActor func entities(matching string: String) async throws -> [ConversationEntity] {
-        await ChatStore.ready().conversations.filter { $0.title.localizedCaseInsensitiveContains(string) }.map(ConversationEntity.init)
+        await ChatStore.ready().startedConversations.filter { $0.title.localizedCaseInsensitiveContains(string) }.map(ConversationEntity.init)
     }
 }
 
