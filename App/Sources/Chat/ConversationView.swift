@@ -569,9 +569,11 @@ private struct VoiceLevels: View {
     var body: some View {
         HStack(spacing: 3) {
             ForEach(levels.indices, id: \.self) { index in
+                // Full height, scaled: a scale is drawn, not laid out, so each level update moves no other view.
                 Capsule()
                     .fill(.tint)
-                    .frame(width: 3, height: 4 + CGFloat(levels[index]) * 20)
+                    .frame(width: 3, height: 24)
+                    .scaleEffect(y: (4 + CGFloat(levels[index]) * 20) / 24)
             }
         }
         .frame(height: 24)
