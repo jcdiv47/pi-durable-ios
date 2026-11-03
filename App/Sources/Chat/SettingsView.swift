@@ -330,7 +330,8 @@ struct KeyStatusRow: View {
     }
 }
 
-/// A tool's approval policy: Allow, Ask or Never.
+/// A tool's approval policy: Allow, Ask or Never. A row with the start of the description and the policy; it opens
+/// the tool's page, which has the whole description (written for the model, so often long) and the choice.
 struct ToolPolicyPicker: View {
     let store: ChatStore
     let tool: ToolInfo
@@ -338,15 +339,77 @@ struct ToolPolicyPicker: View {
     var title: String?
 
     var body: some View {
-        Picker(selection: Binding(get: { tool.policy }, set: { policy in Task { await store.setPolicy(policy, for: tool.name) } })) {
-            Text("Allow").tag("auto")
-            Text("Ask").tag("ask")
-            Text("Never").tag("deny")
+        NavigationLink {
+            ToolPolicyView(store: store, name: tool.name, title: title ?? tool.name)
         } label: {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title ?? tool.name).font(.body.monospaced())
-                Text(tool.description).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title ?? tool.name).font(.body.monospaced())
+                    Text(tool.description).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                }
+                Spacer(minLength: 0)
+                Text(ToolPolicy.name(tool.policy))
+                    .foregroundStyle(tool.policy == "ask" ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
             }
+        }
+        .accessibilityIdentifier("tool.\(tool.name)")
+    }
+}
+
+/// One tool: its policy, then its whole description.
+struct ToolPolicyView: View {
+    let store: ChatStore
+    let name: String
+    let title: String
+
+    /// Read from the store, so the choice shows once `setPolicy` has refreshed the tools.
+    private var tool: ToolInfo? { store.tools.first { $0.name == name } }
+
+    var body: some View {
+        Form {
+            if let tool {
+                Section {
+                    Picker("Approval", selection: Binding(get: { tool.policy }, set: { policy in Task { await store.setPolicy(policy, for: name) } })) {
+                        ForEach(ToolPolicy.all, id: \.self) { policy in
+                            Text(ToolPolicy.name(policy)).tag(policy)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets())
+                } footer: {
+                    Text(ToolPolicy.explanation(tool.policy))
+                }
+                Section("What Pi Is Told") {
+                    Text(tool.description)
+                        .font(.callout)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+enum ToolPolicy {
+    static let all = ["auto", "ask", "deny"]
+
+    static func name(_ policy: String) -> String {
+        switch policy {
+        case "auto": "Allow"
+        case "ask": "Ask"
+        case "deny": "Never"
+        default: policy
+        }
+    }
+
+    static func explanation(_ policy: String) -> String {
+        switch policy {
+        case "auto": "Pi runs this tool without asking."
+        case "ask": "Pi pauses the conversation until you allow or deny each call."
+        case "deny": "Pi can’t use this tool: a call is refused, and Pi is told you turned it off."
+        default: ""
         }
     }
 }
