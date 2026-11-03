@@ -28,6 +28,7 @@ final class CalendarTools: @unchecked Sendable {
         let includeCompleted: Bool?
         let dueBefore: String?
         let list: String?
+        let listId: String?
         let limit: Int?
     }
 
@@ -36,10 +37,95 @@ final class CalendarTools: @unchecked Sendable {
         /// A date-time (due then, with an alert) or a bare date (due that day, no alert).
         let due: String?
         let list: String?
+        let listId: String?
         let notes: String?
         let priority: String?
         /// From the tool task's ID, as for events.
         let idempotencyKey: String
+    }
+
+    struct UpdateReminderArguments: Decodable {
+        let id: String
+        let title: String?
+        let notes: String?
+        let priority: String?
+        let due: String?
+        let clearDue: Bool?
+        let list: String?
+        let listId: String?
+    }
+
+    /// Resolve exactly one list. Never silently pick an account when titles collide.
+    static func resolveList(name: String?, id: String?, in lists: [EKCalendar]) throws -> EKCalendar? {
+        guard name == nil || id == nil else { throw AppleToolError("Use either list or listId, not both") }
+        guard name != nil || id != nil else { return nil }
+        let matches = lists.filter { calendar in
+            if let id { return calendar.calendarIdentifier == id }
+            return calendar.title.caseInsensitiveCompare(name!) == .orderedSame
+        }
+        guard matches.count == 1 else {
+            throw AppleToolError(matches.isEmpty ? "Reminder list not found. Call reminders_lists for current IDs." : "Multiple lists have that name. Call reminders_lists and use listId.")
+        }
+        return matches[0]
+    }
+
+    func reminderLists() async throws -> [String: Any] {
+        try await requireAccess(.reminder)
+        let defaultID = store.defaultCalendarForNewReminders()?.calendarIdentifier
+        let lists = store.calendars(for: .reminder).map { calendar -> [String: Any] in
+            ["id": calendar.calendarIdentifier, "title": calendar.title,
+             "account": calendar.source?.title ?? "", "writable": calendar.allowsContentModifications,
+             "isDefault": calendar.calendarIdentifier == defaultID]
+        }
+        return ["lists": lists]
+    }
+
+    func updateReminder(_ args: UpdateReminderArguments) async throws -> [String: Any] {
+        try await requireAccess(.reminder)
+        guard let reminder = store.calendarItem(withIdentifier: args.id) as? EKReminder else {
+            throw AppleToolError("Reminder not found. Call reminders_query for current IDs.")
+        }
+        guard reminder.calendar.allowsContentModifications else { throw AppleToolError("The source list is read-only") }
+        let destination = try Self.resolveList(name: args.list, id: args.listId, in: store.calendars(for: .reminder))
+        if let destination, !destination.allowsContentModifications { throw AppleToolError("The destination list is read-only") }
+        // Roll back cached edits if validation or EventKit saving fails.
+        do {
+            try Self.applyUpdate(args, to: reminder, destination: destination)
+            try store.save(reminder, commit: true)
+        } catch {
+            store.reset()
+            throw error
+        }
+        return ["updated": true, "reminder": describe(reminder)]
+    }
+
+    static func applyUpdate(_ args: UpdateReminderArguments, to reminder: EKReminder, destination: EKCalendar?) throws {
+        guard args.title != nil || args.notes != nil || args.priority != nil || args.due != nil || args.clearDue == true || destination != nil else {
+            throw AppleToolError("Supply at least one field to update")
+        }
+        guard args.due == nil || args.clearDue != true else { throw AppleToolError("Use due or clearDue, not both") }
+        if let title = args.title, title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            throw AppleToolError("title must not be empty")
+        }
+        let priorities = ["none": 0, "high": 1, "medium": 5, "low": 9]
+        if let priority = args.priority, priorities[priority] == nil { throw AppleToolError("Invalid priority") }
+        let dueDate = try args.due.map { try ISODate.parse($0, field: "due") }
+        // Validate everything before changing the cached EventKit object. Preserve URL (creation deduplication),
+        // recurrence and any other fields the caller did not supply.
+        if let title = args.title { reminder.title = title }
+        if let notes = args.notes { reminder.notes = notes }
+        if let priority = args.priority { reminder.priority = priorities[priority]! }
+        if let destination { reminder.calendar = destination }
+        if args.clearDue == true || dueDate != nil {
+            reminder.alarms = reminder.alarms?.filter { $0.structuredLocation != nil }
+            reminder.dueDateComponents = nil
+            if let dueDate {
+                let dateOnly = args.due!.count == 10
+                let components: Set<Calendar.Component> = dateOnly ? [.year, .month, .day] : [.year, .month, .day, .hour, .minute, .timeZone]
+                reminder.dueDateComponents = Calendar.current.dateComponents(components, from: dueDate)
+                if !dateOnly { reminder.addAlarm(EKAlarm(absoluteDate: dueDate)) }
+            }
+        }
     }
 
     struct CompleteReminderArguments: Decodable {
@@ -100,16 +186,13 @@ final class CalendarTools: @unchecked Sendable {
             return ["created": false, "alreadyExisted": true, "reminder": describe(existing)]
         }
         let calendar: EKCalendar
-        if let list = args.list, !list.isEmpty {
-            let lists = store.calendars(for: .reminder)
-            guard let match = lists.first(where: { $0.title.lowercased() == list.lowercased() }) else {
-                throw AppleToolError("No reminder list named \(list). Lists: \(lists.map(\.title).joined(separator: ", "))")
-            }
-            calendar = match
+        if let selected = try Self.resolveList(name: args.list, id: args.listId, in: store.calendars(for: .reminder)) {
+            calendar = selected
         } else {
             guard let fallback = store.defaultCalendarForNewReminders() else { throw AppleToolError("There is no default list for new reminders") }
             calendar = fallback
         }
+        guard calendar.allowsContentModifications else { throw AppleToolError("The list is read-only") }
         let priorities = ["none": 0, "high": 1, "medium": 5, "low": 9]
         guard let priority = priorities[args.priority ?? "none"] else { throw AppleToolError("priority must be none, low, medium or high") }
         let reminder = EKReminder(eventStore: store)
@@ -147,12 +230,8 @@ final class CalendarTools: @unchecked Sendable {
     func reminders(_ args: ReminderArguments) async throws -> [String: Any] {
         try await requireAccess(.reminder)
         var calendars = store.calendars(for: .reminder)
-        if let list = args.list?.lowercased(), !list.isEmpty {
-            calendars = calendars.filter { $0.title.lowercased() == list }
-            guard !calendars.isEmpty else {
-                let names = store.calendars(for: .reminder).map(\.title)
-                throw AppleToolError("No reminder list named \(args.list!). Lists: \(names.joined(separator: ", "))")
-            }
+        if let selected = try Self.resolveList(name: args.list, id: args.listId, in: calendars) {
+            calendars = [selected]
         }
         let dueBefore = try args.dueBefore.map { try ISODate.parse($0, field: "dueBefore") }
         let predicate = args.includeCompleted == true
@@ -185,6 +264,7 @@ final class CalendarTools: @unchecked Sendable {
             "title": reminder.title ?? "",
             "completed": reminder.isCompleted,
             "list": reminder.calendar?.title ?? "",
+            "listId": reminder.calendar?.calendarIdentifier ?? "",
             "priority": reminder.priority,
         ]
         if let due = reminder.dueDateComponents, let date = Calendar.current.date(from: due) { item["due"] = ISODate.format(date) }

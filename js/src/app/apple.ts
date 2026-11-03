@@ -32,7 +32,8 @@ const remindersQuery = defineTool({
 	parameters: obj({
 		includeCompleted: opt(bool()),
 		dueBefore: opt(isoDate("Only reminders due before this")),
-		list: opt(str({ description: "Reminder list name" })),
+		list: opt(str({ description: "Exact reminder list name; use listId when names are ambiguous" })),
+		listId: opt(str({ description: "List ID from reminders_lists; use either list or listId" })),
 		limit: opt(num({ description: "Maximum reminders to return (default 50)" })),
 	}),
 	replay: "safe",
@@ -63,13 +64,39 @@ const remindersCreate = defineTool({
 		due: opt(
 			str({ description: "When it is due: an ISO 8601 date-time with a UTC offset (alerts then), or a date YYYY-MM-DD (no alert)" }),
 		),
-		list: opt(str({ description: "Reminder list name" })),
+		list: opt(str({ description: "Exact reminder list name; use listId when names are ambiguous" })),
+		listId: opt(str({ description: "List ID from reminders_lists; use either list or listId" })),
 		notes: opt(str()),
 		priority: opt(union([lit("none"), lit("low"), lit("medium"), lit("high")])),
 	}),
 	replay: "safe",
 	execute: async (args, api, context) =>
 		json(await hostCall("reminders.create", { ...args, idempotencyKey: `task-${api.taskId}` }, context.abortSignal)),
+});
+
+const remindersLists = defineTool({
+	name: "reminders_lists",
+	description: "List Apple Reminders lists with IDs, account names and whether they are writable. Use IDs to distinguish lists with the same name.",
+	parameters: obj({}),
+	replay: "safe",
+	execute: async (args, _api, context) => json(await hostCall("reminders.lists", args, context.abortSignal)),
+});
+
+const remindersUpdate = defineTool({
+	name: "reminders_update",
+	description: "Edit a reminder or move it to an existing list. First query the source list for current reminder IDs; use reminders_lists for destination list IDs. Omitted fields stay unchanged; notes: empty string clears notes. Setting due replaces time-based alarms (date-time adds one, date-only adds none); clearDue removes the deadline and time-based alarms. Location alarms are preserved. Cannot reorder reminders within a list. Requires approval by default. If interrupted, query again to check whether the change took effect before retrying.",
+	parameters: obj({
+		id: str({ description: "Current reminder ID from reminders_query" }),
+		title: opt(str()),
+		notes: opt(str()),
+		priority: opt(union([lit("none"), lit("low"), lit("medium"), lit("high")])),
+		due: opt(str({ description: "ISO 8601 date-time with UTC offset, or YYYY-MM-DD" })),
+		clearDue: opt(bool()),
+		list: opt(str({ description: "Destination list's exact name; use either list or listId" })),
+		listId: opt(str({ description: "Destination list ID from reminders_lists" })),
+	}),
+	// A move may change the EventKit identifier. Do not blindly replay after an interrupted save.
+	execute: async (args, _api, context) => json(await hostCall("reminders.update", args, context.abortSignal)),
 });
 
 const remindersComplete = defineTool({
@@ -158,7 +185,7 @@ const contextSection = section("context", () => {
 export const AppleTools = defineExtension({
 	name: "apple",
 	sections: [contextSection],
-	tools: [currentTime, locationCurrent, calendarQuery, remindersQuery, calendarCreateEvent, remindersCreate, remindersComplete, healthQuery],
+	tools: [currentTime, locationCurrent, calendarQuery, remindersQuery, calendarCreateEvent, remindersCreate, remindersLists, remindersUpdate, remindersComplete, healthQuery],
 });
 
 /** Tool names with what they do, for the approval settings screen. */
