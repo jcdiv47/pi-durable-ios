@@ -197,6 +197,8 @@ struct ConversationListView: View {
                 }
             }
             .listStyle(.insetGrouped)
+            // Approvals are occasional; without this the rows below jump by a section's height.
+            .animation(.snappy, value: store.approvals.map(\.id))
         }
     }
 }

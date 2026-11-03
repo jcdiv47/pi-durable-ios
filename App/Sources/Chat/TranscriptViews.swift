@@ -277,6 +277,7 @@ struct LiveView: View {
 struct LiveStatusRow: View {
     let state: ConversationState
     let store: ChatStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let approval = store.approvals.first { $0.conversationId == state.id }
@@ -284,7 +285,7 @@ struct LiveStatusRow: View {
         HStack(spacing: 10) {
             Image(systemName: approval != nil ? "hand.raised.fill" : status.symbol)
                 .foregroundStyle(approval != nil ? AnyShapeStyle(.orange) : AnyShapeStyle(.tint))
-                .symbolEffect(.pulse, isActive: approval == nil)
+                .symbolEffect(.pulse, isActive: approval == nil && !reduceMotion)
                 .frame(width: 22)
             Text(approval != nil ? "Waiting for you" : status.status.replacingOccurrences(of: "…", with: ""))
                 .lineLimit(1)

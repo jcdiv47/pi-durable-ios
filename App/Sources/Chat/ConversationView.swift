@@ -6,6 +6,7 @@ struct ConversationView: View {
     @Bindable var store: ChatStore
     let conversationId: Int
     @Binding var path: [Route]
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var draft = ""
     /// Photos, camera shots and files for the next message.
     @State private var attachments: [Attachment] = []
@@ -407,7 +408,7 @@ struct ConversationView: View {
             }
         }
         .glassEffect(.regular, in: .rect(cornerRadius: 20))
-        .transition(.move(edge: .bottom).combined(with: .opacity))
+        .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
     }
 
     private func act(on message: QueuedMessage, _ action: @escaping () async -> Void) {
