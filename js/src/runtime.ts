@@ -17,6 +17,7 @@ import { AppleTools, appleToolInfo } from "./app/apple.ts";
 import { Approvals, type Decision, defaultPolicies, type ToolPolicy } from "./app/approvals.ts";
 import type { InputAttachment } from "./app/attachments.ts";
 import { Chat, type OutsideInput, type WidgetAction } from "./app/chat.ts";
+import { McpHost, type McpServerConfig } from "./app/mcp.ts";
 import { type CustomProvider, ModelSetup } from "./app/models.ts";
 import { answerText, ScheduleTools, scheduleToolInfo } from "./app/schedule.ts";
 import { SurfaceTools, surfaceToolInfo } from "./app/surfaces.ts";
@@ -43,6 +44,8 @@ export interface OpenOptions {
 	/** Where `web_search` searches: Settings › Web search. */
 	readonly searchProvider?: SearchProviderId;
 	readonly policies?: Record<string, ToolPolicy>;
+	/** Settings › MCP servers as JSON text (`McpServerConfig[]`), with each server's cached tool list. */
+	readonly mcpServers?: string;
 	/** Milliseconds the kill test's tools take. */
 	readonly toolMs?: number;
 }
@@ -53,6 +56,8 @@ let chat: Chat | undefined;
 const setup = new ModelSetup();
 webSettings.keyed = (service) => setup.keyed.has(service);
 const approvals = new Approvals((pending) => emit({ type: "approvals", pending }));
+const mcp = new McpHost(undefined, (statuses) => emit({ type: "mcp", statuses }));
+approvals.dynamicDefaults = () => mcp.defaultPolicies();
 let wakeTimer: ReturnType<typeof setTimeout> | undefined;
 
 /**
@@ -80,6 +85,9 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 	registry.install(AppleTools);
 	registry.install(SurfaceTools);
 	registry.install(WebTools);
+	// From the cached tool lists, so a call a crash interrupted finds its tool before any server answers.
+	mcp.install = (extension) => registry.install(extension);
+	mcp.setServers(parseServers(options.mcpServers));
 	const scheduleTools = ScheduleTools((taskId) => requireOpen().harness.abortTask(taskId as never, context));
 	registry.install(scheduleTools);
 	registry.install(approvalGate);
@@ -103,7 +111,7 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 	root = await harness.root(context, {
 		agent: { model: { provider: options.provider, modelId: options.modelId }, extensions: [KillTestTools(0)] },
 	});
-	chat = new Chat(harness, approvals, [AppleTools, SurfaceTools, WebTools, scheduleTools, approvalGate], emit, (model, level) =>
+	chat = new Chat(harness, approvals, [AppleTools, SurfaceTools, WebTools, mcp.extension, scheduleTools, approvalGate], emit, (model, level) =>
 		setup.clampThinking(model, level),
 	);
 	await chat.upgrade();
@@ -122,7 +130,15 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 		rootMs: performance.now() - tHarness,
 	});
 	harness.resume();
+	// Fresh tool lists; Swift caches what comes back (`mcp` events).
+	void mcp.refresh();
 	return { openMs: performance.now() - t0, rootId: root.id, wake };
+}
+
+function parseServers(json: string | undefined): McpServerConfig[] {
+	if (json === undefined || json === "") return [];
+	const parsed = JSON.parse(json) as unknown;
+	return Array.isArray(parsed) ? (parsed as McpServerConfig[]) : [];
 }
 
 /** Keys or the custom endpoint changed in Settings; applies from the next request. */
@@ -319,7 +335,10 @@ const app = {
 	answerApproval: async (id: number, decision: Decision) => requireChat().answerApproval(id, decision),
 	setPolicies: async (policies: Record<string, ToolPolicy>) => requireChat().setPolicies(policies),
 	tools: async () =>
-		[...appleToolInfo, ...webToolInfo, ...surfaceToolInfo, ...scheduleToolInfo].map((tool) => ({ ...tool, policy: approvals.policy(tool.name) })),
+		[...appleToolInfo, ...webToolInfo, ...surfaceToolInfo, ...scheduleToolInfo, ...mcp.toolInfo()].map((tool) => ({
+			...tool,
+			policy: approvals.policy(tool.name),
+		})),
 	surfaces: (conversationId: number) => requireChat().surfaces(conversationId),
 	publishedSurfaces: () => requireChat().published(),
 	unpublishSurface: (publishedId: string) => requireChat().unpublish(publishedId),
@@ -329,6 +348,11 @@ const app = {
 		webSettings.provider = provider;
 	},
 	models: async () => setup.available(),
+	// Settings › MCP servers: the list changed (JSON text, as in `open`). Swift then calls `refreshMcp` for the server.
+	setMcpServers: async (json: string) => mcp.setServers(parseServers(json)),
+	/** Lists the tools of every enabled server (or those in `ids`) again; returns their statuses. */
+	refreshMcp: (ids?: string[]) => mcp.refresh(ids),
+	mcpStatuses: async () => mcp.statuses(),
 	usage: async () => JSON.parse(JSON.stringify(await requireOpen().harness.usage(context))),
 	// Entry points outside the chat (App Intents, widget buttons, notification actions); each carries a request ID.
 	askFromOutside: (input: OutsideInput) => requireChat().ask(input),

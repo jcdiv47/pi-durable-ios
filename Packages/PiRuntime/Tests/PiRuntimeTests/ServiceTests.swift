@@ -3,7 +3,7 @@ import Testing
 @testable import PiRuntime
 
 private struct FixedKeys: ProviderKeySource {
-    func apiKey(for provider: String) -> String? { ["brave": "BRAVE/KEY=1", "deepseek": "sk-test"][provider] }
+    func apiKey(for provider: String) -> String? { ["brave": "BRAVE/KEY=1", "deepseek": "sk-test", "mcp-ha": "ha-token"][provider] }
 }
 
 struct ServiceTests {
@@ -33,6 +33,24 @@ struct ServiceTests {
         #expect(try ProviderKeys.substitute(url: untouched, keys: FixedKeys(), used: &used) == untouched)
         #expect(throws: (any Error).self) {
             try ProviderKeys.substitute(url: URL(string: "https://evil.example/?key=pi-host-key%3Abrave")!, keys: FixedKeys(), used: &used)
+        }
+    }
+
+    @Test("An MCP server's token goes only to the host saved for it in Settings")
+    func mcpHost() throws {
+        ProviderKeys.setMCPHosts(["ha": "100.64.0.2"])
+        defer { ProviderKeys.setMCPHosts([:]) }
+        var used = Set<String>()
+        #expect(try ProviderKeys.substitute("Bearer pi-host-key:mcp-ha", host: "100.64.0.2", keys: FixedKeys(), used: &used) == "Bearer ha-token")
+        #expect(throws: (any Error).self) {
+            try ProviderKeys.substitute("Bearer pi-host-key:mcp-ha", host: "evil.example", keys: FixedKeys(), used: &used)
+        }
+        #expect(throws: (any Error).self, "a server with no saved host") {
+            try ProviderKeys.substitute("Bearer pi-host-key:mcp-nas", host: "100.64.0.2", keys: FixedKeys(), used: &used)
+        }
+        ProviderKeys.setMCPHosts([:])
+        #expect(throws: (any Error).self, "a removed server") {
+            try ProviderKeys.substitute("Bearer pi-host-key:mcp-ha", host: "100.64.0.2", keys: FixedKeys(), used: &used)
         }
     }
 

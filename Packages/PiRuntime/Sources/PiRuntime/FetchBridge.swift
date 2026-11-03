@@ -30,14 +30,28 @@ public enum ProviderKeys {
     ]
 
     private static let customHost = OSAllocatedUnfairLock<String?>(initialState: nil)
+    private static let mcpHosts = OSAllocatedUnfairLock<[String: String]>(initialState: [:])
+
+    /// The key prefix of MCP servers' tokens: server `ha`'s is the Keychain item and placeholder `mcp-ha`.
+    public static let mcpPrefix = "mcp-"
 
     /// The host of the user's OpenAI-compatible endpoint, the only host the `custom` key may be sent to.
     public static func setCustomHost(_ host: String?) {
         customHost.withLock { $0 = host?.lowercased() }
     }
 
+    /// The host of each MCP server the user added in Settings, by server ID (docs/adr/0006-mcp-servers.md). A
+    /// server's token (`mcp-<id>`) may be sent only to its own host. Set from Swift only; JS cannot add a host.
+    public static func setMCPHosts(_ hosts: [String: String]) {
+        mcpHosts.withLock { $0 = hosts.mapValues { $0.lowercased() } }
+    }
+
     static func hosts(for provider: String) -> Set<String> {
         if provider == "custom" { return customHost.withLock { $0.map { [$0] } ?? [] } }
+        if provider.hasPrefix(mcpPrefix) {
+            let id = String(provider.dropFirst(mcpPrefix.count))
+            return mcpHosts.withLock { $0[id].map { [$0] } ?? [] }
+        }
         return allowedHosts[provider] ?? []
     }
 

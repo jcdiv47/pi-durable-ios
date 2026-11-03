@@ -49,6 +49,12 @@ final class ChatStore {
     private(set) var tools: [ToolInfo] = []
     private(set) var tasks: [TaskInfo] = []
     private(set) var keyedProviders: Set<String> = []
+    /// Settings › MCP servers, with each server's cached tool list (docs/adr/0006-mcp-servers.md).
+    private(set) var mcpServers: [MCPServer] = MCPServerFile.load()
+    /// Each server's state since this process last talked to it, by server ID.
+    private(set) var mcpStatuses: [String: MCPStatus] = [:]
+    /// Whether a VPN tunnel looked up when the app last came to the foreground (`VPNStatus`).
+    private(set) var vpnUp = VPNStatus.tunnelUp()
     /// Surfaces on the Home Screen and Lock Screen.
     private(set) var published: [PublishedEntry] = []
     private(set) var schedules: [ScheduleEntry] = []
@@ -135,6 +141,7 @@ final class ChatStore {
         openLinksInApp = settings.object(forKey: "openLinksInApp") as? Bool ?? true
         custom = settings.data(forKey: "customProvider").flatMap { try? JSONDecoder().decode(PiHarness.CustomProvider.self, from: $0) }
         ProviderKeys.setCustomHost(custom.flatMap { URL(string: $0.baseUrl)?.host() })
+        ProviderKeys.setMCPHosts(Self.mcpHosts(mcpServers))
         dial = settings.data(forKey: Self.dialKey).flatMap { try? JSONDecoder().decode(GenerativityDial.self, from: $0) } ?? GenerativityDial()
         surfaceHost = SurfaceHost(
             native: native,
@@ -184,7 +191,7 @@ final class ChatStore {
 
     private func start() async {
         importKeysIfPresent()
-        keyedProviders = Set((Self.providers + Self.services).map(\.id).filter { keys.hasKey(for: $0) })
+        keyedProviders = Set(((Self.providers + Self.services).map(\.id) + mcpServers.map(\.keyName)).filter { keys.hasKey(for: $0) })
         do {
             let directory = try SharedContainer.directory("pi")
             let tools = appleTools
@@ -213,7 +220,8 @@ final class ChatStore {
                 keyedProviders: Array(keyedProviders),
                 customProvider: custom,
                 searchProvider: searchProvider,
-                policies: settings.dictionary(forKey: "toolPolicies") as? [String: String]
+                policies: settings.dictionary(forKey: "toolPolicies") as? [String: String],
+                mcpServers: mcpServersJSON
             ))
             self.harness = harness
             conversations = try await harness.call("PiRuntime.conversations")
@@ -284,6 +292,8 @@ final class ChatStore {
             let info = (object?["info"]).flatMap { try? JSONSerialization.data(withJSONObject: $0) }.map { String(decoding: $0, as: UTF8.self) } ?? ""
             diagnostics.record("warn", "report", "\(object?["error"] as? String ?? "?") \(info)")
             Task { await refreshTasks() }
+        case "mcp":
+            if let event = try? decoder.decode(MCPEvent.self, from: data) { mcpChanged(event.statuses) }
         case "wake":
             guard let wake = try? decoder.decode(WakeEvent.self, from: data).wake else { return }
             // Active/idle flips with every run; only sleep deadlines are worth a line.
@@ -299,6 +309,7 @@ final class ChatStore {
     private struct ConversationsEvent: Decodable { let items: [ConversationMeta]; let archived: [ConversationMeta] }
     private struct ApprovalsEvent: Decodable { let pending: [ApprovalRequest] }
     private struct WakeEvent: Decodable { let wake: BackgroundWork.Wake }
+    private struct MCPEvent: Decodable { let statuses: [MCPStatus] }
 
     // MARK: Conversations
 
@@ -480,7 +491,8 @@ final class ChatStore {
 
     func setPolicy(_ policy: String, for tool: String) async {
         guard let harness else { return }
-        var policies = Dictionary(uniqueKeysWithValues: tools.map { ($0.name, $0.policy) })
+        // Only the user's choices: tools not listed now (a server turned off) keep theirs; the rest keep their defaults.
+        var policies = settings.dictionary(forKey: "toolPolicies") as? [String: String] ?? [:]
         policies[tool] = policy
         settings.set(policies, forKey: "toolPolicies")
         do {
@@ -538,6 +550,126 @@ final class ChatStore {
     func refreshModels() async {
         guard let harness else { return }
         do { models = try await harness.call("PiRuntime.models") } catch { report("models", error) }
+    }
+
+    // MARK: MCP servers
+
+    private static func mcpHosts(_ servers: [MCPServer]) -> [String: String] {
+        var hosts: [String: String] = [:]
+        for server in servers where server.authHeader != nil { hosts[server.id] = server.host }
+        return hosts
+    }
+
+    private var mcpServersJSON: String { JSONValue.array(mcpServers.map(\.config)).jsonText }
+
+    /// A warning for the chat when VPN-only servers can't be reached, or nil.
+    var mcpWarning: String? {
+        let unreachable = mcpServers.filter { $0.enabled && $0.needsVpn && mcpStatuses[$0.id]?.state == "unreachable" }
+        guard !unreachable.isEmpty else { return nil }
+        let names = ListFormatter.localizedString(byJoining: unreachable.map(\.name))
+        return vpnUp ? "Can't reach \(names). Check that the VPN is connected." : "Can't reach \(names): the VPN looks off."
+    }
+
+    /// Adds or replaces a server. `token`: a new token for the Keychain; nil keeps the saved one. Returns the server's
+    /// status once Pi has talked to it.
+    @discardableResult
+    func saveMCPServer(_ server: MCPServer, token: String?) async -> MCPStatus? {
+        if let token = token?.trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty {
+            do {
+                try keys.setKey(token, for: server.keyName)
+                keyedProviders.insert(server.keyName)
+            } catch {
+                report("save MCP token", error)
+            }
+        }
+        if server.authHeader == nil {
+            try? keys.removeKey(for: server.keyName)
+            keyedProviders.remove(server.keyName)
+        }
+        let previous = mcpServers.first { $0.id == server.id }
+        var server = server
+        // A new address may serve other tools; keep the old list only while it is the same server.
+        if previous?.url != server.url { server.tools = nil; server.instructions = nil; server.serverName = nil }
+        if let index = mcpServers.firstIndex(where: { $0.id == server.id }) { mcpServers[index] = server } else { mcpServers.append(server) }
+        await applyMCPServers()
+        // A changed token alone does not make JS reconnect.
+        guard server.enabled else { return nil }
+        await refreshMCP([server.id])
+        return mcpStatuses[server.id]
+    }
+
+    func removeMCPServer(_ id: String) async {
+        guard let server = mcpServers.first(where: { $0.id == id }) else { return }
+        try? keys.removeKey(for: server.keyName)
+        keyedProviders.remove(server.keyName)
+        mcpServers.removeAll { $0.id == id }
+        mcpStatuses[id] = nil
+        // A later server given the same id must not inherit these choices.
+        if var policies = settings.dictionary(forKey: "toolPolicies") as? [String: String] {
+            policies = policies.filter { !$0.key.hasPrefix("mcp__\(id)__") }
+            settings.set(policies, forKey: "toolPolicies")
+            try? await harness?.perform("PiRuntime.setPolicies", [policies])
+        }
+        await applyMCPServers()
+    }
+
+    /// Saves the list, opens the hosts' tokens to them, and hands the list to JS, which rebuilds the `mcp` tools.
+    private func applyMCPServers() async {
+        do { try MCPServerFile.save(mcpServers) } catch { report("save MCP servers", error) }
+        ProviderKeys.setMCPHosts(Self.mcpHosts(mcpServers))
+        guard let harness else { return }
+        do {
+            try await harness.perform("PiRuntime.setMcpServers", [mcpServersJSON])
+            await refreshTools()
+        } catch {
+            report("MCP servers", error)
+        }
+    }
+
+    /// Asks enabled servers (or those in `ids`) for their tools again; statuses arrive as `mcp` events too.
+    func refreshMCP(_ ids: [String]? = nil) async {
+        vpnUp = VPNStatus.tunnelUp()
+        guard let harness, mcpServers.contains(where: \.enabled) else { return }
+        do {
+            let arguments: [any Sendable] = ids.map { [$0] } ?? []
+            let statuses: [MCPStatus] = try await harness.call("PiRuntime.refreshMcp", arguments)
+            mcpChanged(statuses)
+            await refreshTools()
+        } catch {
+            report("MCP refresh", error)
+        }
+    }
+
+    /// New statuses from JS: caches fresh tool lists, and while the app is away tells the user when a VPN-only server
+    /// can't be reached (a schedule ran without its tools).
+    private func mcpChanged(_ statuses: [MCPStatus]) {
+        var cached = false
+        for status in statuses {
+            let before = mcpStatuses[status.id]?.state
+            mcpStatuses[status.id] = status
+            guard let index = mcpServers.firstIndex(where: { $0.id == status.id }) else { continue }
+            if status.state == "ok", let tools = status.tools {
+                mcpServers[index].tools = tools
+                mcpServers[index].instructions = status.instructions
+                mcpServers[index].serverName = status.serverName
+                cached = true
+            }
+            if status.state != before, status.state != "ok" {
+                diagnostics.record("warn", "mcp", status.error ?? "\(mcpServers[index].name): \(status.state)")
+            }
+            let server = mcpServers[index]
+            if status.state == "unreachable", before != "unreachable", server.needsVpn,
+               UIApplication.shared.applicationState != .active {
+                vpnUp = VPNStatus.tunnelUp()
+                let body = vpnUp
+                    ? "Pi couldn't reach \(server.name). Check that the VPN is connected."
+                    : "Pi couldn't reach \(server.name) because the VPN looks off. Turn it on in sing-box."
+                Task { await notifications.postNotice(identifier: "mcp-unreachable-\(server.id)", title: "\(server.name) unreachable", body: body) }
+            }
+        }
+        if cached {
+            do { try MCPServerFile.save(mcpServers) } catch { report("save MCP servers", error) }
+        }
     }
 
     // MARK: Tasks
@@ -859,6 +991,9 @@ final class ChatStore {
             Task {
                 guard phase == .ready else { return }
                 await resumeWork()
+                // Back from elsewhere: the VPN may have changed, and servers their tools. Not awaited: an unreachable
+                // server takes seconds to time out.
+                Task { await self.refreshMCP() }
                 for request in PendingIntents.drain() { await perform(request) }
                 await receiveShares()
                 await refreshSchedules()

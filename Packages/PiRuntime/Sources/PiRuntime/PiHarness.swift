@@ -13,6 +13,9 @@ public final class PiHarness: Sendable {
         public var searchProvider: String?
         /// Approval policy per tool name: `auto`, `ask` or `deny`.
         public var policies: [String: String]?
+        /// Settings › MCP servers as JSON text: an array of servers with their cached tool lists (`McpServerConfig[]`
+        /// in `js/src/app/mcp.ts`). Text, because the tools' schemas are arbitrary JSON.
+        public var mcpServers: String?
         public var toolMs: Int?
 
         public init(
@@ -23,6 +26,7 @@ public final class PiHarness: Sendable {
             customProvider: CustomProvider? = nil,
             searchProvider: String? = nil,
             policies: [String: String]? = nil,
+            mcpServers: String? = nil,
             toolMs: Int? = nil
         ) {
             self.dbPath = dbPath
@@ -32,6 +36,7 @@ public final class PiHarness: Sendable {
             self.customProvider = customProvider
             self.searchProvider = searchProvider
             self.policies = policies
+            self.mcpServers = mcpServers
             self.toolMs = toolMs
         }
     }

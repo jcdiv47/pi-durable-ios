@@ -40,6 +40,8 @@ export class Approvals {
 	policies: Record<string, ToolPolicy> = { ...defaultPolicies };
 	/** Per tool: calls its policy "ask" lets run without asking. */
 	trusted: Record<string, TrustCheck> = {};
+	/** Defaults of tools that come and go (MCP servers' tools), for those without a stored policy. */
+	dynamicDefaults: () => Record<string, ToolPolicy> = () => ({});
 	readonly #waiting = new Map<number, { request: ApprovalRequest; answer: (decision: Decision) => void }>();
 	/**
 	 * Answers that came before their request: a notification action launches the app, and its answer can arrive
@@ -50,7 +52,7 @@ export class Approvals {
 	constructor(private readonly changed: (pending: ApprovalRequest[]) => void) {}
 
 	policy(tool: string): ToolPolicy {
-		return this.policies[tool] ?? "auto";
+		return this.policies[tool] ?? this.dynamicDefaults()[tool] ?? "auto";
 	}
 
 	pending(): ApprovalRequest[] {
