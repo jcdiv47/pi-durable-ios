@@ -116,8 +116,8 @@ struct ConversationListView: View {
                 Menu {
                     Button("Widgets", systemImage: "square.grid.2x2") { path.append(.surfaces) }
                     Button("Scheduled Tasks", systemImage: "clock.arrow.circlepath") { path.append(.schedules) }
+                    Divider()
                     Button("Settings", systemImage: "gearshape") { path.append(.settings) }
-                    Button("Diagnostics", systemImage: "stethoscope") { path.append(.diagnostics) }
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }
