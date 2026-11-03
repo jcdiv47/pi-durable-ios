@@ -3,6 +3,7 @@ import SwiftUI
 enum Route: Hashable {
     case conversation(Int)
     case settings
+    case archived
     case diagnostics
     case surfaces
     case surface(String)
@@ -38,6 +39,7 @@ struct ChatRootView: View {
                     switch route {
                     case let .conversation(id): ConversationView(store: store, conversationId: id, path: $path)
                     case .settings: SettingsView(store: store)
+                    case .archived: ArchivedConversationsView(store: store)
                     case .diagnostics: DiagnosticsView(store: store)
                     case .surfaces: SurfacesView(store: store, path: $path)
                     case let .surface(publishedId): SurfaceDetailView(store: store, publishedId: publishedId, path: $path)
@@ -122,13 +124,7 @@ struct ConversationListView: View {
                 .accessibilityLabel("More")
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    if let unused = store.unusedConversation {
-                        path.append(.conversation(unused.id))
-                    } else {
-                        Task { if let meta = await store.newConversation() { path.append(.conversation(meta.id)) } }
-                    }
-                } label: {
+                Button(action: compose) {
                     Image(systemName: "square.and.pencil")
                 }
                 .accessibilityLabel("New conversation")
@@ -144,16 +140,23 @@ struct ConversationListView: View {
         }
     }
 
+    /// Opens the unused conversation if there is one; a new one stays out of the list until something is sent in it.
+    private func compose() {
+        if let unused = store.unusedConversation {
+            path.append(.conversation(unused.id))
+        } else {
+            Task { if let meta = await store.newConversation() { path.append(.conversation(meta.id)) } }
+        }
+    }
+
     @ViewBuilder private var list: some View {
-        if store.conversations.isEmpty {
+        if store.startedConversations.isEmpty {
             ContentUnavailableView {
                 Label("No conversations", systemImage: "bubble.left.and.bubble.right")
             } description: {
                 Text(store.models.count <= 1 ? "Add an API key in Settings, or try the offline demo model." : "Start one with the compose button.")
             } actions: {
-                Button("New conversation") {
-                    Task { if let meta = await store.newConversation() { path.append(.conversation(meta.id)) } }
-                }
+                Button("New conversation", action: compose)
                 .buttonStyle(.glassProminent)
             }
         } else {
@@ -170,22 +173,25 @@ struct ConversationListView: View {
                         }
                     }
                 }
-                ForEach(store.conversations) { meta in
+                ForEach(store.startedConversations) { meta in
                     NavigationLink(value: Route.conversation(meta.id)) {
                         ConversationRow(meta: meta, state: store.states[meta.id], unread: store.unreadConversations.contains(meta.id))
                     }
                     .swipeActions {
-                        Button("Delete", systemImage: "trash", role: .destructive) {
-                            Task { await store.remove(meta.id) }
+                        Button {
+                            Task { await store.archive(meta.id) }
+                        } label: {
+                            Label("Archive", systemImage: "archivebox").labelStyle(.iconOnly)
                         }
+                        .tint(.indigo)
                     }
                     .contextMenu {
                         Button("Rename", systemImage: "pencil") {
                             newTitle = meta.title
                             renaming = meta
                         }
-                        Button("Delete", systemImage: "trash", role: .destructive) {
-                            Task { await store.remove(meta.id) }
+                        Button("Archive", systemImage: "archivebox") {
+                            Task { await store.archive(meta.id) }
                         }
                     }
                 }
@@ -269,7 +275,7 @@ struct ApprovalSheet: View {
                     } icon: {
                         Image(systemName: "hand.raised.fill").foregroundStyle(.orange)
                     }
-                    Text(store.conversations.first { $0.id == request.conversationId }?.title ?? "Conversation \(request.conversationId)")
+                    Text(store.meta(request.conversationId)?.title ?? "Conversation \(request.conversationId)")
                         .foregroundStyle(.secondary)
                 }
                 if let surface {

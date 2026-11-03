@@ -64,7 +64,7 @@ final class SpotlightIndex {
     }
 
     private func run(_ store: ChatStore) async {
-        let conversations = store.conversations
+        let conversations = store.startedConversations
         let refresh = stale
         stale = []
         let changed = conversations.filter { refresh.contains($0.id) || indexed[String($0.id)] != $0.updatedAt }.prefix(40)
