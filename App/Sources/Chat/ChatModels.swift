@@ -15,8 +15,11 @@ struct ConversationMeta: Decodable, Identifiable, Hashable {
     let createdAt: Double
     let updatedAt: Double
     let forkOf: ForkOf?
+    /// Set while archived (Settings › Archived Conversations).
+    let archivedAt: Double?
 
     var updated: Date { Date(timeIntervalSince1970: updatedAt / 1000) }
+    var archived: Date? { archivedAt.map { Date(timeIntervalSince1970: $0 / 1000) } }
     /// Something was sent in it, or it is a fork. The compose button makes a conversation before its first message;
     /// until then the list, recents, Spotlight and Siri leave it out.
     var started: Bool { forkOf != nil || updatedAt != createdAt }

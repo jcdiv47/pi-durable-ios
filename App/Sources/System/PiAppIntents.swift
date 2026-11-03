@@ -225,7 +225,7 @@ enum AnswerResult {
         case "running": "Pi is still working on it. You'll get a notification with the answer."
         default: "Pi could not answer. Open the conversation in Pi to see why."
         }
-        let title = store.conversations.first { $0.id == answer.conversationId }?.title ?? "Pi"
+        let title = store.meta(answer.conversationId)?.title ?? "Pi"
         let dialog = String(text.prefix(280))
         // The dialog already shows (and speaks) a short answer; the snippet repeats only what it adds.
         let snippet = AnswerSnippet(title: title, text: dialog.count < text.count ? text : nil, surface: answer.surface?.parsed, data: store.surfaceData)

@@ -22,7 +22,7 @@ struct ConversationView: View {
     @State private var voice = VoiceInput()
 
     private var state: ConversationState { store.state(conversationId) }
-    private var meta: ConversationMeta? { store.conversations.first { $0.id == conversationId } }
+    private var meta: ConversationMeta? { store.meta(conversationId) }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -30,7 +30,7 @@ struct ConversationView: View {
                 // Not lazy: a LazyVStack's estimated row heights put the bottom anchor short of the end on open.
                 VStack(alignment: .leading, spacing: 12) {
                     if let fork = meta?.forkOf {
-                        Label("Forked from \(store.conversations.first { $0.id == fork.conversationId }?.title ?? "a conversation")", systemImage: "arrow.triangle.branch")
+                        Label("Forked from \(store.meta(fork.conversationId)?.title ?? "a conversation")", systemImage: "arrow.triangle.branch")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity)

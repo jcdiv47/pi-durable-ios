@@ -3,6 +3,7 @@ import SwiftUI
 enum Route: Hashable {
     case conversation(Int)
     case settings
+    case archived
     case diagnostics
     case surfaces
     case surface(String)
@@ -38,6 +39,7 @@ struct ChatRootView: View {
                     switch route {
                     case let .conversation(id): ConversationView(store: store, conversationId: id, path: $path)
                     case .settings: SettingsView(store: store)
+                    case .archived: ArchivedConversationsView(store: store)
                     case .diagnostics: DiagnosticsView(store: store)
                     case .surfaces: SurfacesView(store: store, path: $path)
                     case let .surface(publishedId): SurfaceDetailView(store: store, publishedId: publishedId, path: $path)
@@ -176,17 +178,20 @@ struct ConversationListView: View {
                         ConversationRow(meta: meta, state: store.states[meta.id], unread: store.unreadConversations.contains(meta.id))
                     }
                     .swipeActions {
-                        Button("Delete", systemImage: "trash", role: .destructive) {
-                            Task { await store.remove(meta.id) }
+                        Button {
+                            Task { await store.archive(meta.id) }
+                        } label: {
+                            Label("Archive", systemImage: "archivebox").labelStyle(.iconOnly)
                         }
+                        .tint(.indigo)
                     }
                     .contextMenu {
                         Button("Rename", systemImage: "pencil") {
                             newTitle = meta.title
                             renaming = meta
                         }
-                        Button("Delete", systemImage: "trash", role: .destructive) {
-                            Task { await store.remove(meta.id) }
+                        Button("Archive", systemImage: "archivebox") {
+                            Task { await store.archive(meta.id) }
                         }
                     }
                 }
@@ -270,7 +275,7 @@ struct ApprovalSheet: View {
                     } icon: {
                         Image(systemName: "hand.raised.fill").foregroundStyle(.orange)
                     }
-                    Text(store.conversations.first { $0.id == request.conversationId }?.title ?? "Conversation \(request.conversationId)")
+                    Text(store.meta(request.conversationId)?.title ?? "Conversation \(request.conversationId)")
                         .foregroundStyle(.secondary)
                 }
                 if let surface {

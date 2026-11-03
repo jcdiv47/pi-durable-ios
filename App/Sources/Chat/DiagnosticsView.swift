@@ -78,7 +78,7 @@ struct DiagnosticsView: View {
     }
 
     private func conversationTitle(_ id: Int) -> String {
-        store.conversations.first { $0.id == id }?.title ?? "conversation \(id)"
+        store.meta(id)?.title ?? "conversation \(id)"
     }
 
     private func icon(_ level: String) -> String {
