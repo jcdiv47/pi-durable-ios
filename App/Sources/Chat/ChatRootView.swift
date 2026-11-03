@@ -172,7 +172,7 @@ struct ConversationListView: View {
                 }
                 ForEach(store.conversations) { meta in
                     NavigationLink(value: Route.conversation(meta.id)) {
-                        ConversationRow(meta: meta, state: store.states[meta.id])
+                        ConversationRow(meta: meta, state: store.states[meta.id], unread: store.unreadConversations.contains(meta.id))
                     }
                     .swipeActions {
                         Button("Delete", systemImage: "trash", role: .destructive) {
@@ -198,6 +198,7 @@ struct ConversationListView: View {
 struct ConversationRow: View {
     let meta: ConversationMeta
     let state: ConversationState?
+    var unread = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -207,15 +208,47 @@ struct ConversationRow: View {
                 }
                 Text(meta.title).font(.headline).lineLimit(1)
                 Spacer()
-                if state?.live.busy == true {
-                    ProgressView().controlSize(.small)
-                }
             }
-            Text(meta.updated, format: .relative(presentation: .named))
+            if state?.live.busy == true {
+                ConversationWorkingStatus()
+            } else if unread {
+                HStack(spacing: 5) {
+                    Circle().fill(.blue).frame(width: 6, height: 6).accessibilityHidden(true)
+                    Text("New reply")
+                }
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("New reply, unread")
+            } else {
+                Text(meta.updated, format: .relative(presentation: .named))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(.vertical, 2)
+    }
+}
+
+private struct ConversationWorkingStatus: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(Color(red: 0.89, green: 0.49, blue: 0.44))
+                .frame(width: 6, height: 6)
+                .phaseAnimator(reduceMotion ? [false] : [false, true]) { dot, dimmed in
+                    dot.opacity(dimmed ? 0.4 : 1)
+                } animation: { _ in
+                    .easeInOut(duration: 1.2)
+                }
+                .accessibilityHidden(true)
+            Text("Working…")
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .accessibilityElement(children: .combine)
     }
 }
 

@@ -88,6 +88,7 @@ struct ConversationView: View {
             ToolbarItem(placement: .principal) { header }
         }
         .onAppear {
+            store.conversationAppeared(conversationId)
             store.watch(conversationId)
             // What was left here last time; a view that stayed alive under a pushed screen still holds it.
             if let kept = store.takeComposerDraft(conversationId), kept != .init(text: draft, attachments: attachments) {
@@ -96,6 +97,7 @@ struct ConversationView: View {
             }
         }
         .onDisappear {
+            store.conversationDisappeared(conversationId)
             voice.cancel()
             store.keepComposerDraft(.init(text: draft, attachments: attachments), for: conversationId)
         }

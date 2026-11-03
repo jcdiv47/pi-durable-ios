@@ -38,6 +38,10 @@ final class ChatStore {
     private(set) var phase = Phase.starting
     private(set) var conversations: [ConversationMeta] = []
     private(set) var states: [Int: ConversationState] = [:]
+    private(set) var unreadConversations: Set<Int> = [] {
+        didSet { settings.set(Array(unreadConversations).sorted(), forKey: "unreadConversations") }
+    }
+    private var visibleConversation: Int?
     private(set) var approvals: [ApprovalRequest] = []
     private(set) var models: [ModelInfo] = []
     private(set) var tools: [ToolInfo] = []
@@ -121,6 +125,7 @@ final class ChatStore {
     nonisolated static let logger = Logger(subsystem: "dev.pi.durable", category: "chat")
 
     init() {
+        unreadConversations = Set(settings.array(forKey: "unreadConversations") as? [Int] ?? [])
         let stored = settings.string(forKey: "defaultModel")?.split(separator: "/", maxSplits: 1).map(String.init)
         defaultModel = stored?.count == 2 ? ModelRef(provider: stored![0], modelId: stored![1]) : Self.offlineModel
         defaultThinking = settings.string(forKey: "defaultThinking") ?? "medium"
@@ -409,6 +414,7 @@ final class ChatStore {
             try await harness.perform("PiRuntime.removeConversation", [id])
             watched.remove(id)
             states[id] = nil
+            unreadConversations.remove(id)
         } catch {
             report("remove", error)
         }
@@ -790,12 +796,29 @@ final class ChatStore {
 
     /// A watched run ended. While the app is away, its answer becomes a notification.
     private func runEnded(_ conversation: ConversationState) {
+        // An abort before the model responds must not badge the previous turn's answer.
+        if let answerIndex = conversation.items.lastIndex(where: { $0.kind == .assistant }),
+           answerIndex > (conversation.items.lastIndex(where: { $0.kind == .user }) ?? -1),
+           let stopReason = conversation.items[answerIndex].stopReason,
+           !["toolUse", "aborted", "error"].contains(stopReason),
+           visibleConversation != conversation.id || UIApplication.shared.applicationState != .active {
+            unreadConversations.insert(conversation.id)
+        }
         guard UIApplication.shared.applicationState != .active,
               let answer = conversation.items.last(where: { $0.kind == .assistant }), answer.stopReason != "aborted"
         else { return }
         let title = conversations.first { $0.id == conversation.id }?.title ?? "Pi"
         let text = answer.stopReason == "error" ? "The run failed: \(answer.error ?? "model error")" : answer.text ?? ""
         Task { await notifications.postAnswer(conversationId: conversation.id, entryId: answer.id, title: title, text: text) }
+    }
+
+    func conversationAppeared(_ id: Int) {
+        visibleConversation = id
+        if UIApplication.shared.applicationState == .active { unreadConversations.remove(id) }
+    }
+
+    func conversationDisappeared(_ id: Int) {
+        if visibleConversation == id { visibleConversation = nil }
     }
 
     func scenePhaseChanged(from old: ScenePhase, to new: ScenePhase) {
@@ -813,6 +836,7 @@ final class ChatStore {
                 }
             }
         case .active:
+            if let visibleConversation { unreadConversations.remove(visibleConversation) }
             background.enteredForeground()
             // Cards on screen show reminders and colors as they are now: they may have changed, or access been granted.
             if listColors != nil { listColors = nil; loadListColors() }
