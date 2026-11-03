@@ -17,6 +17,8 @@ decisions that change the spec go in `docs/adr/`.
   records, and OpenAI's transcription (`gpt-transcribe`, the `openai` provider key, sent from Swift) fills the field.
   Links go through the root's `openURL` action: with Settings › Links on Pi, web links push `Route.browser`
   (`BrowserView`, a SwiftUI `WebPage`), so the stack's edge swipe returns to the chat.
+  Settings › MCP servers (`MCPSettingsView`, `MCPServers`): the user's MCP servers, kept in Swift with their cached
+  tool lists (Application Support `mcp-servers.json`), the VPN hint (`VPNStatus`) and the chat's warning banner.
   `App/Sources/M0/`: the headless check modes.
 - `App/Sources/System/`: M3's system integration: App Intents, entities, Siri phrases and snippets
   (`PiAppIntents`), BackgroundTasks from `onWake` (`BackgroundWork`), notifications with actions (`Notifications`),
@@ -46,7 +48,8 @@ decisions that change the spec go in `docs/adr/`.
   resources. `src/app/` is the chat API Swift calls (`PiRuntime.*`): conversations, display frames,
   providers, the Apple tool stubs, the UI tools (`surfaces.ts`: specs in Pi documents, JSON Patch), scheduled tasks
   and `notify_schedule` (`schedule.ts`), the web tools (`web.ts`: `web_search` through DeepSeek or Brave,
-  `web_fetch` through DeepSeek Fetch) over keyed HTTP services (`services.ts`), the approval gate and the offline
+  `web_fetch` through DeepSeek Fetch) over keyed HTTP services (`services.ts`), MCP servers (`mcp.ts`: a Streamable
+  HTTP client and the `mcp` extension, [ADR 0006](docs/adr/0006-mcp-servers.md)), the approval gate and the offline
   `scripted/assistant` model. `chat.ts`
   also has the entry points outside the chat (`ask` from intents and notification replies, `widgetAction`,
   `runSchedule`).
@@ -57,7 +60,7 @@ decisions that change the spec go in `docs/adr/`.
 
 ```sh
 cd js && bun install && bun run build && npx tsc -p .   # bundle + typecheck
-cd Packages/PiRuntime && swift test                      # conformance + harness + UI tool tests in macOS JSC
+cd Packages/PiRuntime && swift test                      # conformance + harness + UI tool + MCP client tests in macOS JSC
 cd Packages/PiUI && swift test                           # validator, host and snapshot tests
 xcodegen generate                                        # then open PiDurable.xcodeproj, or:
 scripts/m0-check.sh conformance                          # same suites inside the app's JSC (simulator)
@@ -118,6 +121,10 @@ intended rendering change, re-record with `PI_RECORD_SNAPSHOTS=1 swift test` and
 - A new HTTP API is a service ([ADR 0004](docs/adr/0004-http-api-services.md)): its hosts (and a monthly cap, if its
   plan has one) in `ProviderKeys`, a key entry in `ChatStore.services`, and tools that call `serviceFetch` with the
   key placeholder in a header or a URL query. Never a generic HTTP tool: a page could use it to send data out.
+- MCP servers are added only by the user, in Settings; no tool may add, change or remove one. A server's host gets
+  its token (`mcp-<id>`) only through `ProviderKeys.setMCPHosts`, from Swift. The `mcp` extension is installed from
+  the cached tool lists before the Harness opens, so interrupted calls resume without the network
+  ([ADR 0006](docs/adr/0006-mcp-servers.md)).
 - The `SqliteDatabase` facade must keep passing both Pi's storage conformance suite and
   `js/test/facade-cases.ts` (Pi's suite does not exercise rollback).
 - A new component, prop, family rule or data source goes in PiUI's catalog (`Schema/`), with a sample slot in

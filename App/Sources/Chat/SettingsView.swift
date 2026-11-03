@@ -81,6 +81,26 @@ struct SettingsView: View {
             }
 
             Section {
+                ForEach(store.mcpServers) { server in
+                    NavigationLink {
+                        MCPServerView(store: store, server: server)
+                    } label: {
+                        MCPServerRow(server: server, status: store.mcpStatuses[server.id])
+                    }
+                }
+                NavigationLink {
+                    MCPServerView(store: store, server: nil)
+                } label: {
+                    Label("Add server", systemImage: "plus")
+                }
+                .accessibilityIdentifier("settings.mcp.add")
+            } header: {
+                Text("MCP servers")
+            } footer: {
+                Text("Tools from MCP servers that speak Streamable HTTP. Tokens stay in the Keychain and go only to their server's host. Pi asks before tools that change things.")
+            }
+
+            Section {
                 Picker("Open links in", selection: $store.openLinksInApp) {
                     Text("Pi").tag(true)
                     Text("Default browser").tag(false)
@@ -93,17 +113,9 @@ struct SettingsView: View {
             }
 
             Section {
-                ForEach(store.tools) { tool in
-                    Picker(selection: Binding(get: { tool.policy }, set: { policy in Task { await store.setPolicy(policy, for: tool.name) } })) {
-                        Text("Allow").tag("auto")
-                        Text("Ask").tag("ask")
-                        Text("Never").tag("deny")
-                    } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(tool.name).font(.body.monospaced())
-                            Text(tool.description).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                        }
-                    }
+                // MCP servers' tools are under their server.
+                ForEach(store.tools.filter { $0.server == nil }) { tool in
+                    ToolPolicyPicker(store: store, tool: tool)
                 }
             } header: {
                 Text("Tool approvals")
@@ -115,6 +127,27 @@ struct SettingsView: View {
         .task {
             await store.refreshTools()
             await store.refreshModels()
+        }
+    }
+}
+
+/// A tool's approval policy: Allow, Ask or Never.
+struct ToolPolicyPicker: View {
+    let store: ChatStore
+    let tool: ToolInfo
+    /// Shown instead of the name, such as an MCP tool's own name without its server prefix.
+    var title: String?
+
+    var body: some View {
+        Picker(selection: Binding(get: { tool.policy }, set: { policy in Task { await store.setPolicy(policy, for: tool.name) } })) {
+            Text("Allow").tag("auto")
+            Text("Ask").tag("ask")
+            Text("Never").tag("deny")
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title ?? tool.name).font(.body.monospaced())
+                Text(tool.description).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+            }
         }
     }
 }

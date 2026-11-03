@@ -95,6 +95,15 @@ targets:
         NSHealthUpdateUsageDescription: Pi saves health data only when you ask it to.
         NSCameraUsageDescription: Pi uses the camera only when you take a photo to attach to a message.
         NSMicrophoneUsageDescription: Pi records you only while you dictate a message, and sends the recording to OpenAI to turn it into text.
+        # MCP servers in the homelab (docs/adr/0006-mcp-servers.md): plain HTTP to local names and to Tailscale's
+        # MagicDNS names, which the tunnel already encrypts. Everything else still needs HTTPS.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+          NSExceptionDomains:
+            ts.net:
+              NSIncludesSubdomains: true
+              NSExceptionAllowsInsecureHTTPLoads: true
+        NSLocalNetworkUsageDescription: Pi connects to the MCP servers you add in Settings when they are on your home network.
     entitlements:
       path: App/PiApp.entitlements
       properties:

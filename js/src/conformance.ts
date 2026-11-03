@@ -8,6 +8,7 @@ import { createStorageConformance, type StorageConformanceAssertions } from "@ea
 import { native } from "./host/native.ts";
 import { openIOSSqliteDatabase } from "./host/sqlite.ts";
 import { createFacadeCases } from "../test/facade-cases.ts";
+import { createMcpCases } from "../test/mcp-cases.ts";
 import { createPolyfillCases } from "../test/polyfill-cases.ts";
 
 class AssertionError extends Error {
@@ -171,4 +172,8 @@ function runPolyfills(): Promise<ConformanceReport> {
 	return runCases("host polyfills", createPolyfillCases(assertions));
 }
 
-(globalThis as Record<string, unknown>).PiConformance = { runStorage, runFacade, runPolyfills };
+function runMcp(): Promise<ConformanceReport> {
+	return runCases("MCP client and extension", createMcpCases(assertions));
+}
+
+(globalThis as Record<string, unknown>).PiConformance = { runStorage, runFacade, runPolyfills, runMcp };

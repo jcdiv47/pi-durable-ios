@@ -65,6 +65,9 @@ struct ConversationView: View {
             }
             .onScrollPhaseChange { _, phase in keyboardScroll.phaseChanged(phase) }
             .scrollDismissesKeyboard(.interactively)
+            .safeAreaInset(edge: .top) {
+                if let warning = store.mcpWarning { MCPWarningBanner(store: store, text: warning) }
+            }
             .safeAreaInset(edge: .bottom) {
                 composer
             }

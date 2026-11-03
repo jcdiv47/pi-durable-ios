@@ -392,6 +392,8 @@ struct ToolInfo: Decodable, Identifiable, Hashable {
     let name: String
     let description: String
     let policy: String
+    /// The MCP server the tool comes from; nil for the app's own tools.
+    var server: String?
 
     var id: String { name }
 }

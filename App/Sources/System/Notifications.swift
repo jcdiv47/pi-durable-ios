@@ -83,6 +83,15 @@ final class Notifications: NSObject, UNUserNotificationCenterDelegate {
         await add("answer-\(conversationId)-\(entryId)", content, trigger: nil)
     }
 
+    /// A notice from the app itself, such as an MCP server that can't be reached. The identifier replaces an earlier one.
+    func postNotice(identifier: String, title: String, body: String) async {
+        guard await authorize() else { return }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        await add(identifier, content, trigger: nil)
+    }
+
     /// `notify.post` (a scheduled task's answer) and `notify.schedule` (a reminder at a time), from JS. Returns JSON.
     func post(_ args: NotifyArguments) async throws -> String {
         guard await authorize() else { return #"{"scheduled":false,"reason":"The user has not allowed notifications for Pi"}"# }
