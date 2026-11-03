@@ -523,13 +523,19 @@ export class McpHost {
 		const targets = this.#servers.filter((server) => server.enabled && (ids === undefined || ids.includes(server.id)));
 		await Promise.all(
 			targets.map(async (server) => {
+				// The server as it is now; an answer from before an edit, a removal or turning it off is dropped.
+				const current = () =>
+					this.#servers.find((s) => s.id === server.id && s.enabled && s.url === server.url && s.authHeader === server.authHeader);
 				try {
 					const listed = await this.#client(server).listTools(signal);
-					server.tools = listed.tools;
-					server.instructions = listed.instructions;
-					server.serverName = listed.serverName;
+					const now = current();
+					if (now === undefined) return;
+					now.tools = listed.tools;
+					now.instructions = listed.instructions;
+					now.serverName = listed.serverName;
 					this.#report({ id: server.id, state: "ok", checkedAt: Date.now(), ...listed });
 				} catch (error) {
+					if (current() === undefined) return;
 					this.#clients.get(server.id)?.reset();
 					this.#failed(server, error);
 				}

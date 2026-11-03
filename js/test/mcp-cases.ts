@@ -205,6 +205,27 @@ export function createMcpCases(t: StorageConformanceAssertions): Case[] {
 			},
 		},
 		{
+			name: "a refresh that answers after its server was edited is dropped",
+			async run() {
+				const fake = new FakeServer();
+				let release = () => {};
+				const gate = new Promise<void>((resolve) => (release = resolve));
+				const reports: McpStatus[][] = [];
+				const installed: string[][] = [];
+				const host = new McpHost((extension) => installed.push((extension.tools ?? []).map((tool) => tool.name)), (s) => reports.push(s), async (url, init) => {
+					await gate;
+					return fake.fetch(url, init);
+				});
+				host.setServers([server()]);
+				const pending = host.refresh();
+				host.setServers([server({ url: "http://100.64.0.3/mcp" })]);
+				release();
+				await pending;
+				t.deepEqual(reports.flat().filter((s) => s.id === "ha"), []);
+				t.deepEqual(installed.at(-1), []);
+			},
+		},
+		{
 			name: "results become text and images; other content is described; output is cut",
 			async run() {
 				t.deepEqual(

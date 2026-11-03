@@ -491,7 +491,8 @@ final class ChatStore {
 
     func setPolicy(_ policy: String, for tool: String) async {
         guard let harness else { return }
-        var policies = Dictionary(uniqueKeysWithValues: tools.map { ($0.name, $0.policy) })
+        // Only the user's choices: tools not listed now (a server turned off) keep theirs; the rest keep their defaults.
+        var policies = settings.dictionary(forKey: "toolPolicies") as? [String: String] ?? [:]
         policies[tool] = policy
         settings.set(policies, forKey: "toolPolicies")
         do {
@@ -603,6 +604,12 @@ final class ChatStore {
         keyedProviders.remove(server.keyName)
         mcpServers.removeAll { $0.id == id }
         mcpStatuses[id] = nil
+        // A later server given the same id must not inherit these choices.
+        if var policies = settings.dictionary(forKey: "toolPolicies") as? [String: String] {
+            policies = policies.filter { !$0.key.hasPrefix("mcp__\(id)__") }
+            settings.set(policies, forKey: "toolPolicies")
+            try? await harness?.perform("PiRuntime.setPolicies", [policies])
+        }
         await applyMCPServers()
     }
 

@@ -71,7 +71,7 @@ struct ConformanceTests {
     func mcp() async throws {
         let report = try await runSuite("runMcp")
         #expect(report.failed == 0)
-        #expect(report.passed == 5)
+        #expect(report.passed == 6)
     }
 
     @Test("Host polyfills", .timeLimit(.minutes(1)))
