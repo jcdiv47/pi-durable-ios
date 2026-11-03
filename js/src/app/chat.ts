@@ -45,9 +45,11 @@ export type ConversationMeta = {
 	updatedAt: number;
 	/** Set on forks: the conversation and entry they branched from. */
 	forkOf?: { conversationId: number; entryId: number };
+	/** Set while the conversation is archived: out of the list, shown in Settings › Archived Conversations. */
+	archivedAt?: number;
 };
 
-/** The conversations the list shows, newest activity first when read. Conversations are never deleted, only hidden. */
+/** Every conversation, archived ones included, newest activity first when read. Conversations are never deleted. */
 export const ConversationIndex = defineDoc<{ items: ConversationMeta[] }>({
 	kind: "app.conversations",
 	version: 1,
@@ -126,13 +128,23 @@ export class Chat {
 		private readonly clampThinking: (model: { provider: string; modelId: string }, level: ModelThinkingLevel) => ModelThinkingLevel = (_, level) => level,
 	) {}
 
-	async conversations(): Promise<ConversationMeta[]> {
+	async #all(): Promise<ConversationMeta[]> {
 		const index = await this.harness.snapshot(ConversationIndex, context);
 		return [...(index?.items ?? [])].sort((a, b) => b.updatedAt - a.updatedAt);
 	}
 
+	/** The conversations the list shows: all but the archived ones, newest activity first. */
+	async conversations(): Promise<ConversationMeta[]> {
+		return (await this.#all()).filter((meta) => meta.archivedAt === undefined);
+	}
+
+	/** Archived conversations, most recently archived first. */
+	async archivedConversations(): Promise<ConversationMeta[]> {
+		return (await this.#all()).filter((meta) => meta.archivedAt !== undefined).sort((a, b) => b.archivedAt! - a.archivedAt!);
+	}
+
 	async #changed(): Promise<void> {
-		this.emit({ type: "conversations", items: await this.conversations() });
+		this.emit({ type: "conversations", items: await this.conversations(), archived: await this.archivedConversations() });
 	}
 
 	/**
@@ -340,7 +352,7 @@ export class Chat {
 
 	/** Conversations created before an extension existed get it added, so their agent sees its tools. */
 	async upgrade(): Promise<void> {
-		for (const meta of await this.conversations()) {
+		for (const meta of await this.#all()) {
 			const conversation = await this.harness.conversation(meta.id as never, context);
 			if (conversation === undefined) continue;
 			const selected = new Set((await conversation.agent(context)).extensions.map((extension) => extension.name));
@@ -374,12 +386,12 @@ export class Chat {
 	}
 
 	/**
-	 * The attachment image files the app still shows or sends: those of every listed conversation's history (a fork's
-	 * includes its parent's up to the fork) and of its queued messages. Hidden conversations' images are not kept.
+	 * The attachment image files the app still shows or sends: those of every conversation's history, archived ones
+	 * included (a fork's includes its parent's up to the fork), and of its queued messages.
 	 */
 	async attachmentFiles(): Promise<string[]> {
 		const files = new Set<string>();
-		for (const { id } of await this.conversations()) {
+		for (const { id } of await this.#all()) {
 			const conversation = await this.#conversation(id);
 			let cursor: Parameters<Conversation["entries"]>[2];
 			do {
@@ -431,7 +443,7 @@ export class Chat {
 
 	/** A new conversation that sees `id`'s transcript through `entryId` and continues on its own. */
 	async fork(id: number, entryId: number): Promise<ConversationMeta> {
-		const parent = (await this.conversations()).find((item) => item.id === id);
+		const parent = (await this.#all()).find((item) => item.id === id);
 		const now = Date.now();
 		let meta: ConversationMeta | undefined;
 		await (await this.#conversation(id)).fork(
@@ -463,17 +475,25 @@ export class Chat {
 		await this.#changed();
 	}
 
-	/** Hides a conversation from the list after stopping its work. Its history stays in storage. */
-	async remove(id: number): Promise<void> {
+	/** Moves a conversation out of the list into the archive after stopping its work. Its history stays in storage. */
+	async archive(id: number): Promise<void> {
 		this.unwatch(id);
 		await this.abort(id);
 		for (const schedule of await this.schedules()) {
 			if (schedule.conversationId === id) await this.cancelSchedule(schedule.taskId);
 		}
 		await this.harness.commit(async (tx) => {
-			const index = await tx.doc(ConversationIndex);
-			const at = index.items.findIndex((item) => item.id === id);
-			if (at >= 0) index.items.splice(at, 1);
+			const meta = (await tx.doc(ConversationIndex)).items.find((item) => item.id === id);
+			if (meta !== undefined) meta.archivedAt = Date.now();
+		}, context);
+		await this.#changed();
+	}
+
+	/** Puts an archived conversation back in the list. */
+	async unarchive(id: number): Promise<void> {
+		await this.harness.commit(async (tx) => {
+			const meta = (await tx.doc(ConversationIndex)).items.find((item) => item.id === id);
+			if (meta !== undefined) delete meta.archivedAt;
 		}, context);
 		await this.#changed();
 	}

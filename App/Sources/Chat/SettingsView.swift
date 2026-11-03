@@ -113,6 +113,17 @@ struct SettingsView: View {
             }
 
             Section {
+                // A route, not a destination closure: its rows push conversations onto the same path.
+                NavigationLink(value: Route.archived) {
+                    LabeledContent("Archived Conversations") {
+                        Text("\(store.archivedConversations.count)")
+                    }
+                }
+            } footer: {
+                Text("Archiving stops a conversation's work and its scheduled tasks and takes it out of the list. Its history stays on this iPhone.")
+            }
+
+            Section {
                 // MCP servers' tools are under their server.
                 ForEach(store.tools.filter { $0.server == nil }) { tool in
                     ToolPolicyPicker(store: store, tool: tool)
@@ -149,6 +160,45 @@ struct ToolPolicyPicker: View {
                 Text(tool.description).font(.caption).foregroundStyle(.secondary).lineLimit(2)
             }
         }
+    }
+}
+
+struct ArchivedConversationsView: View {
+    @Bindable var store: ChatStore
+
+    var body: some View {
+        Group {
+            if store.archivedConversations.isEmpty {
+                ContentUnavailableView("No Archived Conversations", systemImage: "archivebox", description: Text("Swipe left on a conversation to archive it."))
+            } else {
+                List(store.archivedConversations) { meta in
+                    NavigationLink(value: Route.conversation(meta.id)) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(meta.title).lineLimit(1)
+                            if let archived = meta.archived {
+                                Text("Archived \(archived.formatted(date: .abbreviated, time: .shortened))")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .swipeActions {
+                        Button {
+                            Task { await store.unarchive(meta.id) }
+                        } label: {
+                            Label("Unarchive", systemImage: "tray.and.arrow.up").labelStyle(.iconOnly)
+                        }
+                        .tint(.indigo)
+                    }
+                    .contextMenu {
+                        Button("Unarchive", systemImage: "tray.and.arrow.up") {
+                            Task { await store.unarchive(meta.id) }
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Archived")
     }
 }
 

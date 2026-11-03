@@ -37,7 +37,13 @@ final class ChatStore {
 
     private(set) var phase = Phase.starting
     private(set) var conversations: [ConversationMeta] = []
+    /// Archived conversations, most recently archived first (Settings › Archived Conversations).
+    private(set) var archivedConversations: [ConversationMeta] = []
     private(set) var states: [Int: ConversationState] = [:]
+    private(set) var unreadConversations: Set<Int> = [] {
+        didSet { settings.set(Array(unreadConversations).sorted(), forKey: "unreadConversations") }
+    }
+    private var visibleConversation: Int?
     private(set) var approvals: [ApprovalRequest] = []
     private(set) var models: [ModelInfo] = []
     private(set) var tools: [ToolInfo] = []
@@ -127,6 +133,7 @@ final class ChatStore {
     nonisolated static let logger = Logger(subsystem: "dev.pi.durable", category: "chat")
 
     init() {
+        unreadConversations = Set(settings.array(forKey: "unreadConversations") as? [Int] ?? [])
         let stored = settings.string(forKey: "defaultModel")?.split(separator: "/", maxSplits: 1).map(String.init)
         defaultModel = stored?.count == 2 ? ModelRef(provider: stored![0], modelId: stored![1]) : Self.offlineModel
         defaultThinking = settings.string(forKey: "defaultThinking") ?? "medium"
@@ -218,6 +225,7 @@ final class ChatStore {
             ))
             self.harness = harness
             conversations = try await harness.call("PiRuntime.conversations")
+            archivedConversations = try await harness.call("PiRuntime.archivedConversations")
             await refreshModels()
             await refreshTools()
             await refreshTasks()
@@ -268,6 +276,7 @@ final class ChatStore {
         case "conversations":
             if let event = try? decoder.decode(ConversationsEvent.self, from: data) {
                 conversations = event.items
+                archivedConversations = event.archived
                 publishRecent()
                 if phase == .ready { spotlight.sync(self) }
             }
@@ -297,7 +306,7 @@ final class ChatStore {
 
     private struct Envelope: Decodable { let type: String }
     private struct FrameEvent: Decodable { let frame: DisplayFrame }
-    private struct ConversationsEvent: Decodable { let items: [ConversationMeta] }
+    private struct ConversationsEvent: Decodable { let items: [ConversationMeta]; let archived: [ConversationMeta] }
     private struct ApprovalsEvent: Decodable { let pending: [ApprovalRequest] }
     private struct WakeEvent: Decodable { let wake: BackgroundWork.Wake }
     private struct MCPEvent: Decodable { let statuses: [MCPStatus] }
@@ -319,11 +328,16 @@ final class ChatStore {
         return try? await harness.call("PiRuntime.searchText", [id])
     }
 
-    /// The newest conversation if nothing was ever sent in it: the compose button opens it instead of making another.
-    var unusedConversation: ConversationMeta? {
-        guard let top = conversations.first, top.forkOf == nil, top.updatedAt == top.createdAt else { return nil }
-        return top
+    /// The conversations the list shows: every one but those nothing was sent in yet.
+    var startedConversations: [ConversationMeta] { conversations.filter(\.started) }
+
+    /// A conversation's entry, listed or archived.
+    func meta(_ id: Int) -> ConversationMeta? {
+        conversations.first { $0.id == id } ?? archivedConversations.first { $0.id == id }
     }
+
+    /// The newest conversation nothing was ever sent in: the compose button opens it instead of making another.
+    var unusedConversation: ConversationMeta? { conversations.first { !$0.started } }
 
     func newConversation() async -> ConversationMeta? {
         guard let harness else { return nil }
@@ -347,7 +361,7 @@ final class ChatStore {
             var arguments: [any Sendable] = [id, trimmed, UUID().uuidString]
             if !attachments.isEmpty { arguments.append(try attachments.compactMap(InputAttachment.init).map { try harness.jsonArgument($0) }) }
             try await harness.perform("PiRuntime.send", arguments)
-            let title = conversations.first { $0.id == id }?.title ?? "Pi"
+            let title = meta(id)?.title ?? "Pi"
             activities.start(conversationId: id, title: title)
             // The first run asks for notification permission: answers and approvals may arrive while away.
             Task { await notifications.authorize() }
@@ -414,15 +428,22 @@ final class ChatStore {
         do { try await harness.perform("PiRuntime.rename", [id, title]) } catch { report("rename", error) }
     }
 
-    func remove(_ id: Int) async {
+    /// Stops the conversation's work and its schedules and moves it to Settings › Archived Conversations.
+    func archive(_ id: Int) async {
         guard let harness else { return }
         do {
-            try await harness.perform("PiRuntime.removeConversation", [id])
+            try await harness.perform("PiRuntime.archiveConversation", [id])
             watched.remove(id)
             states[id] = nil
+            unreadConversations.remove(id)
         } catch {
-            report("remove", error)
+            report("archive", error)
         }
+    }
+
+    func unarchive(_ id: Int) async {
+        guard let harness else { return }
+        do { try await harness.perform("PiRuntime.unarchiveConversation", [id]) } catch { report("unarchive", error) }
     }
 
     func model(_ ref: ModelRef?) -> ModelInfo? { models.first { $0.ref == ref } }
@@ -460,7 +481,7 @@ final class ChatStore {
         Task {
             if away {
                 for request in new {
-                    let title = conversations.first { $0.id == request.conversationId }?.title ?? "Pi"
+                    let title = meta(request.conversationId)?.title ?? "Pi"
                     await notifications.postApproval(request, conversation: title)
                 }
             }
@@ -758,7 +779,7 @@ final class ChatStore {
                     input.text, conversationId: target, requestId: input.requestId, origin: "Share sheet", waitMs: 0, attachments: input.attachments
                 )
                 ShareInbox.remove(input.id)
-                activities.start(conversationId: answer.conversationId, title: conversations.first { $0.id == answer.conversationId }?.title ?? "Pi")
+                activities.start(conversationId: answer.conversationId, title: meta(answer.conversationId)?.title ?? "Pi")
                 open(.conversation(answer.conversationId))
                 Task { await notifications.authorize() }
             } catch {
@@ -807,7 +828,7 @@ final class ChatStore {
 
     /// The share sheet's conversation picker reads these from the App Group.
     private func publishRecent() {
-        RecentConversation.write(conversations.prefix(12).map { RecentConversation(id: $0.id, title: $0.title) })
+        RecentConversation.write(startedConversations.prefix(12).map { RecentConversation(id: $0.id, title: $0.title) })
     }
 
     /// Widget and Live Activity buttons (`SharedIntents`).
@@ -915,18 +936,35 @@ final class ChatStore {
 
     /// A watched run ended. While the app is away, its answer becomes a notification.
     private func runEnded(_ conversation: ConversationState) {
+        // An abort before the model responds must not badge the previous turn's answer.
+        if let answerIndex = conversation.items.lastIndex(where: { $0.kind == .assistant }),
+           answerIndex > (conversation.items.lastIndex(where: { $0.kind == .user }) ?? -1),
+           let stopReason = conversation.items[answerIndex].stopReason,
+           !["toolUse", "aborted", "error"].contains(stopReason),
+           visibleConversation != conversation.id || UIApplication.shared.applicationState != .active {
+            unreadConversations.insert(conversation.id)
+        }
         guard UIApplication.shared.applicationState != .active,
               let answer = conversation.items.last(where: { $0.kind == .assistant }), answer.stopReason != "aborted"
         else { return }
-        let title = conversations.first { $0.id == conversation.id }?.title ?? "Pi"
+        let title = meta(conversation.id)?.title ?? "Pi"
         let text = answer.stopReason == "error" ? "The run failed: \(answer.error ?? "model error")" : answer.text ?? ""
         Task { await notifications.postAnswer(conversationId: conversation.id, entryId: answer.id, title: title, text: text) }
+    }
+
+    func conversationAppeared(_ id: Int) {
+        visibleConversation = id
+        if UIApplication.shared.applicationState == .active { unreadConversations.remove(id) }
+    }
+
+    func conversationDisappeared(_ id: Int) {
+        if visibleConversation == id { visibleConversation = nil }
     }
 
     func scenePhaseChanged(from old: ScenePhase, to new: ScenePhase) {
         switch new {
         case .inactive where old == .active:
-            let titles = busyConversations.map { id in conversations.first { $0.id == id }?.title ?? "Conversation \(id)" }
+            let titles = busyConversations.map { id in meta(id)?.title ?? "Conversation \(id)" }
             background.continueRuns(titles: titles)
         case .background:
             background.enteredBackground()
@@ -934,10 +972,11 @@ final class ChatStore {
             let pending = approvals
             Task {
                 for request in pending {
-                    await notifications.postApproval(request, conversation: conversations.first { $0.id == request.conversationId }?.title ?? "Pi")
+                    await notifications.postApproval(request, conversation: meta(request.conversationId)?.title ?? "Pi")
                 }
             }
         case .active:
+            if let visibleConversation { unreadConversations.remove(visibleConversation) }
             background.enteredForeground()
             // Cards on screen show reminders and colors as they are now: they may have changed, or access been granted.
             if listColors != nil { listColors = nil; loadListColors() }
