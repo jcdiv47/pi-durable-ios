@@ -237,7 +237,6 @@ struct ConversationView: View {
         .padding(.bottom, 8)
         .animation(.snappy, value: state.queue)
         .animation(.snappy, value: attachments)
-        .animation(.snappy, value: hasDraft)
         .animation(.snappy, value: state.live.busy)
         .modifier(VoiceFeedback(voice: voice))
         .photosPicker(isPresented: $choosingPhotos, selection: $photoItems, maxSelectionCount: 10, matching: .images)
@@ -278,12 +277,12 @@ struct ConversationView: View {
                         micButton
                             .padding(.vertical, 6)
                             .padding(.trailing, hasDraft || state.live.busy ? 0 : 6)
-                            .transition(.scale.combined(with: .opacity))
+                            .transition(.opacity)
                     }
                     if hasDraft || state.live.busy {
                         primaryButton
                             .padding(6)
-                            .transition(.scale.combined(with: .opacity))
+                            .transition(.opacity)
                     }
                 }
                 .frame(minHeight: Self.fieldHeight)

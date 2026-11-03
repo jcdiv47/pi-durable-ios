@@ -172,7 +172,7 @@ struct WorkRow: View {
         VStack(alignment: .leading, spacing: 10) {
             Button {
                 holdPosition()
-                withAnimation(.snappy) { expanded.toggle() }
+                withAnimation(.snappy(duration: 0.25)) { expanded.toggle() }
             } label: {
                 HStack(spacing: 8) {
                     if running {
@@ -315,7 +315,7 @@ struct AssistantView: View {
             if !thinking.isEmpty {
                 Button {
                     holdPosition()
-                    withAnimation(.snappy) { showThinking.toggle() }
+                    withAnimation(.snappy(duration: 0.25)) { showThinking.toggle() }
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "brain")
@@ -365,7 +365,7 @@ struct ToolCallCard: View {
         VStack(alignment: .leading, spacing: 6) {
             Button {
                 holdPosition()
-                withAnimation(.snappy) { expanded.toggle() }
+                withAnimation(.snappy(duration: 0.25)) { expanded.toggle() }
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: status.0).foregroundStyle(status.1)
