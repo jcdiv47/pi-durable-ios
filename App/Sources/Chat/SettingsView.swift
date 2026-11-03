@@ -25,7 +25,12 @@ struct SettingsView: View {
                     Text("Pi").tag(true)
                     Text("Default Browser").tag(false)
                 } label: {
-                    SettingsRow("Open Links In", systemImage: "safari", tint: .blue)
+                    // A plain Label: the menu picker stacks a LabeledContent's icon over its title.
+                    Label {
+                        Text("Open Links In")
+                    } icon: {
+                        Image(systemName: "safari").foregroundStyle(.blue)
+                    }
                 }
                 .pickerStyle(.menu)
                 .accessibilityIdentifier("settings.links")
