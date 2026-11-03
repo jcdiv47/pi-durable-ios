@@ -5,5 +5,5 @@ let package = Package(
     name: "PiAppleTools",
     platforms: [.iOS(.v26), .macOS(.v26)],
     products: [.library(name: "PiAppleTools", targets: ["PiAppleTools"])],
-    targets: [.target(name: "PiAppleTools")]
+    targets: [.target(name: "PiAppleTools"), .testTarget(name: "PiAppleToolsTests", dependencies: ["PiAppleTools"])]
 )

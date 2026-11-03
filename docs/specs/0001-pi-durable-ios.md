@@ -179,6 +179,8 @@ Lifecycle rules:
 | `calendar_query`, `reminders_query` | safe | read-only |
 | `calendar_create_event` | safe with an idempotency key | write a key into the event URL; check for it before creating |
 | `reminders_create` | safe with an idempotency key | same pattern |
+| `reminders_lists` | safe | list IDs, account names and write access |
+| `reminders_update` | not replayed | edit fields or move to an existing list; approval required by default; re-query after an interrupted save |
 | `reminders_complete` | safe | sets a state; setting it twice is the same as once |
 | `location_current` | safe | read-only; asks for When In Use permission on first use |
 | `health_query` (quantity/category/summary) | safe | read-only; ask for HealthKit authorization per type |

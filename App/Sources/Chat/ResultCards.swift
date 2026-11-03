@@ -24,6 +24,9 @@ enum ResultCardContent {
         case "reminders_create":
             guard let reminder = data.decoded(OneReminder.self)?.reminder else { return nil }
             self = .reminders(title: "Added to \(reminder.list?.isEmpty == false ? reminder.list! : "Reminders")", [reminder], truncated: false)
+        case "reminders_update":
+            guard let reminder = data.decoded(OneReminder.self)?.reminder else { return nil }
+            self = .reminders(title: "Updated in \(reminder.list ?? "Reminders")", [reminder], truncated: false)
         case "reminders_complete":
             guard let reminder = data.decoded(OneReminder.self)?.reminder else { return nil }
             self = .reminders(title: reminder.completed == true ? "Completed" : "Not done", [reminder], truncated: false)

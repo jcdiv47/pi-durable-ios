@@ -77,6 +77,7 @@ type Block = { type: string; text?: string; thinking?: string; id?: string; name
 const cardTools = new Set([
 	"reminders_query",
 	"reminders_create",
+	"reminders_update",
 	"reminders_complete",
 	"calendar_query",
 	"calendar_create_event",
