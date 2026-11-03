@@ -207,15 +207,38 @@ struct ConversationRow: View {
                 }
                 Text(meta.title).font(.headline).lineLimit(1)
                 Spacer()
-                if state?.live.busy == true {
-                    ProgressView().controlSize(.small)
-                }
             }
-            Text(meta.updated, format: .relative(presentation: .named))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if state?.live.busy == true {
+                ConversationWorkingStatus()
+            } else {
+                Text(meta.updated, format: .relative(presentation: .named))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(.vertical, 2)
+    }
+}
+
+private struct ConversationWorkingStatus: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(Color(red: 0.89, green: 0.49, blue: 0.44))
+                .frame(width: 6, height: 6)
+                .phaseAnimator(reduceMotion ? [false] : [false, true]) { dot, dimmed in
+                    dot.opacity(dimmed ? 0.4 : 1)
+                } animation: { _ in
+                    .easeInOut(duration: 1.2)
+                }
+                .accessibilityHidden(true)
+            Text("Working…")
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .accessibilityElement(children: .combine)
     }
 }
 
