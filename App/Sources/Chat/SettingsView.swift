@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Settings is an index: a few groups of rows, each opening one focused page, the way iOS Settings reads.
 /// Chat (how new conversations start, your instructions and skills, archived ones, links), Connections (model providers, web search, MCP servers),
-/// Permissions (tool approvals), and Pi itself (scheduled tasks, widgets, diagnostics).
+/// Permissions (tool approvals), and Pi itself (scheduled tasks, widgets, alarms, diagnostics).
 struct SettingsView: View {
     @Bindable var store: ChatStore
 
@@ -121,6 +121,10 @@ struct SettingsView: View {
                 NavigationLink(value: Route.surfaces) {
                     SettingsRow("Widgets", systemImage: "square.grid.2x2", tint: .cyan)
                 }
+                NavigationLink(value: Route.alarms) {
+                    SettingsRow("Alarms & Timers", systemImage: "alarm", tint: .orange)
+                }
+                .accessibilityIdentifier("settings.alarms")
                 NavigationLink {
                     PhotoSearchSettingsView()
                 } label: {

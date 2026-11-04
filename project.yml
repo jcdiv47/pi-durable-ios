@@ -108,6 +108,7 @@ targets:
             CFBundleURLSchemes: [pidurable]
         NSCalendarsFullAccessUsageDescription: Pi reads your calendar when you ask about your schedule, and adds events you approve.
         NSRemindersFullAccessUsageDescription: Pi reads your reminders when you ask about them, and adds or completes the ones you ask for.
+        NSAlarmKitUsageDescription: Pi sets the alarms and timers you ask it for.
         NSHealthShareUsageDescription: Pi reads the health data you ask it about.
         NSLocationWhenInUseUsageDescription: Pi looks up where you are only when a request needs it, such as nearby places or the weather.
         NSHealthUpdateUsageDescription: Pi saves health data only when you ask it to.

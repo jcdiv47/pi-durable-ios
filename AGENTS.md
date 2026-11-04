@@ -23,6 +23,9 @@ decisions that change the spec go in `docs/adr/`.
   and the skills imported from Files or written in the editor (`SkillEditorView`, `skills/<name>/`); the composer's "/"
   menu and chip run a skill
   ([ADR 0007](docs/adr/0007-instructions-and-skills.md)).
+  Settings › Alarms & Timers (`AlarmsView`, `pidurable://alarms`): the alarms Pi set (`PiAlarms` in PiAppleTools), counting
+  down; the Clock app never shows them. A timer's Lock Screen countdown is the widget's `PiAlarmLiveActivity`, over
+  PiUI's `PiAlarmMetadata`.
   Settings › Apple Intelligence (`IntelligenceSettingsView`): the on-device model's status, on-device titles and
   notification summaries ([ADR 0008](docs/adr/0008-apple-intelligence.md)).
   `App/Sources/M0/`: the headless check modes.
@@ -45,7 +48,7 @@ decisions that change the spec go in `docs/adr/`.
   (`JSRuntime.Options.hostCall`), `AppleIntelligence` (Foundation Models as an OpenAI-compatible endpoint on
   `apple-intelligence.pi.local`, plus titles and summaries) and `SkillLibrary`
   (SKILL.md checks, import, and the `skills.*` host calls that read inside a skill's folder).
-- `Packages/PiAppleTools`: EventKit, HealthKit and CoreLocation handlers behind the JS Apple tools
+- `Packages/PiAppleTools`: EventKit, HealthKit, CoreLocation and AlarmKit (`AlarmTools`) handlers behind the JS Apple tools
   (`AppleToolHost`), and photo search (`Photos/`: `CLIPTokenizer`, `ClipEncoder` over MobileCLIP's Core ML encoders,
   `PhotoVectors`, `PhotoIndex`; [ADR 0010](docs/adr/0010-photo-search.md)). The app's `PhotosCard` draws the
   matches and Settings › Photo Search (`PhotoSearchSettingsView`) shows the index.
