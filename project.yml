@@ -47,19 +47,8 @@ targets:
         buildPhase: resources
       # Photo search's MobileCLIP encoders and CLIP tokenizer, from scripts/fetch-mobileclip.sh (not checked in: too
       # big, and under Apple's sample code license; docs/adr/0010-photo-search.md). Without them photo search says so.
-      - path: App/Models/MobileCLIPImage.mlpackage
+      - path: App/Models
         optional: true
-      - path: App/Models/MobileCLIPText.mlpackage
-        optional: true
-      - path: App/Models/clip-vocab.json
-        optional: true
-        buildPhase: resources
-      - path: App/Models/clip-merges.txt
-        optional: true
-        buildPhase: resources
-      - path: App/Models/mobileclip-variant.txt
-        optional: true
-        buildPhase: resources
     dependencies:
       - package: PiRuntime
       - package: PiUI
