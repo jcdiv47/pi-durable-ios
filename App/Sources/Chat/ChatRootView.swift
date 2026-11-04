@@ -11,11 +11,13 @@ enum Route: Hashable {
     case gallery
     case component(String)
     case tuning
+    /// Settings › Alarms & Timers, also where a timer's Live Activity opens.
+    case alarms
     /// A link, when links open in Pi (`BrowserView`).
     case browser(URL)
 
     /// `pidurable://conversation/<id>` (widget and Live Activity taps), `pidurable://widgets`, `pidurable://tasks`,
-    /// `pidurable://settings`.
+    /// `pidurable://settings`, `pidurable://alarms`.
     /// `pidurable://share/<id>` is no route: the share extension's item goes through `ChatStore.receiveShares`.
     init?(url: URL) {
         guard url.scheme == "pidurable" else { return nil }
@@ -24,6 +26,7 @@ enum Route: Hashable {
         case "widgets": self = .surfaces
         case "tasks": self = .schedules
         case "settings": self = .settings
+        case "alarms": self = .alarms
         default: return nil
         }
     }
@@ -49,6 +52,7 @@ struct ChatRootView: View {
                     case .gallery: GalleryView()
                     case let .component(name): ComponentDetailView(store: store, name: name)
                     case .tuning: TuningView(store: store)
+                    case .alarms: AlarmsView()
                     case let .browser(url): BrowserView(url: url)
                     }
                 }

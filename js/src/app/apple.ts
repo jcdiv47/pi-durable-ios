@@ -1,9 +1,10 @@
 // Apple tools: JS stubs whose work happens in Swift (Packages/PiAppleTools) through `hostCall`.
 // Reads are replay-safe. calendar_create_event and reminders_create are replay-safe too: Swift tags the item with the
 // tool task's ID and finds it instead of creating a second one when a crash makes the call run again.
-// reminders_complete sets a state, so running it twice is the same as once.
+// reminders_complete sets a state, so running it twice is the same as once. alarms_set derives the alarm's ID from the
+// task's ID, and alarms_cancel succeeds when the alarm is already gone.
 
-import { bool, lit, num, obj, opt, str, union } from "@earendil-works/pi-schema";
+import { arr, bool, lit, num, obj, opt, str, union } from "@earendil-works/pi-schema";
 import { defineExtension, defineTool, section } from "@earendil-works/pi-durable";
 import { hostCall } from "../host/hostcall.ts";
 
@@ -168,6 +169,42 @@ const photosSearch = defineTool({
 	execute: async (args, _api, context) => json(await hostCall("photos.search", args, context.abortSignal)),
 });
 
+const weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] as const;
+
+const alarmsSet = defineTool({
+	name: "alarms_set",
+	description:
+		"Set an alarm that rings like the Clock app's, through silent mode and Focus. Give exactly one of: `at` (a one-off alarm at a date-time), " +
+		"`afterSeconds` (a timer: rings that many seconds from now and counts down on the Lock Screen), or `time` (HH:mm, 24-hour: the next such time, or every listed weekday with `weekdays`). " +
+		"For a reminder that should not ring loudly, use reminders_create instead. The user may be asked to approve it first. The first call asks for permission.",
+	parameters: obj({
+		label: str({ description: "Shown when it rings, e.g. \"Take the bread out\"" }),
+		at: opt(isoDate("When it rings")),
+		afterSeconds: opt(num({ description: "Seconds from now, at most 604800 (a week)" })),
+		time: opt(str({ description: "Time of day, HH:mm in 24-hour local time" })),
+		weekdays: opt(arr(union(weekdays.map((d) => lit(d))), { description: "Repeat every week on these days; needs time" })),
+	}),
+	replay: "safe",
+	execute: async (args, api, context) =>
+		json(await hostCall("alarms.set", { ...args, idempotencyKey: `task-${api.taskId}` }, context.abortSignal)),
+});
+
+const alarmsList = defineTool({
+	name: "alarms_list",
+	description: "List the alarms Pi has set that have not rung yet or that repeat, with IDs, labels and when each rings next. The Clock app's own alarms are not included.",
+	parameters: obj({}),
+	replay: "safe",
+	execute: async (args, _api, context) => json(await hostCall("alarms.list", args, context.abortSignal)),
+});
+
+const alarmsCancel = defineTool({
+	name: "alarms_cancel",
+	description: "Cancel an alarm Pi set, by its id from alarms_list.",
+	parameters: obj({ id: str({ description: "The alarm's id" }) }),
+	replay: "safe",
+	execute: async (args, _api, context) => json(await hostCall("alarms.cancel", args, context.abortSignal)),
+});
+
 const currentTime = defineTool({
 	name: "current_time",
 	description: "The current local date and time, with the time zone.",
@@ -196,7 +233,7 @@ const contextSection = section("context", () => {
 	return [
 		"You are Pi, a personal assistant running on the user's iPhone.",
 		`Today is ${weekday}, ${local.slice(0, 10)}. Time zone: ${timeZone}.`,
-		"Use the Apple tools to read the user's calendar, reminders and health data and to find photos when it helps, and to add events and reminders when asked. Call current_time when the exact time matters.",
+		"Use the Apple tools to read the user's calendar, reminders and health data and to find photos when it helps, and to add events, reminders and alarms when asked. Call current_time when the exact time matters.",
 		"Keep answers short; they are read on a phone.",
 	].join("\n");
 });
@@ -204,7 +241,7 @@ const contextSection = section("context", () => {
 export const AppleTools = defineExtension({
 	name: "apple",
 	sections: [contextSection],
-	tools: [currentTime, locationCurrent, photosSearch, calendarQuery, remindersQuery, calendarCreateEvent, remindersCreate, remindersLists, remindersUpdate, remindersComplete, healthQuery],
+	tools: [currentTime, locationCurrent, photosSearch, calendarQuery, remindersQuery, calendarCreateEvent, remindersCreate, remindersLists, remindersUpdate, remindersComplete, alarmsSet, alarmsList, alarmsCancel, healthQuery],
 });
 
 /** Tool names with what they do, for the approval settings screen. */

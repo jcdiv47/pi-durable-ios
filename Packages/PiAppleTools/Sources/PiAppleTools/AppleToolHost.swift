@@ -8,13 +8,14 @@ public final class AppleToolHost: Sendable {
     #if os(iOS)
     let health = HealthTools()
     let location = LocationTools()
+    let alarms = AlarmTools()
     #endif
 
     public init() {}
 
     /// Names this host answers; anything else is the caller's.
     public static let handlers: Set<String> = [
-        "calendar.query", "calendar.createEvent", "reminders.query", "reminders.lists", "reminders.update", "reminders.create", "reminders.complete", "health.query", "location.current", "photos.search",
+        "calendar.query", "calendar.createEvent", "reminders.query", "reminders.lists", "reminders.update", "reminders.create", "reminders.complete", "health.query", "location.current", "photos.search", "alarms.set", "alarms.list", "alarms.cancel",
     ]
 
     public func handle(_ name: String, _ json: String) async throws -> String {
@@ -32,6 +33,9 @@ public final class AppleToolHost: Sendable {
         case "health.query": result = try await health.query(decode(data))
         case "location.current": result = try await location.current(decode(data))
         case "photos.search": return try await PhotoIndex.shared.search(decode(data))
+        case "alarms.set": result = try await alarms.set(decode(data))
+        case "alarms.list": result = try await alarms.list()
+        case "alarms.cancel": result = try await alarms.cancel(decode(data))
         #endif
         default: throw AppleToolError("No Apple tool handler named \(name)")
         }

@@ -26,6 +26,7 @@ export const defaultPolicies: Record<string, ToolPolicy> = {
 	calendar_create_event: "ask",
 	reminders_create: "ask",
 	reminders_update: "ask",
+	alarms_set: "ask",
 	publish_surface: "ask",
 	// A schedule runs the model unattended, on the user's key.
 	schedule_task: "ask",

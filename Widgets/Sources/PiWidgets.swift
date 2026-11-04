@@ -7,5 +7,6 @@ struct PiWidgets: WidgetBundle {
     var body: some Widget {
         PiWidget()
         PiRunLiveActivity()
+        PiAlarmLiveActivity()
     }
 }
