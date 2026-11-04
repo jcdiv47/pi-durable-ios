@@ -8,13 +8,6 @@ struct SchedulesView: View {
 
     var body: some View {
         List {
-            if store.schedules.isEmpty {
-                ContentUnavailableView(
-                    "No scheduled tasks",
-                    systemImage: "clock.arrow.circlepath",
-                    description: Text("Ask Pi to do something later or on a timetable, like \"refresh my widget's nudge every 3 hours\".")
-                )
-            }
             ForEach(store.schedules) { schedule in
                 VStack(alignment: .leading, spacing: 5) {
                     HStack {
@@ -54,6 +47,20 @@ struct SchedulesView: View {
                 .padding(.vertical, 2)
                 .swipeActions {
                     Button("Cancel", systemImage: "xmark", role: .destructive) { Task { await store.cancelSchedule(schedule) } }
+                }
+            }
+        }
+        .overlay {
+            if store.schedules.isEmpty {
+                ContentUnavailableView {
+                    Label("No Scheduled Tasks", systemImage: "clock.arrow.circlepath")
+                } description: {
+                    Text("Pi can do things later, or on a timetable, even while the app is closed.")
+                } actions: {
+                    Button("Ask Pi", systemImage: "square.and.pencil") {
+                        Task { await store.compose("Every morning at 8, ") }
+                    }
+                    .buttonStyle(.glassProminent)
                 }
             }
         }

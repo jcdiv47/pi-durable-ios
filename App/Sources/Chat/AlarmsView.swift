@@ -11,9 +11,6 @@ struct AlarmsView: View {
 
     var body: some View {
         List {
-            if alarms.isEmpty {
-                ContentUnavailableView("No Alarms", systemImage: "alarm", description: Text("Ask Pi to wake you up or to set a timer."))
-            }
             ForEach(alarms) { alarm in
                 AlarmRow(alarm: alarm)
                     .swipeActions {
@@ -22,6 +19,20 @@ struct AlarmsView: View {
             }
             if let error {
                 Text(error).font(.footnote).foregroundStyle(.red)
+            }
+        }
+        .overlay {
+            if alarms.isEmpty && error == nil {
+                ContentUnavailableView {
+                    Label("No Alarms or Timers", systemImage: "alarm")
+                } description: {
+                    Text("Alarms and timers Pi sets ring like the Clock app's, through silent mode and Focus, and show up here.")
+                } actions: {
+                    Button("Ask Pi", systemImage: "square.and.pencil") {
+                        Task { await ChatStore.shared.compose("Set a timer for ") }
+                    }
+                    .buttonStyle(.glassProminent)
+                }
             }
         }
         .navigationTitle("Alarms & Timers")

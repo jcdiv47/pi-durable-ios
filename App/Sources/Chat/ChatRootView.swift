@@ -43,7 +43,9 @@ struct ChatRootView: View {
             ConversationListView(store: store, path: $path)
                 .navigationDestination(for: Route.self) { route in
                     switch route {
-                    case let .conversation(id): ConversationView(store: store, conversationId: id, path: $path)
+                    // Identified by the conversation: a deep link from one conversation to another replaces the route
+                    // in place, and without a new identity the old view (its draft, its watch) would stay on screen.
+                    case let .conversation(id): ConversationView(store: store, conversationId: id, path: $path).id(id)
                     case .settings: SettingsView(store: store)
                     case .archived: ArchivedConversationsView(store: store)
                     case .diagnostics: DiagnosticsView(store: store)
@@ -101,6 +103,7 @@ struct ConversationListView: View {
     @Binding var path: [Route]
     @State private var renaming: ConversationMeta?
     @State private var newTitle = ""
+    @State private var query = ""
 
     var body: some View {
         Group {
@@ -159,54 +162,135 @@ struct ConversationListView: View {
     @ViewBuilder private var list: some View {
         if store.startedConversations.isEmpty {
             ContentUnavailableView {
-                Label("No conversations", systemImage: "bubble.left.and.bubble.right")
+                Label {
+                    Text("No Conversations")
+                } icon: {
+                    PiLogo().frame(height: 44)
+                }
             } description: {
-                Text(store.models.count <= 1 ? "Add an API key in Settings, or try the offline demo model." : "Start one with the compose button.")
+                Text(store.models.count <= 1
+                    ? "Add a model provider's key in Settings, or try Pi with the offline demo model."
+                    : "Ask Pi about your day, set reminders, build widgets and more.")
             } actions: {
-                Button("New conversation", action: compose)
-                .buttonStyle(.glassProminent)
+                Button("New Conversation", systemImage: "square.and.pencil", action: compose)
+                    .buttonStyle(.glassProminent)
+                if store.models.count <= 1 {
+                    Button("Add a Key in Settings") { path.append(.settings) }
+                }
             }
         } else {
             List {
-                if !store.approvals.isEmpty {
+                if !store.approvals.isEmpty && query.isEmpty {
                     Section {
                         ForEach(store.approvals) { request in
                             Button {
                                 path.append(.conversation(request.conversationId))
                             } label: {
-                                Label("\(request.tool) is waiting for your approval", systemImage: "hand.raised.fill")
-                                    .foregroundStyle(.orange)
+                                ApprovalListRow(request: request, conversation: store.meta(request.conversationId)?.title)
                             }
+                            .tint(.primary)
                         }
+                    } header: {
+                        Text("Waiting for You")
                     }
                 }
-                ForEach(store.startedConversations) { meta in
-                    NavigationLink(value: Route.conversation(meta.id)) {
-                        ConversationRow(meta: meta, state: store.states[meta.id], unread: store.unreadConversations.contains(meta.id))
-                    }
-                    .swipeActions {
-                        Button {
-                            Task { await store.archive(meta.id) }
-                        } label: {
-                            Label("Archive", systemImage: "archivebox").labelStyle(.iconOnly)
-                        }
-                        .tint(.indigo)
-                    }
-                    .contextMenu {
-                        Button("Rename", systemImage: "pencil") {
-                            newTitle = meta.title
-                            renaming = meta
-                        }
-                        Button("Archive", systemImage: "archivebox") {
-                            Task { await store.archive(meta.id) }
+                ForEach(ConversationSections.group(shown)) { section in
+                    Section(section.title) {
+                        ForEach(section.items) { meta in
+                            NavigationLink(value: Route.conversation(meta.id)) {
+                                ConversationRow(
+                                    meta: meta,
+                                    state: store.states[meta.id],
+                                    unread: store.unreadConversations.contains(meta.id),
+                                    waiting: store.approvals.contains { $0.conversationId == meta.id },
+                                    time: section.time
+                                )
+                            }
+                            .swipeActions {
+                                Button {
+                                    Task { await store.archive(meta.id) }
+                                } label: {
+                                    Label("Archive", systemImage: "archivebox")
+                                }
+                                .tint(.indigo)
+                            }
+                            .contextMenu {
+                                Button("Rename", systemImage: "pencil") {
+                                    newTitle = meta.title
+                                    renaming = meta
+                                }
+                                Button("Archive", systemImage: "archivebox") {
+                                    Task { await store.archive(meta.id) }
+                                }
+                            }
                         }
                     }
                 }
             }
             .listStyle(.insetGrouped)
+            .searchable(text: $query, placement: .navigationBarDrawer, prompt: "Search conversations")
+            .overlay {
+                if !query.isEmpty && shown.isEmpty {
+                    ContentUnavailableView.search(text: query)
+                }
+            }
             // Approvals are occasional; without this the rows below jump by a section's height.
             .animation(.snappy, value: store.approvals.map(\.id))
         }
+    }
+
+    /// The started conversations whose title has the search text, all of them while there is none.
+    private var shown: [ConversationMeta] {
+        let text = query.trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty else { return store.startedConversations }
+        return store.startedConversations.filter { $0.title.localizedStandardContains(text) }
+    }
+}
+
+/// The conversation list's sections, as Notes groups notes: Today, Yesterday, Previous 7 Days, Previous 30 Days, then
+/// each month. Each section also says how its rows show their time: a time of day today and yesterday, a weekday within
+/// the week, a date before that.
+enum ConversationSections {
+    struct Group: Identifiable {
+        let title: String
+        let time: Date.FormatStyle
+        var items: [ConversationMeta]
+        var id: String { title }
+    }
+
+    static func group(_ conversations: [ConversationMeta], now: Date = .now, calendar: Calendar = .current) -> [Group] {
+        let today = calendar.startOfDay(for: now)
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: today)!
+        let week = calendar.date(byAdding: .day, value: -7, to: today)!
+        let month = calendar.date(byAdding: .day, value: -30, to: today)!
+        let clock = Date.FormatStyle.dateTime.hour().minute()
+        var groups: [Group] = []
+        for meta in conversations {
+            let date = meta.updated
+            let group: Group
+            if date >= today {
+                group = Group(title: "Today", time: clock, items: [])
+            } else if date >= yesterday {
+                group = Group(title: "Yesterday", time: clock, items: [])
+            } else if date >= week {
+                group = Group(title: "Previous 7 Days", time: .dateTime.weekday(.wide), items: [])
+            } else if date >= month {
+                group = Group(title: "Previous 30 Days", time: .dateTime.day().month(.abbreviated), items: [])
+            } else {
+                let sameYear = calendar.isDate(date, equalTo: now, toGranularity: .year)
+                let title = sameYear ? date.formatted(.dateTime.month(.wide)) : date.formatted(.dateTime.month(.wide).year())
+                group = Group(title: title, time: .dateTime.day().month(.abbreviated), items: [])
+            }
+            // Newest first already, so a section's rows arrive together.
+            if groups.last?.title == group.title {
+                groups[groups.count - 1].items.append(meta)
+            } else {
+                var started = group
+                started.items = [meta]
+                groups.append(started)
+            }
+        }
+        return groups
     }
 }
 
@@ -214,34 +298,80 @@ struct ConversationRow: View {
     let meta: ConversationMeta
     let state: ConversationState?
     var unread = false
+    var waiting = false
+    var time: Date.FormatStyle = .dateTime.hour().minute()
+
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack {
+        // At accessibility sizes the title gets the whole width, and the time goes under it, as Mail does.
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(spacing: 8))
+        layout {
+            HStack(spacing: 8) {
                 if meta.forkOf != nil {
-                    Image(systemName: "arrow.triangle.branch").foregroundStyle(.secondary).font(.caption)
+                    Image(systemName: "arrow.triangle.branch")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Fork")
                 }
-                Text(meta.title).font(.headline).lineLimit(1)
-                Spacer()
+                Text(meta.title)
+                    .fontWeight(unread ? .semibold : .regular)
+                    .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
             }
-            if state?.live.busy == true {
-                ConversationWorkingStatus()
-            } else if unread {
-                HStack(spacing: 5) {
-                    Circle().fill(.blue).frame(width: 6, height: 6).accessibilityHidden(true)
-                    Text("New reply")
+            if !typeSize.isAccessibilitySize { Spacer(minLength: 8) }
+            trailing
+        }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(unread ? "Unread" : "")
+    }
+
+    /// What the conversation is doing, or when it last changed; unread ones get a dot, as Mail marks unread mail.
+    @ViewBuilder private var trailing: some View {
+        if waiting {
+            Label("Needs you", systemImage: "hand.raised.fill")
+                .labelStyle(.titleAndIcon)
+                .font(.subheadline)
+                .foregroundStyle(.orange)
+        } else if state?.live.busy == true {
+            ConversationWorkingStatus()
+        } else {
+            HStack(spacing: 6) {
+                if unread {
+                    Circle().fill(.tint).frame(width: 8, height: 8).accessibilityHidden(true)
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("New reply, unread")
-            } else {
-                Text(meta.updated, format: .relative(presentation: .named))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(meta.updated, format: time)
+                    .font(.subheadline)
+                    .monospacedDigit()
+                    .foregroundStyle(unread ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
             }
         }
+    }
+}
+
+/// A call waiting for approval, in the list above the conversations: what Pi wants to do, and where.
+private struct ApprovalListRow: View {
+    let request: ApprovalRequest
+    let conversation: String?
+
+    var body: some View {
+        let title = ToolTitles.title(for: request.tool)
+        HStack(spacing: 12) {
+            SettingsIcon(systemImage: title.symbol, tint: title.tint)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title.action).font(.body.weight(.medium)).lineLimit(1)
+                Text(conversation ?? "A conversation").font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            Text("Review")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.orange)
+        }
         .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Opens the conversation to allow or deny it")
     }
 }
 
@@ -249,19 +379,19 @@ private struct ConversationWorkingStatus: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 6) {
             Circle()
                 .fill(Color(red: 0.89, green: 0.49, blue: 0.44))
-                .frame(width: 6, height: 6)
+                .frame(width: 7, height: 7)
                 .phaseAnimator(reduceMotion ? [false] : [false, true]) { dot, dimmed in
-                    dot.opacity(dimmed ? 0.4 : 1)
+                    dot.opacity(dimmed ? 0.35 : 1)
                 } animation: { _ in
-                    .easeInOut(duration: 1.2)
+                    .easeInOut(duration: 0.9)
                 }
                 .accessibilityHidden(true)
-            Text("Working…")
+            Text("Working")
         }
-        .font(.caption)
+        .font(.subheadline)
         .foregroundStyle(.secondary)
         .accessibilityElement(children: .combine)
     }
@@ -279,13 +409,9 @@ struct ApprovalSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    Label {
-                        Text("Pi wants to run **\(request.tool)**")
-                    } icon: {
-                        Image(systemName: "hand.raised.fill").foregroundStyle(.orange)
-                    }
-                    Text(store.meta(request.conversationId)?.title ?? "Conversation \(request.conversationId)")
-                        .foregroundStyle(.secondary)
+                    header
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4))
                 }
                 if let surface {
                     Section("Widget") {
@@ -295,28 +421,42 @@ struct ApprovalSheet: View {
                 }
                 if request.tool == "ssh_exec", let command = request.arguments["command"]?.string {
                     // The whole command, as it will run (docs/adr/0012-ssh-hosts.md).
-                    Section("Command") {
+                    Section {
                         LabeledContent("Host", value: sshHostLabel)
                         Text(command)
                             .font(.callout.monospaced())
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .accessibilityIdentifier("approval.command")
+                    } header: {
+                        Text("Command")
+                    } footer: {
+                        footer
                     }
-                } else {
-                    Section("Details") {
-                        ForEach(request.arguments.fields, id: \.0) { key, value in
-                            LabeledContent(key) { Text(value).multilineTextAlignment(.trailing).textSelection(.enabled) }
+                } else if !details.isEmpty {
+                    Section {
+                        ForEach(details, id: \.key) { row in
+                            if row.value.count > 40 || row.value.contains("\n") {
+                                // Long values (a prompt, notes, a link) read better on their own lines.
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(row.label).font(.subheadline).foregroundStyle(.secondary)
+                                    Text(row.value).textSelection(.enabled)
+                                }
+                                .padding(.vertical, 2)
+                            } else {
+                                LabeledContent(row.label) { Text(row.value).multilineTextAlignment(.trailing).textSelection(.enabled) }
+                            }
                         }
+                    } header: {
+                        Text("Details")
+                    } footer: {
+                        footer
                     }
-                }
-                Section {
-                    Text("The conversation waits for your answer, even if Pi is closed in the meantime.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
                 }
             }
-            .safeAreaInset(edge: .bottom) {
+            .contentMargins(.top, 0, for: .scrollContent)
+            .scrollEdgeEffectStyle(.hard, for: .bottom)
+            .safeAreaBar(edge: .bottom) {
                 HStack(spacing: 12) {
                     Button(role: .destructive) {
                         answer(false)
@@ -347,6 +487,31 @@ struct ApprovalSheet: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Later", action: later) }
             }
         }
+    }
+
+    private var details: [(key: String, label: String, value: String)] { ApprovalDetails.rows(request.arguments) }
+
+    private var footer: some View {
+        Text("Pi calls \(Text(request.tool).font(.footnote.monospaced())). The conversation waits for your answer, even if Pi is closed in the meantime.")
+    }
+
+    /// What Pi wants to do, in words, and where; the tool's own name is in the footer, for those who want the exact call.
+    private var header: some View {
+        let title = ToolTitles.title(for: request.tool)
+        return HStack(spacing: 14) {
+            SettingsIcon(systemImage: title.symbol, tint: title.tint, size: 46)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title.action)
+                    .font(.title3.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("In “\(store.meta(request.conversationId)?.title ?? "Conversation \(request.conversationId)")”")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 0)
+        }
+        .accessibilityIdentifier("approval.header")
     }
 
     private var sshHostLabel: String {

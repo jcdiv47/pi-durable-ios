@@ -24,6 +24,8 @@ struct ConversationView: View {
     @State private var queueActions: Set<Int> = []
     @State private var keyboardScroll = TranscriptKeyboardScroll()
     @State private var voice = VoiceInput()
+    /// Counts messages sent from the composer, for the send haptic.
+    @State private var sent = 0
 
     private var state: ConversationState { store.state(conversationId) }
     private var meta: ConversationMeta? { store.meta(conversationId) }
@@ -39,11 +41,16 @@ struct ConversationView: View {
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity)
                     }
-                    ForEach(TranscriptRow.rows(state.items)) { row in
+                    let rows = TranscriptRow.rows(state.items)
+                    let answers = TranscriptRow.turnEnds(rows, busy: state.live.busy)
+                    ForEach(rows) { row in
                         switch row {
                         case let .item(item, resent):
                             TranscriptItemView(item: item, state: state, store: store, resent: resent)
                                 .contextMenu { itemMenu(item) }
+                            if answers.contains(item.id), let text = item.text, !text.isEmpty {
+                                AnswerActions(text: text) { fork(at: item) }
+                            }
                         case let .work(_, steps):
                             WorkRow(steps: steps, state: state, store: store)
                         }
@@ -72,23 +79,22 @@ struct ConversationView: View {
             .safeAreaInset(edge: .top) {
                 if let warning = store.mcpWarning { MCPWarningBanner(store: store, text: warning) }
             }
-            .safeAreaInset(edge: .bottom) {
+            .safeAreaBar(edge: .bottom) {
                 composer
             }
         }
         .overlay {
             if state.loaded && state.items.isEmpty && !state.live.busy {
-                ContentUnavailableView {
-                    Label {
-                        Text("Ask Pi anything")
-                    } icon: {
-                        PiLogo().frame(height: 48)
-                    }
-                } description: {
-                    Text(modelLine)
+                // The suggestions step aside once something is typed or attached.
+                let idle = draft.isEmpty && attachments.isEmpty && skill == nil && voice.phase == .idle
+                ConversationWelcome(modelLine: modelLine, suggestions: idle ? ConversationWelcome.suggestions(offline: state.model?.provider == "scripted") : []) { prompt in
+                    draft = prompt
+                    composing = true
                 }
+                .transition(.opacity)
             }
         }
+        .sensoryFeedback(.impact(weight: .light), trigger: sent)
         .navigationTitle(meta?.title ?? "Conversation")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -145,6 +151,8 @@ struct ConversationView: View {
 
     /// The model the conversation started with, and its effort unless thinking is off. Both are set in Settings, for new conversations.
     private var modelLine: String {
+        // Nothing until the transcript has loaded, rather than a moment of "No model".
+        guard state.model != nil else { return state.loaded ? store.modelName(nil) : " " }
         let name = store.modelName(state.model)
         return state.thinkingLevel == "off" ? name : "\(name) · \(ThinkingLevel.name(state.thinkingLevel)) effort"
     }
@@ -154,11 +162,13 @@ struct ConversationView: View {
             Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = text }
         }
         if item.kind == .assistant || item.kind == .user {
-            Button("Fork from here", systemImage: "arrow.triangle.branch") {
-                Task {
-                    if let fork = await store.fork(conversationId, at: item.id) { path.append(.conversation(fork.id)) }
-                }
-            }
+            Button("Fork from here", systemImage: "arrow.triangle.branch") { fork(at: item) }
+        }
+    }
+
+    private func fork(at item: DisplayItem) {
+        Task {
+            if let fork = await store.fork(conversationId, at: item.id) { path.append(.conversation(fork.id)) }
         }
     }
 
@@ -399,6 +409,7 @@ struct ConversationView: View {
                 draft = ""
                 attachments = []
                 skill = nil
+                self.sent += 1
                 Task { await store.send(text, attachments: sent, skill: ran, to: conversationId) }
             }
         } label: {
@@ -665,5 +676,105 @@ private struct QueuedRow: View {
             Button("Remove", systemImage: "xmark", role: .destructive, action: remove)
         }
         .disabled(working)
+    }
+}
+
+/// A new conversation's empty page: the logo, the model it runs on, and a few things to try, each of which fills the
+/// composer (to edit before sending) rather than sending, so nothing reaches a provider without the user's say.
+struct ConversationWelcome: View {
+    struct Suggestion: Identifiable {
+        let symbol: String
+        let tint: Color
+        let title: String
+        let prompt: String
+        var id: String { prompt }
+    }
+
+    let modelLine: String
+    let suggestions: [Suggestion]
+    let pick: (String) -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var shown = false
+
+    /// With the offline demo model, prompts that start with the words it answers to (js/src/app/scripted.ts).
+    static func suggestions(offline: Bool) -> [Suggestion] {
+        offline ? [
+            Suggestion(symbol: "calendar", tint: .red, title: "What's on my calendar today?", prompt: "Calendar for today"),
+            Suggestion(symbol: "checklist", tint: .orange, title: "Make a checklist card", prompt: "Card with a checklist for my errands"),
+            Suggestion(symbol: "square.grid.2x2.fill", tint: .cyan, title: "Design a morning widget", prompt: "Widget for my morning"),
+            Suggestion(symbol: "text.alignleft", tint: .indigo, title: "Show what answers look like", prompt: "Markdown sample"),
+        ] : [
+            Suggestion(symbol: "calendar", tint: .red, title: "What's on my calendar today?", prompt: "What's on my calendar today?"),
+            Suggestion(symbol: "checklist", tint: .orange, title: "Remind me to water the plants", prompt: "Remind me to water the plants at 6 pm"),
+            Suggestion(symbol: "square.grid.2x2.fill", tint: .cyan, title: "Make a widget for my day", prompt: "Make a Home Screen widget with my steps and my next event"),
+            Suggestion(symbol: "timer", tint: .pink, title: "Set a 10 minute timer", prompt: "Set a timer for 10 minutes"),
+        ]
+    }
+
+    var body: some View {
+        ViewThatFits(in: .vertical) {
+            content(withSuggestions: true)
+            content(withSuggestions: false)
+        }
+        .padding(.horizontal, 24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Only the suggestions come and go here; nothing else in the conversation animates with them.
+        .animation(.easeOut(duration: 0.2), value: suggestions.isEmpty)
+        .onAppear { shown = true }
+    }
+
+    private func content(withSuggestions: Bool) -> some View {
+        VStack(spacing: 0) {
+            PiLogo()
+                .frame(height: 44)
+                .padding(.bottom, 16)
+                .accessibilityHidden(true)
+            Text("Ask Pi anything")
+                .font(.title2.weight(.semibold))
+            Text(modelLine)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .padding(.top, 4)
+            if withSuggestions && !suggestions.isEmpty {
+                VStack(spacing: 8) {
+                    ForEach(Array(suggestions.enumerated()), id: \.element.id) { index, suggestion in
+                        button(suggestion)
+                            .opacity(shown || reduceMotion ? 1 : 0)
+                            .offset(y: shown || reduceMotion ? 0 : 8)
+                            .animation(.easeOut(duration: 0.3).delay(0.05 * Double(index)), value: shown)
+                    }
+                }
+                .frame(maxWidth: 380)
+                .padding(.top, 28)
+                .transition(.opacity)
+            }
+        }
+    }
+
+    private func button(_ suggestion: Suggestion) -> some View {
+        Button {
+            pick(suggestion.prompt)
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: suggestion.symbol)
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(suggestion.tint)
+                    .frame(width: 24)
+                Text(suggestion.title)
+                    .foregroundStyle(.primary)
+                    .multilineTextAlignment(.leading)
+                Spacer(minLength: 0)
+                Image(systemName: "arrow.up.left")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 13)
+            .contentShape(.rect(cornerRadius: 18))
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 18))
+        .accessibilityHint("Puts it in the message field")
+        .accessibilityIdentifier("welcome.suggestion")
     }
 }

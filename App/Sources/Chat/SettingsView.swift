@@ -16,7 +16,7 @@ struct SettingsView: View {
                 NavigationLink {
                     ModelSettingsView(store: store)
                 } label: {
-                    SettingsRow("Default Model", systemImage: "cpu", tint: .purple) {
+                    SettingsRow("Default Model", systemImage: "cpu.fill", tint: .purple) {
                         Text(store.model(store.defaultModel)?.name ?? store.defaultModel.key)
                     }
                 }
@@ -24,7 +24,7 @@ struct SettingsView: View {
                 NavigationLink {
                     InstructionsView(store: store)
                 } label: {
-                    SettingsRow("Instructions", systemImage: "text.page", tint: .blue) {
+                    SettingsRow("Instructions", systemImage: "doc.text.fill", tint: .indigo) {
                         Text(store.instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "None" : "\(store.instructions.count.formatted()) characters")
                     }
                 }
@@ -32,11 +32,22 @@ struct SettingsView: View {
                 NavigationLink {
                     SkillsView(store: store)
                 } label: {
-                    SettingsRow("Skills", systemImage: "book.closed", tint: .brown) {
+                    SettingsRow("Skills", systemImage: "book.closed.fill", tint: .brown) {
                         Text(store.skills.isEmpty ? "None" : "\(store.skills.count)")
                     }
                 }
                 .accessibilityIdentifier("settings.skills")
+                // A route, not a destination closure: its rows push conversations onto the same path.
+                NavigationLink(value: Route.archived) {
+                    SettingsRow("Archived Conversations", systemImage: "archivebox.fill", tint: .gray) {
+                        Text("\(store.archivedConversations.count)")
+                    }
+                }
+            } header: {
+                Text("Chat")
+            }
+
+            Section {
                 Picker(selection: $store.openLinksInApp) {
                     Text("Pi").tag(true)
                     Text("Default Browser").tag(false)
@@ -45,28 +56,22 @@ struct SettingsView: View {
                     Label {
                         Text("Open Links In")
                     } icon: {
-                        Image(systemName: "safari").foregroundStyle(.blue)
+                        SettingsIcon(systemImage: "safari.fill", tint: .blue)
                     }
                 }
                 .pickerStyle(.menu)
                 .accessibilityIdentifier("settings.links")
-                // A route, not a destination closure: its rows push conversations onto the same path.
-                NavigationLink(value: Route.archived) {
-                    SettingsRow("Archived Conversations", systemImage: "archivebox", tint: .indigo) {
-                        Text("\(store.archivedConversations.count)")
-                    }
-                }
-            } header: {
-                Text("Chat")
             } footer: {
-                Text("In Pi, a page slides in over the chat; swipe right from the left edge to go back. Map links always open in Maps.")
+                Text(store.openLinksInApp
+                    ? "Links open over the chat; swipe from the left edge to come back. Map links open in Maps."
+                    : "Links open in your default browser. Map links open in Maps.")
             }
 
             Section {
                 NavigationLink {
                     ProvidersSettingsView(store: store)
                 } label: {
-                    SettingsRow("Model Providers", systemImage: "key", tint: .orange) {
+                    SettingsRow("Model Providers", systemImage: "key.fill", tint: .orange) {
                         Text(savedProviders == 0 ? "No keys" : "\(savedProviders) saved")
                     }
                 }
@@ -98,7 +103,7 @@ struct SettingsView: View {
                 NavigationLink {
                     SSHHostsSettingsView(store: store)
                 } label: {
-                    SettingsRow("SSH Hosts", systemImage: "terminal", tint: .mint) {
+                    SettingsRow("SSH Hosts", systemImage: "terminal.fill", tint: .mint) {
                         Text(store.sshHosts.isEmpty ? "None" : "\(store.sshHosts.count)")
                     }
                 }
@@ -113,7 +118,7 @@ struct SettingsView: View {
                 NavigationLink {
                     ToolApprovalsView(store: store)
                 } label: {
-                    SettingsRow("Tool Approvals", systemImage: "hand.raised", tint: .green) {
+                    SettingsRow("Tool Approvals", systemImage: "hand.raised.fill", tint: .green) {
                         if askingTools > 0 { Text("\(askingTools) ask first") }
                     }
                 }
@@ -124,29 +129,30 @@ struct SettingsView: View {
 
             Section {
                 NavigationLink(value: Route.schedules) {
-                    SettingsRow("Scheduled Tasks", systemImage: "clock.arrow.circlepath", tint: .pink)
+                    SettingsRow("Scheduled Tasks", systemImage: "clock.arrow.circlepath", tint: .red)
                 }
                 NavigationLink(value: Route.surfaces) {
-                    SettingsRow("Widgets", systemImage: "square.grid.2x2", tint: .cyan)
+                    SettingsRow("Widgets", systemImage: "square.grid.2x2.fill", tint: .cyan)
                 }
                 NavigationLink(value: Route.alarms) {
-                    SettingsRow("Alarms & Timers", systemImage: "alarm", tint: .orange)
+                    SettingsRow("Alarms & Timers", systemImage: "alarm.fill", tint: .orange)
                 }
                 .accessibilityIdentifier("settings.alarms")
                 NavigationLink {
                     PhotoSearchSettingsView()
                 } label: {
-                    SettingsRow("Photo Search", systemImage: "photo.on.rectangle.angled", tint: .orange)
+                    SettingsRow("Photo Search", systemImage: "photo.on.rectangle.angled", tint: .indigo)
                 }
                 .accessibilityIdentifier("settings.photos")
                 NavigationLink(value: Route.diagnostics) {
-                    SettingsRow("Diagnostics", systemImage: "stethoscope", tint: .secondary)
+                    SettingsRow("Diagnostics", systemImage: "stethoscope", tint: .gray)
                 }
             } header: {
                 Text("Pi")
             }
         }
         .navigationTitle("Settings")
+        .navigationBarTitleDisplayMode(.large)
         .task {
             await store.refreshTools()
             await store.refreshModels()
@@ -184,9 +190,32 @@ struct SettingsRow<Value: View>: View {
             Label {
                 Text(title)
             } icon: {
-                Image(systemName: systemImage).foregroundStyle(tint)
+                SettingsIcon(systemImage: systemImage, tint: tint)
             }
         }
+    }
+}
+
+/// A white symbol on a colored rounded square, as iOS Settings draws its rows' icons. Scales with Dynamic Type.
+struct SettingsIcon: View {
+    let systemImage: String
+    let tint: Color
+    @ScaledMetric private var size: CGFloat
+
+    init(systemImage: String, tint: Color, size: CGFloat = 30) {
+        self.systemImage = systemImage
+        self.tint = tint
+        _size = ScaledMetric(wrappedValue: size, relativeTo: .body)
+    }
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .font(.system(size: size * 0.53, weight: .semibold))
+            .symbolRenderingMode(.monochrome)
+            .foregroundStyle(.white)
+            .frame(width: size, height: size)
+            .background(tint.gradient, in: .rect(cornerRadius: size * 0.26, style: .continuous))
+            .accessibilityHidden(true)
     }
 }
 
