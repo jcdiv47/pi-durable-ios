@@ -72,6 +72,14 @@ struct SettingsView: View {
                 }
                 .accessibilityIdentifier("settings.providers")
                 NavigationLink {
+                    IntelligenceSettingsView(store: store)
+                } label: {
+                    SettingsRow("Apple Intelligence", systemImage: "apple.intelligence", tint: .pink) {
+                        Text(store.intelligenceStatus == .available ? "On device" : "Unavailable")
+                    }
+                }
+                .accessibilityIdentifier("settings.intelligence")
+                NavigationLink {
                     WebSearchSettingsView(store: store)
                 } label: {
                     SettingsRow("Web Search", systemImage: "magnifyingglass", tint: .teal) {
@@ -113,6 +121,12 @@ struct SettingsView: View {
                 NavigationLink(value: Route.surfaces) {
                     SettingsRow("Widgets", systemImage: "square.grid.2x2", tint: .cyan)
                 }
+                NavigationLink {
+                    PhotoSearchSettingsView()
+                } label: {
+                    SettingsRow("Photo Search", systemImage: "photo.on.rectangle.angled", tint: .orange)
+                }
+                .accessibilityIdentifier("settings.photos")
                 NavigationLink(value: Route.diagnostics) {
                     SettingsRow("Diagnostics", systemImage: "stethoscope", tint: .secondary)
                 }

@@ -45,6 +45,21 @@ targets:
       - path: App/Resources/pi-conformance.js
         optional: true
         buildPhase: resources
+      # Photo search's MobileCLIP encoders and CLIP tokenizer, from scripts/fetch-mobileclip.sh (not checked in: too
+      # big, and under Apple's sample code license; docs/adr/0010-photo-search.md). Without them photo search says so.
+      - path: App/Models/MobileCLIPImage.mlpackage
+        optional: true
+      - path: App/Models/MobileCLIPText.mlpackage
+        optional: true
+      - path: App/Models/clip-vocab.json
+        optional: true
+        buildPhase: resources
+      - path: App/Models/clip-merges.txt
+        optional: true
+        buildPhase: resources
+      - path: App/Models/mobileclip-variant.txt
+        optional: true
+        buildPhase: resources
     dependencies:
       - package: PiRuntime
       - package: PiUI
@@ -66,6 +81,8 @@ targets:
         PRODUCT_NAME: PiDurable
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_USER_SCRIPT_SANDBOXING: NO # "Bundle JS" writes into the source tree
+        # The MobileCLIP models are loaded by URL (`ClipEncoder.bundled`); no generated classes.
+        COREML_CODEGEN_LANGUAGE: None
     info:
       path: App/Info.plist
       properties:
@@ -81,6 +98,7 @@ targets:
         BGTaskSchedulerPermittedIdentifiers:
           - dev.jcdiv47.pidurable.refresh
           - dev.jcdiv47.pidurable.processing
+          - dev.jcdiv47.pidurable.photos
           - dev.jcdiv47.pidurable.run.*
         NSSupportsLiveActivities: true
         # Widget and Live Activity taps: pidurable://conversation/<id>, pidurable://widgets, pidurable://tasks.
@@ -93,6 +111,7 @@ targets:
         NSHealthShareUsageDescription: Pi reads the health data you ask it about.
         NSLocationWhenInUseUsageDescription: Pi looks up where you are only when a request needs it, such as nearby places or the weather.
         NSHealthUpdateUsageDescription: Pi saves health data only when you ask it to.
+        NSPhotoLibraryUsageDescription: Pi searches your photos on this iPhone when you ask it to find one. The photos never leave your iPhone.
         NSCameraUsageDescription: Pi uses the camera only when you take a photo to attach to a message.
         NSMicrophoneUsageDescription: Pi records you only while you dictate a message, and sends the recording to OpenAI to turn it into text.
         # MCP servers in the homelab (docs/adr/0006-mcp-servers.md): plain HTTP to local names and to Tailscale's

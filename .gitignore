@@ -40,3 +40,6 @@ Widgets/Info.plist
 Widgets/PiWidgets.entitlements
 Share/Info.plist
 Share/PiShare.entitlements
+
+# MobileCLIP weights and tokenizer (scripts/fetch-mobileclip.sh)
+App/Models/

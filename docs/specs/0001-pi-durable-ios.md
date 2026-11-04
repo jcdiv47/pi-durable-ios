@@ -19,7 +19,7 @@ agent running inside iOS's lifecycle needs.
 
 A personal, sideloaded, **iPhone-only** native SwiftUI app that runs the Pi Durable
 harness **on the device**, inside an embedded JavaScriptCore runtime. LLM calls go
-to API-key providers through pi-ai. Swift owns everything Apple-specific (UI,
+to API-key providers through pi-ai, or to Apple Intelligence on the device. Swift owns everything Apple-specific (UI,
 widgets, App Intents, background execution, EventKit, HealthKit, Keychain, SQLite).
 The TypeScript harness owns the agent loop, durable state, tools and documents.
 
@@ -37,7 +37,9 @@ an explicit, tunable setting (see "Generativity dial").
 - iPhone only. Apple Watch is **deferred** with no milestone ([ADR 0003](../adr/0003-defer-apple-watch.md)).
   iPad, Mac and visionOS are out of scope.
 - Agent runtime: Pi Durable + pi-ai, **API-key providers** (Anthropic, OpenAI,
-  OpenRouter, any OpenAI-compatible base URL). No OAuth/subscription login.
+  OpenRouter, any OpenAI-compatible base URL), plus **Apple Intelligence** (Foundation Models, on device) as a
+  keyless, text-only provider and for cheap jobs such as titles ([ADR 0008](../adr/0008-apple-intelligence.md)).
+  No OAuth/subscription login.
 - Apple Notes is deferred (it has no public API; a later workaround goes through Shortcuts).
 - Wrap Apple components as a typed layer exposed to the agent through tools,
   with an escape hatch to primitives. The generative/deterministic balance is a
@@ -47,8 +49,8 @@ an explicit, tunable setting (see "Generativity dial").
 
 - App Store distribution, multiple users, accounts, a server backend.
 - iCloud/CloudKit sync of agent state (Pi Durable expects one process to own its storage).
-- On-device LLMs (Apple Foundation Models, MLX). A Foundation Models pi-ai provider
-  for cheap jobs (titles, routing) is a later idea, not v1.
+- Bundled on-device LLMs (MLX and the like). Apple's Foundation Models are in
+  ([ADR 0008](../adr/0008-apple-intelligence.md)).
 - Bash/shell tools or `pi-coding-agent` coding workflows.
 - Apple Notes, Mail, Messages automation.
 
@@ -182,6 +184,7 @@ Lifecycle rules:
 | `reminders_lists` | safe | list IDs, account names and write access |
 | `reminders_update` | not replayed | edit fields or move to an existing list; approval required by default; re-query after an interrupted save |
 | `reminders_complete` | safe | sets a state; setting it twice is the same as once |
+| `photos_search` | safe | read-only; asks for Photos access on first use; IDs and dates only |
 | `location_current` | safe | read-only; asks for When In Use permission on first use |
 | `health_query` (quantity/category/summary) | safe | read-only; ask for HealthKit authorization per type |
 | `notify_schedule` | safe | the notification identifier is the idempotency key |
@@ -309,7 +312,12 @@ change only validation rules and tool descriptions, never the renderer.
   to the model as image blocks; text, links and file text as text blocks.
 - **EventKit**, **HealthKit** (read), **CoreLocation** (on request), **Spotlight** (index
   conversations/surfaces via `IndexedEntity`).
-- Later: WeatherKit, MapKit search, Photos, Contacts, Notes via Shortcuts, Foundation Models provider.
+- **Foundation Models** ([ADR 0008](../adr/0008-apple-intelligence.md)): the `apple` provider (`apple/on-device`; Private
+  Cloud Compute later, it needs a managed entitlement), served by Swift as an in-process OpenAI-compatible endpoint;
+  text only, no tools. On-device conversation titles and notification summaries. The ADR lists further use cases.
+- **Photos** ([ADR 0010](../adr/0010-photo-search.md)): `photos_search` over an on-device MobileCLIP index; the model
+  gets asset IDs and dates, the user sees thumbnails.
+- Later: WeatherKit, MapKit search, Contacts, Notes via Shortcuts.
 
 ## Repository layout (proposed)
 
@@ -372,6 +380,11 @@ from logs.
 Share extension (images, text, links, files; prompt; new or recent conversation; send or
 draft), composer attachments (Photos, Paste, Files), attachments in the transcript, `share:<id>`
 request IDs.
+
+### M6 — Apple Intelligence
+The `apple` provider (on device) over an in-process endpoint, on-device titles and notification summaries,
+Settings › Apple Intelligence ([ADR 0008](../adr/0008-apple-intelligence.md)). Photo search with MobileCLIP
+(`photos_search`, an on-device index, Settings › Photo Search; [ADR 0010](../adr/0010-photo-search.md)).
 
 ### Deferred
 Watch app and Smart Stack widgets (Watch as a client; the iPhone owns the harness). See

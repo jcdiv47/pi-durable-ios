@@ -13,6 +13,7 @@ enum ResultCardContent {
     case location(LocationResult)
     case health(HealthResult)
     case web(WebSearchResult)
+    case photos(PhotosResult)
 
     init?(call: ToolCallItem, result: DisplayItem) {
         guard result.isError != true, let data = result.data else { return nil }
@@ -47,6 +48,9 @@ enum ResultCardContent {
         case "web_search":
             guard let value = data.decoded(WebSearchResult.self), !value.results.isEmpty else { return nil }
             self = .web(value)
+        case "photos_search":
+            guard let value = data.decoded(PhotosResult.self) else { return nil }
+            self = .photos(value)
         default:
             return nil
         }
@@ -99,6 +103,8 @@ struct ResultCard: View {
             HealthCard(value: value)
         case let .web(value):
             WebSearchCard(value: value)
+        case let .photos(value):
+            PhotosCard(value: value)
         }
     }
 }

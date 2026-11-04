@@ -21,18 +21,23 @@ public final class JSRuntime: @unchecked Sendable {
         public var onLog: (@Sendable (String, String) -> Void)?
         /// Answers `hostCall(name, json)` from JS (Apple tools and the like) with JSON text, off the JS queue.
         public var hostCall: HostCallHandler?
+        /// Hosts served in this process instead of the network (lowercased), such as Apple Intelligence's
+        /// OpenAI-compatible endpoint (docs/adr/0008-apple-intelligence.md). `fetch` to one never leaves the device.
+        public var localHosts: [String: any LocalHTTPService]
         public init(
             keys: ProviderKeySource? = nil,
             usage: ServiceUsage? = nil,
             onEvent: (@Sendable (String) -> Void)? = nil,
             onLog: (@Sendable (String, String) -> Void)? = nil,
-            hostCall: HostCallHandler? = nil
+            hostCall: HostCallHandler? = nil,
+            localHosts: [String: any LocalHTTPService] = [:]
         ) {
             self.keys = keys
             self.usage = usage
             self.onEvent = onEvent
             self.onLog = onLog
             self.hostCall = hostCall
+            self.localHosts = localHosts
         }
     }
 
@@ -177,7 +182,7 @@ public final class JSRuntime: @unchecked Sendable {
         }
         context.isInspectable = true
 
-        fetch = FetchBridge(keys: options.keys, usage: options.usage) { [weak self] id, event in
+        fetch = FetchBridge(keys: options.keys, usage: options.usage, localHosts: options.localHosts) { [weak self] id, event in
             guard let self else { return }
             self.queue.async { self.deliverFetch(id, event) }
         }

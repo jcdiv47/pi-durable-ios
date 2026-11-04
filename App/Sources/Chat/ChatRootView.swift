@@ -14,7 +14,8 @@ enum Route: Hashable {
     /// A link, when links open in Pi (`BrowserView`).
     case browser(URL)
 
-    /// `pidurable://conversation/<id>` (widget and Live Activity taps), `pidurable://widgets`, `pidurable://tasks`.
+    /// `pidurable://conversation/<id>` (widget and Live Activity taps), `pidurable://widgets`, `pidurable://tasks`,
+    /// `pidurable://settings`.
     /// `pidurable://share/<id>` is no route: the share extension's item goes through `ChatStore.receiveShares`.
     init?(url: URL) {
         guard url.scheme == "pidurable" else { return nil }
@@ -22,6 +23,7 @@ enum Route: Hashable {
         case "conversation": guard let id = Int(url.lastPathComponent) else { return nil }; self = .conversation(id)
         case "widgets": self = .surfaces
         case "tasks": self = .schedules
+        case "settings": self = .settings
         default: return nil
         }
     }

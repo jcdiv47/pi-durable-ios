@@ -145,6 +145,12 @@ struct EntryPointTests {
         try await harness.perform("PiRuntime.send", [meta.id, "widget please", "r1"])
         try await until { log.calls("ui.publish") == 1 }
         let publishedId = "c\(meta.id)-s1"
+        // The host call comes before JS commits the published surface; wait for the commit, which widgetAction reads.
+        for _ in 0 ..< 200 {
+            let published: [PublishedInfo] = try await harness.call("PiRuntime.publishedSurfaces")
+            if published.contains(where: { $0.publishedId == publishedId }) { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
         let list: [[String: any Sendable]] = [["title": "Water"], ["title": "Walk"]]
         func action(_ action: [String: any Sendable], _ requestId: String) async throws {
             try await harness.perform("PiRuntime.widgetAction", [publishedId, action, requestId, "scripted", "assistant"])

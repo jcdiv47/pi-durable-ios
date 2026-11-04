@@ -60,6 +60,51 @@ export function customProvider(config: CustomProvider) {
 	});
 }
 
+/** An Apple Intelligence model Swift reports available (`AppleIntelligence.Model`). */
+export type AppleModel = {
+	readonly id: string;
+	readonly name: string;
+	readonly contextWindow: number;
+	readonly maxTokens: number;
+};
+
+/** Registered while Apple Intelligence is unavailable, so conversations on it keep resolving their model. */
+const appleFallback: AppleModel = { id: "on-device", name: "Apple Intelligence (on device)", contextWindow: 4096, maxTokens: 1024 };
+
+/** Must match `AppleIntelligence.host`: Swift's fetch bridge answers this host in the process. */
+export const appleBaseUrl = "https://apple-intelligence.pi.local/v1";
+
+/**
+ * Apple Intelligence (docs/adr/0008-apple-intelligence.md): Swift serves the on-device model as an OpenAI-compatible
+ * endpoint on a host that never reaches the network, so it needs no key. Text only; the endpoint ignores tools.
+ */
+export function appleProvider(models: readonly AppleModel[]) {
+	return createProvider({
+		id: "apple",
+		name: "Apple Intelligence",
+		baseUrl: appleBaseUrl,
+		auth: {
+			apiKey: {
+				name: "Apple Intelligence (no key)",
+				resolve: async () => ({ auth: { apiKey: "on-device" }, source: "Apple Intelligence" }),
+			},
+		},
+		models: models.map((model) => ({
+			id: model.id,
+			name: model.name,
+			api: "openai-completions" as const,
+			provider: "apple",
+			baseUrl: appleBaseUrl,
+			reasoning: false,
+			input: ["text" as const],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: model.contextWindow,
+			maxTokens: model.maxTokens,
+		})),
+		api: openAICompletionsApi(),
+	});
+}
+
 export class ModelSetup {
 	/** Providers whose keys Swift holds; only these resolve to a placeholder key. */
 	keyed = new Set<string>();
@@ -81,7 +126,19 @@ export class ModelSetup {
 		this.models.setProvider(openaiProvider());
 		this.models.setProvider(openrouterProvider());
 		this.models.setProvider(createScriptedModel().provider);
+		this.models.setProvider(appleProvider([appleFallback]));
 	}
+
+	/** The Apple Intelligence models that can run now; none removes the provider from the picker. */
+	setApple(models: readonly AppleModel[]): void {
+		this.apple = models.length > 0;
+		// Kept registered with no models' worth of availability: a conversation already on `apple/on-device` must still
+		// resolve its model (and fail with Swift's "unavailable" error) rather than lose it.
+		this.models.setProvider(appleProvider(models.length > 0 ? models : [appleFallback]));
+	}
+
+	/** Whether the Apple models are offered in the picker. */
+	private apple = false;
 
 	setCustom(config: CustomProvider | undefined): void {
 		if (config === undefined || config.baseUrl === "" || config.modelIds.length === 0) this.models.deleteProvider("custom");
@@ -111,7 +168,7 @@ export class ModelSetup {
 	}[] {
 		return this.models
 			.getProviders()
-			.filter((provider) => this.keyed.has(provider.id) || provider.id === "scripted")
+			.filter((provider) => this.keyed.has(provider.id) || provider.id === "scripted" || (provider.id === "apple" && this.apple))
 			.flatMap((provider) =>
 				this.models.getModels(provider.id).map((model) => ({
 					provider: provider.id,

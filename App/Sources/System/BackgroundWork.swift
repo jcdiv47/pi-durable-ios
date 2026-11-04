@@ -1,5 +1,6 @@
 import BackgroundTasks
 import Foundation
+import PiAppleTools
 
 /// iOS's side of Pi's wake-ups (spec "Durability on iOS"). Pi reports `onWake` (`active` while work can run, `at` for
 /// the earliest sleep); with `onWake` set it arms no timers of its own, so:
@@ -14,6 +15,8 @@ import Foundation
 final class BackgroundWork {
     nonisolated static let refresh = "dev.jcdiv47.pidurable.refresh"
     nonisolated static let processing = "dev.jcdiv47.pidurable.processing"
+    /// Photo indexing while charging (docs/adr/0010-photo-search.md). Never opens Pi.
+    nonisolated static let photos = "dev.jcdiv47.pidurable.photos"
     /// Continued processing tasks use a fresh identifier under this wildcard each time.
     nonisolated static let runPrefix = "dev.jcdiv47.pidurable.run."
 
@@ -44,6 +47,32 @@ final class BackgroundWork {
                 MainActor.assumeIsolated { ChatStore.shared.background.run(task) }
             }
         }
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: photos, using: .main) { task in
+            nonisolated(unsafe) let task = task
+            MainActor.assumeIsolated { ChatStore.shared.background.indexPhotos(task) }
+        }
+    }
+
+    /// Embeds photos until done or iOS wants the time back; asks again for the next charge if any are left.
+    func indexPhotos(_ task: BGTask) {
+        store.diagnostics.record("info", "background", "Woke to index photos")
+        let work = Task { await PhotoIndex.shared.indexAll(deadline: nil) }
+        task.expirationHandler = { work.cancel() }
+        Task {
+            let done = await work.value
+            store.diagnostics.record("info", "background", done ? "Photo index is up to date" : "Photo indexing paused")
+            if !done { await armPhotoIndexing() }
+            task.setTaskCompleted(success: true)
+        }
+    }
+
+    /// While the photo index is behind, a processing task for when the iPhone is charging.
+    func armPhotoIndexing() async {
+        guard await PhotoIndex.shared.behind() else { return }
+        let request = BGProcessingTaskRequest(identifier: Self.photos)
+        request.requiresExternalPower = true
+        request.requiresNetworkConnectivity = false
+        submit(request, "photo indexing while charging")
     }
 
     // MARK: Wake events
@@ -143,6 +172,7 @@ final class BackgroundWork {
     /// The app went to the background: if work is still active, a processing task finishes it later should iOS
     /// suspend the app first.
     func enteredBackground() {
+        Task { await armPhotoIndexing() }
         guard wake.active || !store.busyConversations.isEmpty else { return }
         let request = BGProcessingTaskRequest(identifier: Self.processing)
         request.requiresNetworkConnectivity = true

@@ -114,6 +114,22 @@ final class ChatStore {
         didSet { settings.set(openLinksInApp, forKey: "openLinksInApp") }
     }
 
+    /// Settings › Apple Intelligence (docs/adr/0008-apple-intelligence.md): whether the on-device model can run now.
+    private(set) var intelligenceStatus = AppleIntelligence.status
+    /// On-device conversation titles.
+    var intelligenceTitles: Bool {
+        didSet {
+            settings.set(intelligenceTitles, forKey: "intelligenceTitles")
+            Task { await applyIntelligence() }
+        }
+    }
+    /// On-device summaries in "run finished" notifications.
+    var intelligenceSummaries: Bool {
+        didSet { settings.set(intelligenceSummaries, forKey: "intelligenceSummaries") }
+    }
+    /// Serves the `apple` provider's endpoint and the one-shot jobs.
+    let intelligence = AppleIntelligence(userInstructions: { InstructionsFile.load() })
+
     var custom: PiHarness.CustomProvider? {
         didSet {
             settings.set(try? JSONEncoder().encode(custom), forKey: "customProvider")
@@ -146,6 +162,8 @@ final class ChatStore {
         defaultThinking = settings.string(forKey: "defaultThinking") ?? "medium"
         searchProvider = settings.string(forKey: "searchProvider") ?? "off"
         openLinksInApp = settings.object(forKey: "openLinksInApp") as? Bool ?? true
+        intelligenceTitles = settings.object(forKey: "intelligenceTitles") as? Bool ?? true
+        intelligenceSummaries = settings.object(forKey: "intelligenceSummaries") as? Bool ?? true
         custom = settings.data(forKey: "customProvider").flatMap { try? JSONDecoder().decode(PiHarness.CustomProvider.self, from: $0) }
         ProviderKeys.setCustomHost(custom.flatMap { URL(string: $0.baseUrl)?.host() })
         ProviderKeys.setMCPHosts(Self.mcpHosts(mcpServers))
@@ -205,6 +223,7 @@ final class ChatStore {
             let surfaces = surfaceHost!
             let notifications = notifications!
             let skillLibrary = skillLibrary
+            let intelligence = intelligence
             skills = skillLibrary.list()
             let harness = try await PiHarness.load(bundle: AppModel.bundleURL, options: .init(
                 keys: keys,
@@ -214,6 +233,10 @@ final class ChatStore {
                 },
                 onLog: AppModel.forwardLog,
                 hostCall: { name, json in
+                    if name == "intelligence.title" {
+                        let text = (try JSONDecoder().decode([String: String].self, from: Data(json.utf8)))["text"] ?? ""
+                        return await intelligence.title(for: text).map { JSONValue.string($0).jsonText } ?? "null"
+                    }
                     if SurfaceHost.handlers.contains(name) { return try await surfaces.handle(name, json) }
                     if SkillLibrary.handlers.contains(name) { return try skillLibrary.handle(name, json) }
                     if name == "notify.post" || name == "notify.schedule" {
@@ -221,7 +244,8 @@ final class ChatStore {
                         return try await notifications.post(args)
                     }
                     return try await tools.handle(name, json)
-                }
+                },
+                localHosts: [AppleIntelligence.host: intelligence]
             ))
             _ = try await harness.open(.init(
                 dbPath: directory.appendingPathComponent("session.sqlite").path,
@@ -233,7 +257,9 @@ final class ChatStore {
                 policies: settings.dictionary(forKey: "toolPolicies") as? [String: String],
                 mcpServers: mcpServersJSON,
                 instructions: instructions,
-                skills: skills
+                skills: skills,
+                appleModels: AppleIntelligence.models(),
+                intelligenceTitles: intelligenceTitles
             ))
             self.harness = harness
             conversations = try await harness.call("PiRuntime.conversations")
@@ -257,6 +283,8 @@ final class ChatStore {
             publishRecent()
             await receiveShares()
             await sweepAttachments()
+            // New photos since last time, once Photos access was granted (docs/adr/0010-photo-search.md).
+            if PhotoIndex.authorized { await PhotoIndex.shared.startIndexing() }
         } catch {
             phase = .failed(String(describing: error))
             diagnostics.record("error", "app", "Open failed: \(error)")
@@ -555,6 +583,19 @@ final class ChatStore {
             await refreshModels()
         } catch {
             report("providers", error)
+        }
+    }
+
+    /// Apple Intelligence was turned on or off, finished downloading, or a setting changed: the picker and titles follow.
+    func applyIntelligence() async {
+        intelligenceStatus = AppleIntelligence.status
+        guard let harness else { return }
+        do {
+            let models = try AppleIntelligence.models().map { try harness.jsonArgument($0) }
+            try await harness.perform("PiRuntime.setAppleIntelligence", [models, intelligenceTitles])
+            await refreshModels()
+        } catch {
+            report("apple intelligence", error)
         }
     }
 
@@ -1004,8 +1045,15 @@ final class ChatStore {
               let answer = conversation.items.last(where: { $0.kind == .assistant }), answer.stopReason != "aborted"
         else { return }
         let title = meta(conversation.id)?.title ?? "Pi"
-        let text = answer.stopReason == "error" ? "The run failed: \(answer.error ?? "model error")" : answer.text ?? ""
-        Task { await notifications.postAnswer(conversationId: conversation.id, entryId: answer.id, title: title, text: text) }
+        let failed = answer.stopReason == "error"
+        let text = failed ? "The run failed: \(answer.error ?? "model error")" : answer.text ?? ""
+        // A long answer gets an on-device summary (docs/adr/0008-apple-intelligence.md); the first 400 characters otherwise.
+        let summarize = intelligenceSummaries && !failed && text.count > 280
+        let intelligence = intelligence
+        Task {
+            let body = summarize ? await intelligence.summary(of: text) ?? text : text
+            await notifications.postAnswer(conversationId: conversation.id, entryId: answer.id, title: title, text: body)
+        }
     }
 
     func conversationAppeared(_ id: Int) {
@@ -1046,6 +1094,9 @@ final class ChatStore {
                 for request in PendingIntents.drain() { await perform(request) }
                 await receiveShares()
                 await refreshSchedules()
+                if PhotoIndex.authorized { await PhotoIndex.shared.startIndexing() }
+                // Apple Intelligence may have been turned on or off, or finished downloading, while away.
+                if AppleIntelligence.status != intelligenceStatus { await applyIntelligence() }
             }
         default:
             break

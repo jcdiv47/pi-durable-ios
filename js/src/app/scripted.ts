@@ -15,6 +15,7 @@
 //   "read <url>"  → web_fetch the URL (asks unless the conversation already holds it)
 //   "follow …"    → web_fetch a URL that the offline search only mentions in a snippet (asks)
 //   "tasks …"     → reminders_query for what is due by the end of today
+//   "photos …"    → photos_search for the rest of the prompt
 //   "markdown …"  → a short thought, then an answer with headings, lists, a table, a quote and code
 //   "chores …"    → create_surface and publish_surface for a widget whose checklist rows complete open reminders
 //   "habits …"    → set_value habits (a to-do list), then create_surface and publish_surface for a widget whose checklist
@@ -224,6 +225,8 @@ export function createScriptedModel() {
 				return fauxAssistantMessage(fauxToolCall("reminders_query", { dueBefore: today(24) }), { stopReason: "toolUse" });
 			case "markdown":
 				return fauxAssistantMessage([fauxThinking("They want formatting. A list, a table and some code."), fauxText(markdownAnswer)]);
+			case "photos":
+				return fauxAssistantMessage(fauxToolCall("photos_search", { query: prompt.slice(7) || "a sunset" }), { stopReason: "toolUse" });
 			case "where":
 				return fauxAssistantMessage(fauxToolCall("location_current", {}), { stopReason: "toolUse" });
 			case "search":
