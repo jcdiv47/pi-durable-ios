@@ -63,6 +63,7 @@ final class AppModel {
             case .streamKillStart: try await StreamKill.start(self)
             case .streamKillResume: try await StreamKill.resume(self)
             case .measure: try await M0Runner.measure(self, launchedAtMs: launchedAt)
+            case .intelligenceProbe: try await IntelligenceProbe.run(self)
             }
         } catch {
             status = "Failed: \(error)"

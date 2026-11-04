@@ -197,7 +197,10 @@ public actor PhotoIndex {
         for entry in pending {
             if Task.isCancelled || done == limit || deadline.map({ Date.now >= $0 }) == true { break }
             // Favorites and so on change without a new image: keep the vector, refresh the entry.
-            if let image = await Self.image(entry.id) {
+            let image = await Self.image(entry.id)
+            // Cancelled while waiting (stopped, or the index deleted): don't write into what replaced it.
+            if Task.isCancelled { break }
+            if let image {
                 do {
                     vectors.upsert(entry, vector: try encoder.embed(image: image))
                 } catch {

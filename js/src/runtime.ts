@@ -121,7 +121,11 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 			onWake,
 			onReport: ({ error, ...info }) =>
 				emit({ type: "report", info, error: error instanceof Error ? `${error.name}: ${error.message}` : String(error) }),
-			settings: { toolExecution: "parallel" },
+			settings: {
+				toolExecution: "parallel",
+				// The on-device model's window (4,096) is below the default reserve; its endpoint trims history instead.
+				compaction: { modelOverrides: { "apple/on-device": { enabled: false } } },
+			},
 		},
 		context,
 	);
