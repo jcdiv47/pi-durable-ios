@@ -181,6 +181,8 @@ final class FetchBridge: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         var ids: [Int: Int] = [:] // taskIdentifier -> fetch id
         /// Requests that carry a key, by fetch id: never tell JS a URL with the key in it.
         var keyed: [Int: Keyed] = [:]
+        /// Requests a `LocalHTTPService` is answering, by fetch id.
+        var local: [Int: Task<Void, Never>] = [:]
     }
 
     private struct Keyed {
@@ -205,15 +207,27 @@ final class FetchBridge: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         return URLSession(configuration: configuration, delegate: self, delegateQueue: queue)
     }()
 
-    init(keys: ProviderKeySource?, usage: ServiceUsage? = nil, deliver: @escaping @Sendable (Int, Event) -> Void) {
+    private let localHosts: [String: any LocalHTTPService]
+
+    init(
+        keys: ProviderKeySource?,
+        usage: ServiceUsage? = nil,
+        localHosts: [String: any LocalHTTPService] = [:],
+        deliver: @escaping @Sendable (Int, Event) -> Void
+    ) {
         self.keys = keys
         self.usage = usage
+        self.localHosts = localHosts
         self.deliver = deliver
     }
 
     func start(_ request: Request) {
         guard let url = URL(string: request.url) else {
             deliver(request.id, .error(FetchBridgeError.badURL(request.url).description))
+            return
+        }
+        if let host = url.host?.lowercased(), let service = localHosts[host] {
+            startLocal(request, url: url, service: service)
             return
         }
         var urlRequest: URLRequest
@@ -240,7 +254,55 @@ final class FetchBridge: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         task.resume()
     }
 
+    /// Hands the request to an in-process service. Keys are never substituted: a local host is no provider's.
+    private func startLocal(_ request: Request, url: URL, service: any LocalHTTPService) {
+        let id = request.id
+        let deliver = deliver
+        let local = LocalHTTPRequest(url: url, method: request.method, headers: request.headers, body: request.body)
+        // Holds the lock across `Task` creation so a fast `.end` can't remove the entry before it is stored.
+        lock.withLock { state in
+            state.local[id] = Task { [weak self] in
+                let done = OSAllocatedUnfairLock(initialState: false)
+                await service.respond(to: local) { event in
+                    // Claims the right to deliver; `end` and `error` close it for later events.
+                    let closed = done.withLock { finished -> Bool in
+                        if finished || Task.isCancelled { return true }
+                        if case .end = event { finished = true }
+                        if case .error = event { finished = true }
+                        return false
+                    }
+                    if closed { return }
+                    switch event {
+                    case let .response(status, headers):
+                        deliver(id, .response(
+                            status: status,
+                            statusText: HTTPURLResponse.localizedString(forStatusCode: status),
+                            headers: headers.map { [$0.key.lowercased(), $0.value] },
+                            url: url.absoluteString
+                        ))
+                    case let .chunk(data):
+                        deliver(id, .chunk(data))
+                    case .end:
+                        deliver(id, .end)
+                    case let .error(message):
+                        deliver(id, .error(message))
+                    }
+                }
+                let unfinished = done.withLock { finished in
+                    defer { finished = true }
+                    return !finished
+                }
+                if unfinished, !Task.isCancelled { deliver(id, .end) }
+                self?.lock.withLock { _ = $0.local.removeValue(forKey: id) }
+            }
+        }
+    }
+
     func cancel(_ id: Int) {
+        if let local = lock.withLock({ $0.local.removeValue(forKey: id) }) {
+            local.cancel()
+            return
+        }
         let task = lock.withLock { state -> URLSessionDataTask? in
             guard let task = state.tasks.removeValue(forKey: id) else { return nil }
             state.ids.removeValue(forKey: task.taskIdentifier)
@@ -251,11 +313,12 @@ final class FetchBridge: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     }
 
     func cancelAll() {
-        let tasks = lock.withLock { state -> [URLSessionDataTask] in
+        let (tasks, local) = lock.withLock { state -> ([URLSessionDataTask], [Task<Void, Never>]) in
             defer { state = State() }
-            return Array(state.tasks.values)
+            return (Array(state.tasks.values), Array(state.local.values))
         }
         for task in tasks { task.cancel() }
+        for task in local { task.cancel() }
     }
 
     private func fetchID(_ task: URLSessionTask) -> Int? {
@@ -328,4 +391,33 @@ final class FetchBridge: NSObject, URLSessionDataDelegate, @unchecked Sendable {
             deliver(id, .end)
         }
     }
+}
+
+/// A request to a host served in the process (`JSRuntime.Options.localHosts`).
+public struct LocalHTTPRequest: Sendable {
+    public let url: URL
+    public let method: String
+    public let headers: [(String, String)]
+    public let body: Data?
+
+    public init(url: URL, method: String, headers: [(String, String)] = [], body: Data? = nil) {
+        self.url = url
+        self.method = method
+        self.headers = headers
+        self.body = body
+    }
+}
+
+/// What a local service sends back: one `response`, then chunks, then `end` (or `error` at any point).
+public enum LocalHTTPEvent: Sendable {
+    case response(status: Int, headers: [String: String])
+    case chunk(Data)
+    case end
+    case error(String)
+}
+
+/// Answers `fetch` for a local host. `send` may be called from any thread; after `end` or `error`, or once JS
+/// aborted the request (the task is cancelled), further events are dropped.
+public protocol LocalHTTPService: Sendable {
+    func respond(to request: LocalHTTPRequest, send: @escaping @Sendable (LocalHTTPEvent) -> Void) async
 }

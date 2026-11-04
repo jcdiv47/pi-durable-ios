@@ -149,6 +149,25 @@ const locationCurrent = defineTool({
 	execute: async (args, _api, context) => json(await hostCall("location.current", args, context.abortSignal)),
 });
 
+const photosSearch = defineTool({
+	name: "photos_search",
+	description:
+		"Search the user's photo library by what the photos show (\"whiteboard with a diagram\", \"receipt from a ramen place\", \"my bike\"), " +
+		"with an on-device image model. Returns the best matches' IDs, dates and similarity scores; the user sees them as thumbnails. " +
+		"You never see the photos, so describe what you searched for, not what they show. Scores above about 0.25 are usually good matches. " +
+		"The first call asks the user for permission.",
+	parameters: obj({
+		query: str({ description: "What the photos show, as a short description in English" }),
+		from: opt(isoDate("Only photos taken at or after this")),
+		to: opt(isoDate("Only photos taken before this")),
+		favoritesOnly: opt(bool()),
+		screenshotsOnly: opt(bool()),
+		limit: opt(num({ description: "Maximum matches (default 8, at most 24)" })),
+	}),
+	replay: "safe",
+	execute: async (args, _api, context) => json(await hostCall("photos.search", args, context.abortSignal)),
+});
+
 const currentTime = defineTool({
 	name: "current_time",
 	description: "The current local date and time, with the time zone.",
@@ -177,7 +196,7 @@ const contextSection = section("context", () => {
 	return [
 		"You are Pi, a personal assistant running on the user's iPhone.",
 		`Today is ${weekday}, ${local.slice(0, 10)}. Time zone: ${timeZone}.`,
-		"Use the Apple tools to read the user's calendar, reminders and health data when it helps, and to add events and reminders when asked. Call current_time when the exact time matters.",
+		"Use the Apple tools to read the user's calendar, reminders and health data and to find photos when it helps, and to add events and reminders when asked. Call current_time when the exact time matters.",
 		"Keep answers short; they are read on a phone.",
 	].join("\n");
 });
@@ -185,7 +204,7 @@ const contextSection = section("context", () => {
 export const AppleTools = defineExtension({
 	name: "apple",
 	sections: [contextSection],
-	tools: [currentTime, locationCurrent, calendarQuery, remindersQuery, calendarCreateEvent, remindersCreate, remindersLists, remindersUpdate, remindersComplete, healthQuery],
+	tools: [currentTime, locationCurrent, photosSearch, calendarQuery, remindersQuery, calendarCreateEvent, remindersCreate, remindersLists, remindersUpdate, remindersComplete, healthQuery],
 });
 
 /** Tool names with what they do, for the approval settings screen. */

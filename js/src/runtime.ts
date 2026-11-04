@@ -16,10 +16,10 @@ import { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
 import { AppleTools, appleToolInfo } from "./app/apple.ts";
 import { Approvals, type Decision, defaultPolicies, type ToolPolicy } from "./app/approvals.ts";
 import type { InputAttachment } from "./app/attachments.ts";
-import { Chat, type OutsideInput, type WidgetAction } from "./app/chat.ts";
+import { Chat, intelligenceSettings, type OutsideInput, type WidgetAction } from "./app/chat.ts";
 import { InstructionsExtension, instructionsSettings } from "./app/instructions.ts";
 import { McpHost, type McpServerConfig } from "./app/mcp.ts";
-import { type CustomProvider, ModelSetup } from "./app/models.ts";
+import { type AppleModel, type CustomProvider, ModelSetup } from "./app/models.ts";
 import { answerText, ScheduleTools, scheduleToolInfo } from "./app/schedule.ts";
 import { SkillHost, type SkillInfo } from "./app/skills.ts";
 import { SurfaceTools, surfaceToolInfo } from "./app/surfaces.ts";
@@ -43,6 +43,10 @@ export interface OpenOptions {
 	/** Providers whose keys Swift holds; only these get a placeholder key. */
 	readonly keyedProviders?: readonly string[];
 	readonly customProvider?: CustomProvider;
+	/** Apple Intelligence models that can run now (docs/adr/0008-apple-intelligence.md). */
+	readonly appleModels?: readonly AppleModel[];
+	/** Settings › Apple Intelligence › Titles: on-device conversation titles. */
+	readonly intelligenceTitles?: boolean;
 	/** Where `web_search` searches: Settings › Web search. */
 	readonly searchProvider?: SearchProviderId;
 	readonly policies?: Record<string, ToolPolicy>;
@@ -81,6 +85,8 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 	if (harness !== undefined) throw new Error("PiRuntime is already open");
 	const t0 = performance.now();
 	configureProviders(options.keyedProviders ?? [], options.customProvider);
+	setup.setApple(options.appleModels ?? []);
+	intelligenceSettings.titles = options.intelligenceTitles ?? false;
 	if (options.policies !== undefined) approvals.policies = { ...defaultPolicies, ...options.policies };
 	webSettings.provider = options.searchProvider ?? "off";
 	const models = setup.models;
@@ -115,7 +121,11 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 			onWake,
 			onReport: ({ error, ...info }) =>
 				emit({ type: "report", info, error: error instanceof Error ? `${error.name}: ${error.message}` : String(error) }),
-			settings: { toolExecution: "parallel" },
+			settings: {
+				toolExecution: "parallel",
+				// The on-device model's window (4,096) is below the default reserve; its endpoint trims history instead.
+				compaction: { modelOverrides: { "apple/on-device": { enabled: false } } },
+			},
 		},
 		context,
 	);
@@ -357,6 +367,11 @@ const app = {
 	unpublishSurface: (publishedId: string) => requireChat().unpublish(publishedId),
 	surfaceValues: () => requireChat().values(),
 	configureProviders: async (keyedProviders: string[], custom?: CustomProvider) => configureProviders(keyedProviders, custom),
+	/** Apple Intelligence became available or not, and whether it writes titles. */
+	setAppleIntelligence: async (models: AppleModel[], titles: boolean) => {
+		setup.setApple(models);
+		intelligenceSettings.titles = titles;
+	},
 	setSearchProvider: async (provider: SearchProviderId) => {
 		webSettings.provider = provider;
 	},

@@ -42,6 +42,7 @@ enum LaunchMode: String {
     case streamKillStart = "streamkill-start"
     case streamKillResume = "streamkill-resume"
     case measure
+    case intelligenceProbe = "intelligence-probe"
 
     static let current = UserDefaults.standard.string(forKey: "PiMode").flatMap(LaunchMode.init(rawValue:)) ?? .chat
 
@@ -57,6 +58,7 @@ enum LaunchMode: String {
         case .streamKillStart: ["streamkill-start.jsonl", "streamkill-result.json"]
         case .streamKillResume: ["streamkill-resume.jsonl", "streamkill-result.json"]
         case .measure: ["metrics.json"]
+        case .intelligenceProbe: ["intelligence-probe.json"]
         }
     }
 }

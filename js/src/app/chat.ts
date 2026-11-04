@@ -117,6 +117,9 @@ function titleFrom(text: string): string {
 	return line.length > 60 ? `${line.slice(0, 57)}…` : line || untitled;
 }
 
+/** Settings › Apple Intelligence (docs/adr/0008-apple-intelligence.md). */
+export const intelligenceSettings = { titles: false };
+
 export class Chat {
 	readonly #watches = new Map<number, ConversationWatch>();
 
@@ -274,16 +277,39 @@ export class Chat {
 			context,
 		);
 		const now = Date.now();
+		let firstTitle: string | undefined;
 		await this.harness.commit(async (tx) => {
 			const meta = (await tx.doc(ConversationIndex)).items.find((item) => item.id === id);
 			if (meta === undefined) return;
 			meta.updatedAt = now;
 			if (meta.title !== untitled) return;
-			if (text.trim() !== "") meta.title = titleFrom(text);
+			if (text.trim() !== "") meta.title = firstTitle = titleFrom(text);
 			else meta.title = ran !== undefined ? `/${ran.name}` : (attachmentTitle(attachments) ?? untitled);
 		}, context);
 		await this.#changed();
+		if (firstTitle !== undefined && intelligenceSettings.titles && ran === undefined) void this.#writeTitle(id, text, firstTitle);
 		return submission;
+	}
+
+	/**
+	 * Replaces a first-line title with one the on-device model writes, unless the user renamed the conversation in the
+	 * meantime. Best effort: Swift answers null when Apple Intelligence is unavailable, slow or refuses.
+	 */
+	async #writeTitle(id: number, text: string, fallback: string): Promise<void> {
+		try {
+			const title = await hostCall<string | null>("intelligence.title", { text });
+			if (title === null || title === fallback) return;
+			let changed = false;
+			await this.harness.commit(async (tx) => {
+				const meta = (await tx.doc(ConversationIndex)).items.find((item) => item.id === id);
+				if (meta === undefined || meta.title !== fallback) return;
+				meta.title = title;
+				changed = true;
+			}, context);
+			if (changed) await this.#changed();
+		} catch {
+			// The first line stays.
+		}
 	}
 
 	/**

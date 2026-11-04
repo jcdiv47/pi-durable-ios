@@ -22,6 +22,8 @@ decisions that change the spec go in `docs/adr/`.
   Settings › Instructions and Skills (`SkillsViews`, `Skills`): the user's AGENTS.md (Application Support `AGENTS.md`)
   and imported skills (`skills/<name>/`); the composer's "/" menu and chip run a skill
   ([ADR 0007](docs/adr/0007-instructions-and-skills.md)).
+  Settings › Apple Intelligence (`IntelligenceSettingsView`): the on-device model's status, on-device titles and
+  notification summaries ([ADR 0008](docs/adr/0008-apple-intelligence.md)).
   `App/Sources/M0/`: the headless check modes.
 - `App/Sources/System/`: M3's system integration: App Intents, entities, Siri phrases and snippets
   (`PiAppIntents`), BackgroundTasks from `onWake` (`BackgroundWork`), notifications with actions (`Notifications`),
@@ -38,10 +40,14 @@ decisions that change the spec go in `docs/adr/`.
 - `Shared/Sources/`: compiled into the app and the widget: the `LiveActivityIntent`s behind widget and Live Activity
   buttons, which iOS performs in the app's process.
 - `Packages/PiRuntime`: JSContext host, polyfill natives, the sqlite3 facade, the URLSession fetch
-  bridge, the Keychain key source, the async host-call bridge (`JSRuntime.Options.hostCall`) and `SkillLibrary`
+  bridge (with `localHosts`: hosts answered in the process), the Keychain key source, the async host-call bridge
+  (`JSRuntime.Options.hostCall`), `AppleIntelligence` (Foundation Models as an OpenAI-compatible endpoint on
+  `apple-intelligence.pi.local`, plus titles and summaries) and `SkillLibrary`
   (SKILL.md checks, import, and the `skills.*` host calls that read inside a skill's folder).
 - `Packages/PiAppleTools`: EventKit, HealthKit and CoreLocation handlers behind the JS Apple tools
-  (`AppleToolHost`).
+  (`AppleToolHost`), and photo search (`Photos/`: `CLIPTokenizer`, `ClipEncoder` over MobileCLIP's Core ML encoders,
+  `PhotoVectors`, `PhotoIndex`; [ADR 0010](docs/adr/0010-photo-search.md)). The app's `PhotosCard` draws the
+  matches and Settings › Photo Search (`PhotoSearchSettingsView`) shows the index.
 - `Packages/PiUI`: generated UI (M2). The component catalog, validator, renderer (`SurfaceView`), previews,
   native data sources (`NativeData`), the App Group files (`SurfaceStore`), `SurfaceHost`, which answers the
   JS UI tools, the components' sample slots (`Gallery/`) and the dial's tuning log (`Tuning/`). Shared by the app and the widget. The catalog lives only here ([ADR 0001](docs/adr/0001-surface-validation-in-swift.md)).
@@ -50,7 +56,7 @@ decisions that change the spec go in `docs/adr/`.
 - `js/`: TypeScript run inside JSC. `bun build.ts` bundles `src/runtime.ts` (the app's harness
   bootstrap) and `src/conformance.ts` (test suites) into `App/Resources/` and the PiRuntime test
   resources. `src/app/` is the chat API Swift calls (`PiRuntime.*`): conversations, display frames,
-  providers, the Apple tool stubs, the UI tools (`surfaces.ts`: specs in Pi documents, JSON Patch), scheduled tasks
+  providers (`models.ts`, including the keyless `apple` provider), the Apple tool stubs, the UI tools (`surfaces.ts`: specs in Pi documents, JSON Patch), scheduled tasks
   and `notify_schedule` (`schedule.ts`), the web tools (`web.ts`: `web_search` through DeepSeek or Brave,
   `web_fetch` through DeepSeek Fetch) over keyed HTTP services (`services.ts`), MCP servers (`mcp.ts`: a Streamable
   HTTP client and the `mcp` extension, [ADR 0006](docs/adr/0006-mcp-servers.md)), the user's instructions and skills
@@ -88,6 +94,9 @@ build and install. `PI_CONFIGURATION=Release` builds Release.
 - `scripts/m0-check.sh conformance|capabilities|measure|stream`: one headless mode of the app;
   prints its JSON report from `Documents/m0/`. (`stream` is M0's bare view, `-PiMode stream`; the
   default launch is the chat app.)
+- `scripts/fetch-mobileclip.sh`: downloads MobileCLIP-S2's encoders and the CLIP tokenizer into `App/Models/` (not
+  checked in: about 210 MB, Apple's sample code license). Without them the app still builds and `photos_search` says
+  the model is missing. `PI_MOBILECLIP=s0` for the smaller model. PiAppleTools' tests use them when present.
 - `scripts/push-key.sh <provider> <file>`: moves an API key into the app's Keychain (debug builds). `brave` works
   too.
   Never put keys in the repo, in launch arguments or in JS. JS only sees `pi-host-key:<provider>`,
@@ -126,6 +135,11 @@ intended rendering change, re-record with `PI_RECORD_SNAPSHOTS=1 swift test` and
 - A new HTTP API is a service ([ADR 0004](docs/adr/0004-http-api-services.md)): its hosts (and a monthly cap, if its
   plan has one) in `ProviderKeys`, a key entry in `ChatStore.services`, and tools that call `serviceFetch` with the
   key placeholder in a header or a URL query. Never a generic HTTP tool: a page could use it to send data out.
+- The `apple` provider is text only and has no tools; its endpoint writes its own short instructions. One-shot jobs
+  (titles, summaries) fall back to the old behavior when the model is unavailable, slow or refuses. Private Cloud
+  Compute needs a managed entitlement the free team lacks.
+- Photo search never sends pixels, captions or locations to the model: `photos_search` returns asset IDs, dates and
+  scores, and the chat draws the photos on the device. The index lives in Application Support, not the App Group.
 - MCP servers are added only by the user, in Settings; no tool may add, change or remove one. A server's host gets
   its token (`mcp-<id>`) only through `ProviderKeys.setMCPHosts`, from Swift. The `mcp` extension is installed from
   the cached tool lists before the Harness opens, so interrupted calls resume without the network

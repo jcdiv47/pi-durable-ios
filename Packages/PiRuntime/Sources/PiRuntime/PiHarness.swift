@@ -20,6 +20,10 @@ public final class PiHarness: Sendable {
         public var instructions: String?
         /// Settings › Skills: the imported skills (`SkillLibrary.list()`).
         public var skills: [SkillLibrary.Skill]?
+        /// Apple Intelligence models that can run now (`AppleIntelligence.models()`).
+        public var appleModels: [AppleIntelligence.Model]?
+        /// Settings › Apple Intelligence › Titles.
+        public var intelligenceTitles: Bool?
         public var toolMs: Int?
 
         public init(
@@ -33,6 +37,8 @@ public final class PiHarness: Sendable {
             mcpServers: String? = nil,
             instructions: String? = nil,
             skills: [SkillLibrary.Skill]? = nil,
+            appleModels: [AppleIntelligence.Model]? = nil,
+            intelligenceTitles: Bool? = nil,
             toolMs: Int? = nil
         ) {
             self.dbPath = dbPath
@@ -45,6 +51,8 @@ public final class PiHarness: Sendable {
             self.mcpServers = mcpServers
             self.instructions = instructions
             self.skills = skills
+            self.appleModels = appleModels
+            self.intelligenceTitles = intelligenceTitles
             self.toolMs = toolMs
         }
     }

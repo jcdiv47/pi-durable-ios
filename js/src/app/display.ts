@@ -84,6 +84,7 @@ const cardTools = new Set([
 	"calendar_create_event",
 	"health_query",
 	"location_current",
+	"photos_search",
 	"web_search",
 ]);
 
