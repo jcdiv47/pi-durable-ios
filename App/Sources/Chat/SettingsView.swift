@@ -342,7 +342,8 @@ struct ToolPolicyPicker: View {
         NavigationLink {
             ToolPolicyView(store: store, name: tool.name, title: title ?? tool.name)
         } label: {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
+            // Centred, so the policy sits level with the chevron the list draws in the row's middle.
+            HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title ?? tool.name).font(.body.monospaced())
                     Text(tool.description).font(.caption).foregroundStyle(.secondary).lineLimit(2)
