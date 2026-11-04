@@ -23,24 +23,23 @@ public actor PhotoIndex {
     static let searchBatch = 300
 
     private let directory: URL
-    private let loadEncoder: @Sendable () throws -> ClipEncoder?
-    private let model: String
-    private var encoder: ClipEncoder??
+    private let locate: @Sendable () -> ClipModelFiles?
+    /// The model the vectors in memory came from.
+    private var model: String
+    private var encoder: ClipEncoder?
     private var vectors: PhotoVectors
     private var total: Int?
     private var running: Task<Void, Never>?
     private let logger = Logger(subsystem: "dev.pi.durable", category: "photos")
 
+    /// `locate` is asked again until it finds the model, so one downloaded in Settings is used without a relaunch.
     public init(
         directory: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("photo-index"),
-        model: String = Bundle.main.url(forResource: "mobileclip-variant", withExtension: "txt")
-            .flatMap { try? String(contentsOf: $0, encoding: .utf8) }
-            .map { "mobileclip-" + $0.trimmingCharacters(in: .whitespacesAndNewlines) } ?? "mobileclip",
-        encoder: @escaping @Sendable () throws -> ClipEncoder? = { try ClipEncoder.bundled() }
+        locate: @escaping @Sendable () -> ClipModelFiles? = { ClipModelFiles.installed() }
     ) {
         self.directory = directory
-        self.model = model
-        loadEncoder = encoder
+        self.locate = locate
+        model = locate()?.model ?? "mobileclip"
         vectors = PhotoVectors.load(from: directory, model: model)
     }
 
@@ -68,7 +67,7 @@ public actor PhotoIndex {
         let query = args.query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { throw AppleToolError("query is empty") }
         guard let encoder = try clip() else {
-            throw AppleToolError("Photo search needs the MobileCLIP model, which this build of Pi doesn't include. Tell the user to run scripts/fetch-mobileclip.sh and rebuild.")
+            throw AppleToolError("Photo search needs the MobileCLIP model, which isn't on this iPhone yet. Tell the user to download it in Settings › Photo Search (about 200 MB, over Wi-Fi).")
         }
         try await authorize()
         // Behind (first use, or new photos): embed the newest ones before answering, then keep going in the background.
@@ -149,10 +148,21 @@ public actor PhotoIndex {
         running = nil
     }
 
+    /// Forgets the loaded model, after Settings deleted the downloaded one.
+    public func unloadModel() {
+        stop()
+        encoder = nil
+    }
+
     private func clip() throws -> ClipEncoder? {
         if let encoder { return encoder }
-        let loaded = try loadEncoder()
-        encoder = .some(loaded)
+        guard let files = locate() else { return nil }
+        let loaded = try ClipEncoder(files)
+        if files.model != model {
+            model = files.model
+            vectors = PhotoVectors.load(from: directory, model: model)
+        }
+        encoder = loaded
         return loaded
     }
 

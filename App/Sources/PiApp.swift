@@ -1,3 +1,4 @@
+import PiAppleTools
 import SwiftUI
 
 @main
@@ -68,5 +69,14 @@ final class PiAppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
         .portrait
+    }
+
+    /// Photo search's model download finished (or needs attention) while Pi was suspended or not running
+    /// (docs/adr/0011-download-mobileclip.md). The files land in staging now; they're compiled when Pi is next open.
+    func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String,
+                     completionHandler: @escaping () -> Void) {
+        guard identifier == ClipModelDownload.sessionIdentifier else { return completionHandler() }
+        nonisolated(unsafe) let completion = completionHandler
+        ClipModelDownload.handleEvents { completion() }
     }
 }

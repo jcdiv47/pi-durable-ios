@@ -28,15 +28,8 @@ public final class ClipEncoder: @unchecked Sendable {
         imageConstraint = input
     }
 
-    /// The encoders `scripts/fetch-mobileclip.sh` put in the app (`MobileCLIPImage`, `MobileCLIPText`), or nil when the
-    /// app was built without them.
-    public static func bundled(_ bundle: Bundle = .main) throws -> ClipEncoder? {
-        guard let image = bundle.url(forResource: "MobileCLIPImage", withExtension: "mlmodelc"),
-              let text = bundle.url(forResource: "MobileCLIPText", withExtension: "mlmodelc"),
-              let vocab = bundle.url(forResource: "clip-vocab", withExtension: "json"),
-              let merges = bundle.url(forResource: "clip-merges", withExtension: "txt")
-        else { return nil }
-        return try ClipEncoder(image: image, text: text, vocab: vocab, merges: merges)
+    public convenience init(_ files: ClipModelFiles) throws {
+        try self.init(image: files.image, text: files.text, vocab: files.vocab, merges: files.merges)
     }
 
     public func embed(text: String) throws -> [Float] {

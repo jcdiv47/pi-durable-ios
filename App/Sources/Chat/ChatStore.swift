@@ -285,6 +285,11 @@ final class ChatStore {
             await sweepAttachments()
             // New photos since last time, once Photos access was granted (docs/adr/0010-photo-search.md).
             if PhotoIndex.authorized { await PhotoIndex.shared.startIndexing() }
+            // A model download started in Settings that finished, or was cut off, while Pi was away.
+            Task {
+                await ClipModelDownload.shared.resumeIfStarted()
+                if PhotoIndex.authorized { await PhotoIndex.shared.startIndexing() }
+            }
         } catch {
             phase = .failed(String(describing: error))
             diagnostics.record("error", "app", "Open failed: \(error)")

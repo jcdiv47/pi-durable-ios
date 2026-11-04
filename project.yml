@@ -46,7 +46,8 @@ targets:
         optional: true
         buildPhase: resources
       # Photo search's MobileCLIP encoders and CLIP tokenizer, from scripts/fetch-mobileclip.sh (not checked in: too
-      # big, and under Apple's sample code license; docs/adr/0010-photo-search.md). Without them photo search says so.
+      # big, and under Apple's sample code license; docs/adr/0010-photo-search.md). Without them the app downloads them
+      # in Settings › Photo Search (docs/adr/0011-download-mobileclip.md).
       - path: App/Models
         optional: true
     dependencies:
@@ -70,7 +71,7 @@ targets:
         PRODUCT_NAME: PiDurable
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_USER_SCRIPT_SANDBOXING: NO # "Bundle JS" writes into the source tree
-        # The MobileCLIP models are loaded by URL (`ClipEncoder.bundled`); no generated classes.
+        # The MobileCLIP models are loaded by URL (`ClipModelFiles.bundled`); no generated classes.
         COREML_CODEGEN_LANGUAGE: None
     info:
       path: App/Info.plist

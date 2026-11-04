@@ -50,7 +50,8 @@ decisions that change the spec go in `docs/adr/`.
   (SKILL.md checks, import, and the `skills.*` host calls that read inside a skill's folder).
 - `Packages/PiAppleTools`: EventKit, HealthKit, CoreLocation and AlarmKit (`AlarmTools`) handlers behind the JS Apple tools
   (`AppleToolHost`), and photo search (`Photos/`: `CLIPTokenizer`, `ClipEncoder` over MobileCLIP's Core ML encoders,
-  `PhotoVectors`, `PhotoIndex`; [ADR 0010](docs/adr/0010-photo-search.md)). The app's `PhotosCard` draws the
+  `PhotoVectors`, `PhotoIndex`, `ClipModelDownload`; [ADR 0010](docs/adr/0010-photo-search.md),
+  [ADR 0011](docs/adr/0011-download-mobileclip.md)). The app's `PhotosCard` draws the
   matches and Settings › Photo Search (`PhotoSearchSettingsView`) shows the index.
 - `Packages/PiUI`: generated UI (M2). The component catalog, validator, renderer (`SurfaceView`), previews,
   native data sources (`NativeData`), the App Group files (`SurfaceStore`), `SurfaceHost`, which answers the
@@ -99,8 +100,9 @@ build and install. `PI_CONFIGURATION=Release` builds Release.
   prints its JSON report from `Documents/m0/`. (`stream` is M0's bare view, `-PiMode stream`; the
   default launch is the chat app.)
 - `scripts/fetch-mobileclip.sh`: downloads MobileCLIP-S2's encoders and the CLIP tokenizer into `App/Models/` (not
-  checked in: about 210 MB, Apple's sample code license). Without them the app still builds and `photos_search` says
-  the model is missing. `PI_MOBILECLIP=s0` for the smaller model. PiAppleTools' tests use them when present.
+  checked in: about 200 MB, Apple's sample code license). Optional: without them the app downloads the model in
+  Settings › Photo Search (`ClipModelDownload`, [ADR 0011](docs/adr/0011-download-mobileclip.md)); with them the app
+  uses its own. `PI_MOBILECLIP=s0` for the smaller model. PiAppleTools' tests use them when present.
 - `scripts/push-key.sh <provider> <file>`: moves an API key into the app's Keychain (debug builds). `brave` works
   too.
   Never put keys in the repo, in launch arguments or in JS. JS only sees `pi-host-key:<provider>`,
