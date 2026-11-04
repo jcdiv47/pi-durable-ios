@@ -32,7 +32,8 @@ sample code license, which is fine for this personal app but not for committing 
   delete the index.
 - **Permission**: Photos read access is requested the first time `photos_search` runs, in the handler, like the other
   Apple tools. Limited access indexes only the photos the user picked.
-- **The model files are fetched, not committed**: `scripts/fetch-mobileclip.sh` downloads the S2 encoders and the
+- **The model files are fetched, not committed** (since [ADR 0011](0011-download-mobileclip.md), downloaded in the app
+  instead, unless the build includes them): `scripts/fetch-mobileclip.sh` downloads the S2 encoders and the
   CLIP BPE vocabulary into `App/Models/` (git-ignored); `project.yml` adds them as optional files, so a fresh clone
   still builds and the tool then says the model is missing. `PI_MOBILECLIP=s0` picks the smaller model.
 - **Tokenizer**: CLIP's byte-level BPE, in Swift (`CLIPTokenizer`), 77 tokens with start and end markers.

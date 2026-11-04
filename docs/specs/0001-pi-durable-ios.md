@@ -316,7 +316,8 @@ change only validation rules and tool descriptions, never the renderer.
   Cloud Compute later, it needs a managed entitlement), served by Swift as an in-process OpenAI-compatible endpoint;
   text only, no tools. On-device conversation titles and notification summaries. The ADR lists further use cases.
 - **Photos** ([ADR 0010](../adr/0010-photo-search.md)): `photos_search` over an on-device MobileCLIP index; the model
-  gets asset IDs and dates, the user sees thumbnails.
+  gets asset IDs and dates, the user sees thumbnails. The app downloads MobileCLIP once, in Settings
+  ([ADR 0011](../adr/0011-download-mobileclip.md)).
 - Later: WeatherKit, MapKit search, Contacts, Notes via Shortcuts.
 
 ## Repository layout (proposed)
