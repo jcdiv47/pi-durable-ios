@@ -82,6 +82,32 @@ public struct SSHHost: Codable, Identifiable, Hashable, Sendable {
     /// The fingerprint of the pinned host key, `SHA256:…` as `ssh-keygen -l` prints it.
     public var fingerprint: String? { hostKey.flatMap(SSHKeys.fingerprint(ofPublicKey:)) }
 
+    /// What the user typed as the host, read the way they likely meant it: a bare name or IP, `user@host`, `host:port`,
+    /// `[v6]:port`, or a pasted URL (`http://…`, `ssh://user@host:2222/`). Nil when no host is left.
+    public static func parseAddress(_ text: String) -> (host: String, user: String?, port: Int?)? {
+        var rest = Substring(text.trimmingCharacters(in: .whitespacesAndNewlines))
+        if let scheme = rest.range(of: "://") { rest = rest[scheme.upperBound...] }
+        if let slash = rest.firstIndex(where: { $0 == "/" || $0 == "?" || $0 == "#" }) { rest = rest[..<slash] }
+        var user: String?
+        if let at = rest.lastIndex(of: "@") {
+            user = String(rest[..<at])
+            rest = rest[rest.index(after: at)...]
+        }
+        var port: Int?
+        if rest.hasPrefix("[") {
+            guard let close = rest.firstIndex(of: "]") else { return nil }
+            let after = rest[rest.index(after: close)...]
+            if after.hasPrefix(":") { port = Int(after.dropFirst()) }
+            rest = rest[rest.index(after: rest.startIndex) ..< close]
+        } else if rest.filter({ $0 == ":" }).count == 1, let colon = rest.firstIndex(of: ":") {
+            port = Int(rest[rest.index(after: colon)...])
+            rest = rest[..<colon]
+        }
+        let host = String(rest)
+        guard !host.isEmpty, !host.contains(where: { $0.isWhitespace || $0 == "@" }) else { return nil }
+        return (host, user.flatMap { $0.isEmpty ? nil : $0 }, port.flatMap { (1 ... 65535).contains($0) ? $0 : nil })
+    }
+
     /// An ID from the name: `Home Server` → `homeserver`, unique among `taken`.
     public static func id(for name: String, taken: Set<String>) -> String {
         let allowed = Set("abcdefghijklmnopqrstuvwxyz0123456789")

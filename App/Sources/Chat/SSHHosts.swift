@@ -13,7 +13,12 @@ enum SSHHostFile {
 
     static func load() -> [SSHHost] {
         guard let data = try? Data(contentsOf: url) else { return [] }
-        return (try? JSONDecoder().decode([SSHHost].self, from: data)) ?? []
+        // Hosts saved before the host field read pasted URLs (`http://192.168.2.144`) keep just the host.
+        return ((try? JSONDecoder().decode([SSHHost].self, from: data)) ?? []).map { host in
+            var host = host
+            if let parsed = SSHHost.parseAddress(host.host) { host.host = parsed.host }
+            return host
+        }
     }
 
     static func save(_ hosts: [SSHHost]) throws {

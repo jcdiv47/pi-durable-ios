@@ -104,11 +104,13 @@ struct SSHHostView: View {
     private var savedKeyLogin: Bool { hasSecret && current?.auth == .key }
     private var publicKey: String? { pendingKey?.publicKey ?? (auth == .key ? current?.publicKey : nil) }
     private var portNumber: Int? { Int(port.trimmingCharacters(in: .whitespaces)).flatMap { (1 ... 65535).contains($0) ? $0 : nil } }
-    private var trimmedAddress: String { address.trimmingCharacters(in: .whitespaces) }
+    /// The host as typed, read leniently (a pasted `http://` URL, `user@host:port`).
+    private var parsedAddress: (host: String, user: String?, port: Int?)? { SSHHost.parseAddress(address) }
+    private var trimmedAddress: String { parsedAddress?.host ?? "" }
 
     private var canSave: Bool {
         guard !saving, portNumber != nil, !name.trimmingCharacters(in: .whitespaces).isEmpty, !trimmedAddress.isEmpty,
-              !trimmedAddress.contains(" "), !user.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
+              !(parsedAddress?.user ?? user).trimmingCharacters(in: .whitespaces).isEmpty else { return false }
         if pendingKey?.encrypted == true && passphrase.isEmpty { return false }
         switch auth {
         case .password: return !password.isEmpty || (hasSecret && current?.auth == .password)
@@ -436,6 +438,12 @@ struct SSHHostView: View {
     }
 
     private func save() async {
+        // A user or port inside the host field fills those fields, and the field keeps just the host.
+        if let parsed = parsedAddress {
+            if let parsedUser = parsed.user { user = parsedUser }
+            if let parsedPort = parsed.port { port = String(parsedPort) }
+            address = parsed.host
+        }
         guard let portNumber else { return }
         error = nil
         var secret: SSHSecret?

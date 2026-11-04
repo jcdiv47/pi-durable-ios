@@ -129,3 +129,23 @@ struct SSHScriptTests {
     }
 }
 
+
+@Suite("SSH: host field")
+struct SSHAddressTests {
+    @Test("Pasted URLs and user@host:port read as host, user and port")
+    func parse() {
+        func check(_ text: String, _ host: String, _ user: String? = nil, _ port: Int? = nil) {
+            let parsed = SSHHost.parseAddress(text)
+            #expect(parsed?.host == host && parsed?.user == user && parsed?.port == port, "\(text) → \(String(describing: parsed))")
+        }
+        check("192.168.2.144", "192.168.2.144")
+        check(" http://192.168.2.144 ", "192.168.2.144")
+        check("http://192.168.2.144/", "192.168.2.144")
+        check("ssh://me@nas.local:2222", "nas.local", "me", 2222)
+        check("me@box", "box", "me")
+        check("box:22", "box", nil, 22)
+        check("[fd00::1]:2200", "fd00::1", nil, 2200)
+        check("fd00::1", "fd00::1")
+        #expect(SSHHost.parseAddress("") == nil && SSHHost.parseAddress("http://") == nil && SSHHost.parseAddress("a b") == nil)
+    }
+}
