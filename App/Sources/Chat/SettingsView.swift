@@ -330,7 +330,7 @@ struct KeyStatusRow: View {
     }
 }
 
-/// A tool's approval policy: Allow, Ask or Never. A row with the start of the description and the policy; it opens
+/// A tool's approval policy: Allow, Ask or Never. A row with the description's first line and the policy; it opens
 /// the tool's page, which has the whole description (written for the model, so often long) and the choice.
 struct ToolPolicyPicker: View {
     let store: ChatStore
@@ -346,7 +346,7 @@ struct ToolPolicyPicker: View {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title ?? tool.name).font(.body.monospaced())
-                    Text(tool.description).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    Text(tool.description).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer(minLength: 0)
                 Text(ToolPolicy.name(tool.policy))
