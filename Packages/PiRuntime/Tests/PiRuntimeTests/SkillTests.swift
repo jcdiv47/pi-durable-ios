@@ -116,6 +116,65 @@ struct SkillLibraryTests {
         #expect(library.list().map(\.name) == ["groceries"])
     }
 
+    @Test("Compose: edited fields replaced, other frontmatter kept, values read back as written")
+    func compose() throws {
+        let written = SkillLibrary.compose(name: "notes", description: "Tidy: a note's text", modelInvocable: false, userInvocable: true, body: "\nDo it.\n\n")
+        #expect(written == "---\nname: notes\ndescription: 'Tidy: a note''s text'\ndisable-model-invocation: true\n---\n\nDo it.\n")
+        let parsed = try #require(SkillLibrary.parse(written))
+        #expect(parsed.fields["description"] == "Tidy: a note's text" && parsed.body == "Do it.")
+
+        for value in ["Plain words.", "yes", "- a list?", "a # not a comment", "line one\n\nline three", "\"quoted\"", "back\\slash \\n"] {
+            let text = SkillLibrary.compose(name: "x", description: value, modelInvocable: true, userInvocable: true, body: "")
+            #expect(SkillLibrary.parse(text)?.fields["description"] == value, "\(value) → \(text)")
+        }
+
+        let edited = SkillLibrary.compose(
+            name: "groceries", description: "Plan groceries.", modelInvocable: true, userInvocable: false, body: "New body.", keeping: groceriesSkill
+        )
+        let document = try #require(SkillLibrary.parse(edited))
+        #expect(document.fields["description"] == "Plan groceries.")
+        #expect(document.fields["license"] == "MIT" && document.fields["user-invocable"] == "false")
+        #expect(edited.contains("metadata:\n  author: me\n  version: \"1.0\""), "nested fields kept as written")
+        #expect(!edited.contains("from the calendar") && document.body == "New body.")
+    }
+
+    @Test("Save: a new skill, an edit that keeps its files, a rename, and a name that's taken")
+    func save() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let library = SkillLibrary(root: directory.appendingPathComponent("skills"))
+        try library.importSkill(from: try writeSkill(["SKILL.md": groceriesSkill, "references/stores.md": "Aldi, Lidl"], in: directory, folder: "groceries"))
+
+        let tidy = try library.save(SkillLibrary.compose(name: "tidy", description: "Tidy a note.", modelInvocable: true, userInvocable: true, body: "Tidy it."))
+        #expect(tidy.name == "tidy" && tidy.files.isEmpty && tidy.warnings.isEmpty)
+        #expect(throws: SkillLibrary.Failure.self, "a new skill can't take an installed name") {
+            try library.save(SkillLibrary.compose(name: "groceries", description: "d", modelInvocable: true, userInvocable: true, body: ""))
+        }
+        #expect(throws: SkillLibrary.Failure.self) { try library.save("---\nname: Bad Name\ndescription: d\n---\n") }
+        #expect(throws: SkillLibrary.Failure.self) { try library.save("no frontmatter") }
+
+        let source = try library.source("groceries")
+        let edited = try library.save(
+            SkillLibrary.compose(name: "groceries", description: "Plan groceries.", modelInvocable: true, userInvocable: true, body: "Edited.", keeping: source),
+            replacing: "groceries"
+        )
+        #expect(edited.description == "Plan groceries." && edited.license == "MIT" && edited.files == ["references/stores.md"])
+        #expect(try library.read("groceries").body == "Edited.")
+
+        #expect(throws: SkillLibrary.Failure.self, "a rename can't take another skill's name") {
+            try library.save(SkillLibrary.compose(name: "tidy", description: "d", modelInvocable: true, userInvocable: true, body: "", keeping: source), replacing: "groceries")
+        }
+        let renamed = try library.save(
+            SkillLibrary.compose(name: "shopping", description: "Plan groceries.", modelInvocable: true, userInvocable: true, body: "Edited.", keeping: source),
+            replacing: "groceries"
+        )
+        #expect(renamed.name == "shopping" && renamed.files == ["references/stores.md"] && renamed.warnings.isEmpty)
+        #expect(library.list().map(\.name) == ["shopping", "tidy"])
+        #expect(try library.file("shopping", path: "references/stores.md") == "Aldi, Lidl")
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: library.root.path)
+        #expect(leftovers.sorted() == ["shopping", "tidy"], "no staging folders left: \(leftovers)")
+    }
+
     @Test("Reads stay inside the skill's folder")
     func reads() throws {
         let directory = try temporaryDirectory()

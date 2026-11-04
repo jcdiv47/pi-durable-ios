@@ -55,7 +55,7 @@ final class ChatStore {
     private(set) var mcpStatuses: [String: MCPStatus] = [:]
     /// Settings › Instructions: the user's AGENTS.md, a prompt section in every conversation. Written by hand only.
     private(set) var instructions = InstructionsFile.load()
-    /// Settings › Skills: the imported skills (docs/adr/0007-instructions-and-skills.md). Added and removed by hand only.
+    /// Settings › Skills: the imported and written skills (docs/adr/0007-instructions-and-skills.md). Changed by hand only.
     private(set) var skills: [SkillLibrary.Skill] = []
     let skillLibrary = SkillLibrary(root: SkillLibrary.appRoot)
     /// Whether a VPN tunnel looked up when the app last came to the foreground (`VPNStatus`).
@@ -637,6 +637,16 @@ final class ChatStore {
     func importSkill(from url: URL, replace: Bool) async throws -> SkillLibrary.Skill {
         let skill = try skillLibrary.importSkill(from: url, replace: replace)
         diagnostics.record("info", "skills", "Imported \(skill.name)\(skill.warnings.isEmpty ? "" : ": " + skill.warnings.joined(separator: " "))")
+        await skillsChanged()
+        return skill
+    }
+
+    /// Saves a SKILL.md written or edited in Settings › Skills; `replacing` is the skill being edited (a new name renames
+    /// it). Conversations see the change from their next request; messages that already ran it keep what they sent.
+    func saveSkill(_ source: String, replacing original: String?) async throws -> SkillLibrary.Skill {
+        let skill = try skillLibrary.save(source, replacing: original)
+        let verb = original == nil ? "Created" : original == skill.name ? "Edited" : "Renamed \(original!) to"
+        diagnostics.record("info", "skills", "\(verb) \(skill.name)")
         await skillsChanged()
         return skill
     }

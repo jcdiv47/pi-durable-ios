@@ -20,7 +20,8 @@ decisions that change the spec go in `docs/adr/`.
   Settings › MCP servers (`MCPSettingsView`, `MCPServers`): the user's MCP servers, kept in Swift with their cached
   tool lists (Application Support `mcp-servers.json`), the VPN hint (`VPNStatus`) and the chat's warning banner.
   Settings › Instructions and Skills (`SkillsViews`, `Skills`): the user's AGENTS.md (Application Support `AGENTS.md`)
-  and imported skills (`skills/<name>/`); the composer's "/" menu and chip run a skill
+  and the skills imported from Files or written in the editor (`SkillEditorView`, `skills/<name>/`); the composer's "/"
+  menu and chip run a skill
   ([ADR 0007](docs/adr/0007-instructions-and-skills.md)).
   Settings › Apple Intelligence (`IntelligenceSettingsView`): the on-device model's status, on-device titles and
   notification summaries ([ADR 0008](docs/adr/0008-apple-intelligence.md)).
@@ -144,7 +145,7 @@ intended rendering change, re-record with `PI_RECORD_SNAPSHOTS=1 swift test` and
   its token (`mcp-<id>`) only through `ProviderKeys.setMCPHosts`, from Swift. The `mcp` extension is installed from
   the cached tool lists before the Harness opens, so interrupted calls resume without the network
   ([ADR 0006](docs/adr/0006-mcp-servers.md)).
-- Instructions and skills are written, imported and removed only by the user, in Settings; no tool may change them, and
+- Instructions and skills are written, edited, imported and removed only by the user, in Settings; no tool may change them, and
   a skill's scripts never run. Skill files are read only through `SkillLibrary`, which keeps paths inside the skill.
 - The `SqliteDatabase` facade must keep passing both Pi's storage conformance suite and
   `js/test/facade-cases.ts` (Pi's suite does not exercise rollback).
