@@ -32,6 +32,9 @@ export const defaultPolicies: Record<string, ToolPolicy> = {
 	schedule_task: "ask",
 	// A page could use it to send data out; URLs the conversation already holds run without asking (`trusted`).
 	web_fetch: "ask",
+	// A shell on the user's machines. A host set to "Run without asking" skips this while the conversation holds no
+	// outside text (`trusted`, ssh.ts).
+	ssh_exec: "ask",
 };
 
 /** A call of an "ask" tool that may run without asking. */

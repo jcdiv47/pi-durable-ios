@@ -81,6 +81,10 @@ func openChat(_ log: ChatLog, db: String) async throws -> PiHarness {
             case "calendar.query": return #"{"events":[]}"#
             case "reminders.query": return #"{"count":1,"truncated":false,"reminders":[{"id":"R1","title":"Buy oat milk","completed":false,"list":"Home"}]}"#
             case "reminders.create": return #"{"created":true}"#
+            case "ssh.exec":
+                let key = (try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])?["idempotencyKey"] as? String ?? "?"
+                return #"{"host":"nas","job":"i1-\#(key)","state":"done","exitCode":0,"stdout":"Linux nas\n","stderr":"","stdoutBytes":10,"stderrBytes":0}"#
+            case "ssh.job": return #"{"host":"nas","job":"i1-t1","state":"running","pid":42,"stdout":"","stderr":"","stdoutBytes":0,"stderrBytes":0}"#
             default: throw JSRuntimeError("unexpected host call \(name)")
             }
         }
