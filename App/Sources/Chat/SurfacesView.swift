@@ -66,8 +66,15 @@ struct SurfacesView: View {
             }
         }
         .navigationTitle("Widgets")
-        .task { await store.refreshPublished() }
-        .refreshable { await store.refreshPublished() }
+        // The thumbnails draw native and $doc values too.
+        .task {
+            await store.refreshPublished()
+            await store.refreshSurfaceData()
+        }
+        .refreshable {
+            await store.refreshPublished()
+            await store.refreshSurfaceData(force: true)
+        }
     }
 }
 

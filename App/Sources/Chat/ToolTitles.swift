@@ -76,7 +76,9 @@ enum ApprovalDetails {
             // A date-only value (a reminder due on a day) has no time to show.
             return value.count == 10
                 ? date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated).year())
-                : date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated).hour().minute())
+                : Calendar.current.isDate(date, equalTo: .now, toGranularity: .year)
+                    ? date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated).hour().minute())
+                    : date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated).year().hour().minute())
         }
         return value
     }
