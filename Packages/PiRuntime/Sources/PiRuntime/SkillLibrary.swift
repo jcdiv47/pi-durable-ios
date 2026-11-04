@@ -1,6 +1,6 @@
 import Foundation
 
-/// Agent skills (the SKILL.md folder format, agentskills.io) the user imports in Settings › Skills, one folder each
+/// Agent skills (the SKILL.md folder format, agentskills.io) the user imports or writes in Settings › Skills, one folder each
 /// under `root` (Application Support `skills/` in the app). Swift owns the files: JS gets the parsed list and reads a
 /// skill's text through host calls (`skills.read`, `skills.file`), and every path stays inside the skill's folder.
 ///
@@ -56,14 +56,66 @@ public struct SkillLibrary: Sendable {
 
     /// Splits SKILL.md into frontmatter and body. Nil without a `---` frontmatter block at the top.
     public static func parse(_ text: String) -> Document? {
+        guard let (front, rest) = split(text) else { return nil }
+        let body = rest.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return Document(fields: frontmatter(front), body: body)
+    }
+
+    /// The frontmatter's lines (between the `---` lines) and the lines after it.
+    private static func split(_ text: String) -> (front: [String], rest: [String])? {
         var lines = text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
         if lines.first?.hasPrefix("\u{FEFF}") == true { lines[0].removeFirst() }
         guard lines.first?.trimmingCharacters(in: .whitespaces) == "---",
               let end = lines.dropFirst().firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "---" })
         else { return nil }
-        let fields = frontmatter(Array(lines[1..<end]))
-        let body = lines[(end + 1)...].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        return Document(fields: fields, body: body)
+        return (Array(lines[1..<end]), Array(lines[(end + 1)...]))
+    }
+
+    /// The fields the skill editor writes; `compose` replaces them and keeps every other frontmatter line.
+    static let editedFields: Set<String> = ["name", "description", "disable-model-invocation", "user-invocable"]
+
+    /// A SKILL.md from the editor's fields. With `original` (the SKILL.md being edited), its other frontmatter fields
+    /// (`license`, `metadata`, `allowed-tools`, comments, …) are kept as written, after the edited ones.
+    public static func compose(
+        name: String, description: String, modelInvocable: Bool, userInvocable: Bool, body: String, keeping original: String? = nil
+    ) -> String {
+        var lines = ["---", "name: \(name)", "description: \(scalar(description.trimmingCharacters(in: .whitespacesAndNewlines)))"]
+        if !modelInvocable { lines.append("disable-model-invocation: true") }
+        if !userInvocable { lines.append("user-invocable: false") }
+        if let original, let (front, _) = split(original) {
+            // Drop the edited keys with their indented continuation lines; keep the rest in order.
+            var dropping = false
+            for line in front {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                let indented = line.first == " " || line.first == "\t"
+                if !indented, !trimmed.isEmpty, !trimmed.hasPrefix("#"), let colon = line.firstIndex(of: ":") {
+                    dropping = editedFields.contains(line[..<colon].trimmingCharacters(in: .whitespaces))
+                } else if !indented, !trimmed.isEmpty {
+                    dropping = false
+                }
+                if !dropping { lines.append(line) }
+            }
+            while lines.last?.trimmingCharacters(in: .whitespaces).isEmpty == true { lines.removeLast() }
+        }
+        lines.append("---")
+        let body = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        return lines.joined(separator: "\n") + "\n" + (body.isEmpty ? "" : "\n" + body + "\n")
+    }
+
+    /// A frontmatter value that `frontmatter` (and YAML) reads back as written: plain when that is safe, a `|` block
+    /// over several lines, otherwise single-quoted.
+    static func scalar(_ value: String) -> String {
+        if value.contains("\n") {
+            return "|\n" + value.components(separatedBy: "\n").map { line in
+                let line = line.trimmingCharacters(in: .whitespaces)
+                return line.isEmpty ? "" : "  " + line
+            }.joined(separator: "\n")
+        }
+        let special = "'\"|>[]{}&*!%@`#-?:,"
+        let plain = !value.isEmpty && !special.contains(value.first!) && !value.contains(": ") && !value.contains(" #")
+            && !value.hasSuffix(":") && value == value.trimmingCharacters(in: .whitespaces)
+            && !["true", "false", "yes", "no", "on", "off", "null", "~"].contains(value.lowercased())
+        return plain ? value : "'" + value.replacingOccurrences(of: "'", with: "''") + "'"
     }
 
     /// The YAML that skills use: `key: value` with plain or quoted scalars, `|` and `>` block scalars, plain scalars
@@ -249,6 +301,36 @@ public struct SkillLibrary: Sendable {
             }
             return try Self.inspect(folder: target, folderName: skill.name)
         }
+    }
+
+    /// Writes a SKILL.md the user wrote or edited in Settings. With `original`, that skill's folder is the starting
+    /// point: its other files are kept, and a new `name` in the text renames it. Checked like an import; a name that
+    /// belongs to another installed skill is an error.
+    @discardableResult
+    public func save(_ source: String, replacing original: String? = nil) throws -> Skill {
+        let manager = FileManager.default
+        let name = Self.parse(source)?.fields["name"]?.trimmingCharacters(in: .whitespaces) ?? ""
+        try manager.createDirectory(at: root, withIntermediateDirectories: true)
+        let staging = root.appendingPathComponent(".edit-\(UUID().uuidString)", isDirectory: true)
+        defer { try? manager.removeItem(at: staging) }
+        if let original {
+            try manager.copyItem(at: try folder(original), to: staging)
+        } else {
+            try manager.createDirectory(at: staging, withIntermediateDirectories: true)
+        }
+        try Data(source.utf8).write(to: staging.appendingPathComponent("SKILL.md"), options: .atomic)
+        let skill = try Self.inspect(folder: staging, folderName: name)
+        let target = root.appendingPathComponent(skill.name, isDirectory: true)
+        if skill.name != original, manager.fileExists(atPath: target.path) {
+            throw Failure("A skill named “\(skill.name)” is already installed.")
+        }
+        if manager.fileExists(atPath: target.path) {
+            _ = try manager.replaceItemAt(target, withItemAt: staging)
+        } else {
+            try manager.moveItem(at: staging, to: target)
+            if let original { try? manager.removeItem(at: root.appendingPathComponent(original, isDirectory: true)) }
+        }
+        return try Self.inspect(folder: target, folderName: skill.name)
     }
 
     public func remove(_ name: String) throws {

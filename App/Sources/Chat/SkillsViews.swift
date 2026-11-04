@@ -48,10 +48,11 @@ struct InstructionsView: View {
     }
 }
 
-/// Settings › Skills: the imported skills, an import button, and each skill's page.
+/// Settings › Skills: the installed skills, buttons to write or import one, and each skill's page.
 struct SkillsView: View {
     @Bindable var store: ChatStore
     @State private var importing = false
+    @State private var creating = false
     /// A picked skill whose name is already installed, waiting for Replace.
     @State private var replacing: (url: URL, name: String)?
     @State private var failure: String?
@@ -71,17 +72,23 @@ struct SkillsView: View {
                     let names = offsets.map { store.skills[$0].name }
                     Task { for name in names { await store.removeSkill(name) } }
                 }
+                Button("New Skill", systemImage: "square.and.pencil") { creating = true }
+                    .accessibilityIdentifier("skills.new")
                 Button("Import Skill…", systemImage: "square.and.arrow.down") { importing = true }
                     .accessibilityIdentifier("skills.import")
             } footer: {
-                Text("A skill is a folder with a SKILL.md: instructions, and files they refer to. Pi reads one when a task matches its description, or you run it by typing / in a message. Scripts in a skill don't run on iPhone. Unzip a .zip or .skill file in Files first. Only you can add or change skills.")
+                Text("A skill is a folder with a SKILL.md: instructions, and files they refer to. Pi reads one when a task matches its description, or you run it by typing / in a message. Write one here, or import one from Files. Scripts in a skill don't run on iPhone. Unzip a .zip or .skill file in Files first. Only you can add or change skills.")
             }
         }
         .navigationTitle("Skills")
         .overlay {
             if store.skills.isEmpty {
-                ContentUnavailableView("No Skills", systemImage: "book.closed", description: Text("Import a skill folder or a SKILL.md from Files."))
+                ContentUnavailableView("No Skills", systemImage: "book.closed", description: Text("Write a skill, or import a skill folder or a SKILL.md from Files."))
+                    .allowsHitTesting(false)
             }
+        }
+        .sheet(isPresented: $creating) {
+            NavigationStack { SkillEditorView(store: store, original: nil) }
         }
         .fileImporter(isPresented: $importing, allowedContentTypes: Self.types) { result in
             guard case let .success(url) = result else { return }
@@ -156,15 +163,51 @@ private struct SkillRow: View {
     }
 }
 
-/// One skill: what the model sees, how it runs, its files, and its SKILL.md as written.
+/// One skill: what the model sees, how it runs, its files, and its SKILL.md as written. Edit opens the editor; a
+/// rename there keeps this page on the skill.
 struct SkillDetailView: View {
     @Bindable var store: ChatStore
-    let skill: SkillLibrary.Skill
+    @State private var name: String
     @Environment(\.dismiss) private var dismiss
     @State private var source = ""
     @State private var removing = false
+    /// The skill as it was when Edit was tapped, so a rename doesn't empty the sheet before it closes.
+    @State private var editing: SkillLibrary.Skill?
+
+    init(store: ChatStore, skill: SkillLibrary.Skill) {
+        self.store = store
+        _name = State(initialValue: skill.name)
+    }
+
+    private var skill: SkillLibrary.Skill? { store.skills.first { $0.name == name } }
 
     var body: some View {
+        Group {
+            if let skill { form(skill) } else { ContentUnavailableView("Skill Removed", systemImage: "book.closed") }
+        }
+        .navigationTitle(name)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if let skill {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Edit") { editing = skill }
+                        .accessibilityIdentifier("skill.edit")
+                }
+            }
+        }
+        .sheet(item: $editing) { skill in
+            NavigationStack {
+                SkillEditorView(store: store, original: skill) { saved in
+                    // `Skill` holds no body, so an instructions-only edit leaves it equal: reload here.
+                    name = saved.name
+                    source = (try? store.skillLibrary.source(saved.name)) ?? ""
+                }
+            }
+        }
+        .task(id: skill) { source = (try? store.skillLibrary.source(name)) ?? "" }
+    }
+
+    private func form(_ skill: SkillLibrary.Skill) -> some View {
         Form {
             Section("Description") {
                 Text(skill.description)
@@ -200,9 +243,6 @@ struct SkillDetailView: View {
                 Button("Remove Skill", role: .destructive) { removing = true }
             }
         }
-        .navigationTitle(skill.name)
-        .navigationBarTitleDisplayMode(.inline)
-        .task { source = (try? store.skillLibrary.source(skill.name)) ?? "" }
         .confirmationDialog("Remove “\(skill.name)”?", isPresented: $removing, titleVisibility: .visible) {
             Button("Remove", role: .destructive) {
                 Task {
@@ -212,6 +252,172 @@ struct SkillDetailView: View {
             }
         } message: {
             Text("Messages that already ran it keep what they sent.")
+        }
+    }
+}
+
+/// Writes a new skill or edits one: its name, description, how it runs, and its instructions (the SKILL.md body).
+/// Saving composes the SKILL.md (`SkillLibrary.compose`, keeping other frontmatter fields of an edited skill) and checks
+/// it like an import; an edited skill keeps its other files.
+struct SkillEditorView: View {
+    @Bindable var store: ChatStore
+    /// The skill being edited; nil for a new one.
+    let original: SkillLibrary.Skill?
+    var saved: (SkillLibrary.Skill) -> Void = { _ in }
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var summary = ""
+    @State private var modelInvocable = true
+    @State private var userInvocable = true
+    @State private var instructions = ""
+    /// The SKILL.md being edited, as read when the editor opened.
+    @State private var source: String?
+    @State private var initial: [String] = []
+    @State private var loaded = false
+    @State private var saving = false
+    @State private var failure: String?
+
+    private var fields: [String] { [name, summary, String(modelInvocable), String(userInvocable), instructions] }
+    private var changed: Bool { loaded && fields != initial }
+    private var trimmedSummary: String { summary.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    private var nameProblem: String? {
+        if name.isEmpty { return nil }
+        if !SkillLibrary.validName(name) {
+            return "Lowercase letters, digits and single hyphens, not at the start or end, at most \(SkillLibrary.maxNameLength) characters."
+        }
+        if name != original?.name, store.skills.contains(where: { $0.name == name }) { return "A skill named “\(name)” is installed." }
+        return nil
+    }
+
+    private var canSave: Bool {
+        !saving && changed && !name.isEmpty && nameProblem == nil && !trimmedSummary.isEmpty
+            && trimmedSummary.count <= SkillLibrary.maxDescriptionLength
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("name", text: $name)
+                    .font(.body.monospaced())
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .accessibilityIdentifier("skill.editor.name")
+            } header: {
+                Text("Name")
+            } footer: {
+                if let nameProblem {
+                    Text(nameProblem).foregroundStyle(.orange)
+                } else if let original, name != original.name, !name.isEmpty {
+                    Text("Renames “\(original.name)”. Type /\(name) to run it.")
+                } else {
+                    Text("You run it by typing /\(name.isEmpty ? "name" : name).")
+                }
+            }
+            Section {
+                TextField("What it does, and when Pi should use it", text: $summary, axis: .vertical)
+                    .lineLimit(2...6)
+                    .accessibilityIdentifier("skill.editor.description")
+            } header: {
+                Text("Description")
+            } footer: {
+                if trimmedSummary.count > SkillLibrary.maxDescriptionLength {
+                    Text("\(trimmedSummary.count.formatted()) of \(SkillLibrary.maxDescriptionLength.formatted()) characters").foregroundStyle(.orange)
+                } else {
+                    Text("Every conversation's prompt lists it, so Pi knows when the skill fits.")
+                }
+            }
+            Section {
+                Toggle("Pi reads it when it fits", isOn: $modelInvocable)
+                Toggle("In the / menu", isOn: $userInvocable)
+            } footer: {
+                Text(modelInvocable ? "Pi may read the skill on its own when a task matches the description." : "Only you run it, with /; the prompt doesn't list it.")
+            }
+            Section {
+                TextEditor(text: $instructions)
+                    .font(.body.monospaced())
+                    .textInputAutocapitalization(.never)
+                    .frame(minHeight: 280)
+                    .overlay(alignment: .topLeading) {
+                        if instructions.isEmpty {
+                            Text("Markdown: the steps to follow. $ARGUMENTS is replaced with what you type after /\(name.isEmpty ? "name" : name).")
+                                .font(.body.monospaced())
+                                .foregroundStyle(.tertiary)
+                                .padding(.top, 8)
+                                .padding(.leading, 5)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    .accessibilityIdentifier("skill.editor.instructions")
+            } header: {
+                Text("Instructions")
+            } footer: {
+                let lines = instructions.isEmpty ? 0 : instructions.components(separatedBy: "\n").count
+                if lines > SkillLibrary.suggestedBodyLines {
+                    Text("\(lines.formatted()) lines; skills over \(SkillLibrary.suggestedBodyLines) lines are cut when read.").foregroundStyle(.orange)
+                } else if let original, !original.files.isEmpty {
+                    Text("Its other files (\(original.files.count.formatted())) are kept. Messages that already ran the skill keep what they sent.")
+                } else if original != nil {
+                    Text("Messages that already ran the skill keep what they sent.")
+                }
+            }
+        }
+        .navigationTitle(original == nil ? "New Skill" : "Edit Skill")
+        .navigationBarTitleDisplayMode(.inline)
+        .interactiveDismissDisabled(changed)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel", role: .cancel) { dismiss() }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save", action: save)
+                    .disabled(!canSave)
+                    .accessibilityIdentifier("skill.editor.save")
+            }
+        }
+        .onChange(of: name) {
+            // Names are folder names and "/" commands: lowercase, hyphens for spaces.
+            let normalized = name.lowercased().replacingOccurrences(of: " ", with: "-").replacingOccurrences(of: "_", with: "-")
+            if normalized != name { name = normalized }
+        }
+        .onAppear(perform: load)
+        .alert("Can't save the skill", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
+            Button("OK") { failure = nil }
+        } message: {
+            Text(failure ?? "")
+        }
+    }
+
+    private func load() {
+        guard !loaded else { return }
+        if let original {
+            let text = (try? store.skillLibrary.source(original.name)) ?? ""
+            source = text
+            name = original.name
+            summary = original.description
+            modelInvocable = original.modelInvocable
+            userInvocable = original.userInvocable
+            instructions = SkillLibrary.parse(text)?.body ?? ""
+        }
+        initial = fields
+        loaded = true
+    }
+
+    private func save() {
+        let text = SkillLibrary.compose(
+            name: name, description: trimmedSummary, modelInvocable: modelInvocable, userInvocable: userInvocable,
+            body: instructions, keeping: source
+        )
+        saving = true
+        Task {
+            defer { saving = false }
+            do {
+                let skill = try await store.saveSkill(text, replacing: original?.name)
+                saved(skill)
+                dismiss()
+            } catch {
+                failure = String(describing: error)
+            }
         }
     }
 }
