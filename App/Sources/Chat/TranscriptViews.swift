@@ -61,10 +61,13 @@ struct TranscriptItemView: View {
                 if let origin = item.origin {
                     Label(origin, systemImage: originSymbol(origin)).font(.caption2).foregroundStyle(.secondary)
                 }
+                if let skill = item.skill {
+                    SentSkillChip(store: store, name: skill)
+                }
                 if let attachments = item.attachments, !attachments.isEmpty {
                     SentAttachments(attachments: attachments)
                 }
-                if item.attachments == nil || !(item.text ?? "").isEmpty {
+                if (item.attachments == nil && item.skill == nil) || !(item.text ?? "").isEmpty {
                     HStack {
                         Spacer(minLength: 48)
                         Text(item.text ?? "")

@@ -32,6 +32,7 @@ import {
 } from "./attachments.ts";
 import { type DisplaySurface, FrameBuilder, textOf } from "./display.ts";
 import { answerText, OriginInput, SchedulesDoc } from "./schedule.ts";
+import { readSkill, skillContent } from "./skills.ts";
 import { PublishedDoc, SurfacesDoc, ValuesDoc } from "./surfaces.ts";
 import { complete, entriesOf, readView, transcriptOf } from "./view.ts";
 import { hostCall } from "../host/hostcall.ts";
@@ -232,23 +233,41 @@ export class Chat {
 
 	/**
 	 * Admits a user message; while a run is going it queues as a follow-up. Never waits for the answer. With
-	 * attachments, the model gets them after the text; the transcript shows the text and the attachments apart.
+	 * attachments, the model gets them after the text; the transcript shows the text and the attachments apart. With
+	 * `skill` (the user ran it with "/"), the skill's body is read now and goes first, so the message keeps the skill as it
+	 * was when sent, whatever happens to it later.
 	 */
-	async send(id: number, text: string, requestId: string, attachments: InputAttachment[] = []): Promise<{ submissionId: number }> {
-		const submission = await this.#submit(id, text, requestId, undefined, attachments);
+	async send(id: number, text: string, requestId: string, attachments: InputAttachment[] = [], skill?: string): Promise<{ submissionId: number }> {
+		const submission = await this.#submit(id, text, requestId, undefined, attachments, skill);
 		return { submissionId: submission.id };
 	}
 
-	async #submit(id: number, text: string, requestId: string, origin?: string, attachments: readonly InputAttachment[] = []): Promise<Submission> {
+	async #submit(
+		id: number,
+		text: string,
+		requestId: string,
+		origin?: string,
+		attachments: readonly InputAttachment[] = [],
+		skill?: string,
+	): Promise<Submission> {
 		const conversation = await this.#conversation(id);
+		const ran = skill === undefined ? undefined : await readSkill(skill);
 		const data: InputData = {
 			...(origin === undefined ? {} : { origin }),
-			...(attachments.length === 0 ? {} : { text, attachments: displayAttachments(attachments) }),
+			...(attachments.length === 0 && ran === undefined ? {} : { text }),
+			...(attachments.length === 0 ? {} : { attachments: displayAttachments(attachments) }),
+			...(ran === undefined ? {} : { skill: ran.name }),
 		};
+		const content =
+			ran !== undefined
+				? [...skillContent(ran, text), ...inputContent("", attachments)]
+				: attachments.length === 0
+					? text
+					: inputContent(text, attachments);
 		const submission = await conversation.submit(
 			{
 				type: "input",
-				content: attachments.length === 0 ? text : inputContent(text, attachments),
+				content,
 				requestId,
 				...(Object.keys(data).length === 0 ? {} : { entry: { kind: OriginInput, data } }),
 			},
@@ -259,7 +278,9 @@ export class Chat {
 			const meta = (await tx.doc(ConversationIndex)).items.find((item) => item.id === id);
 			if (meta === undefined) return;
 			meta.updatedAt = now;
-			if (meta.title === untitled) meta.title = text.trim() === "" ? (attachmentTitle(attachments) ?? untitled) : titleFrom(text);
+			if (meta.title !== untitled) return;
+			if (text.trim() !== "") meta.title = titleFrom(text);
+			else meta.title = ran !== undefined ? `/${ran.name}` : (attachmentTitle(attachments) ?? untitled);
 		}, context);
 		await this.#changed();
 		return submission;
@@ -372,17 +393,20 @@ export class Chat {
 	}
 
 	/**
-	 * Withdraws a queued message to edit it: its typed text and attachments as the composer takes them, or null when a
-	 * boundary already placed it.
+	 * Withdraws a queued message to edit it: its typed text, attachments and skill as the composer takes them, or null
+	 * when a boundary already placed it.
 	 */
-	async takeBack(id: number, submissionId: number): Promise<{ text: string; attachments: EditableAttachment[] } | null> {
+	async takeBack(id: number, submissionId: number): Promise<{ text: string; attachments: EditableAttachment[]; skill?: string } | null> {
 		const inbox = await this.harness.snapshot(InboxDoc, id as never, context);
 		const item = inbox?.items.find((candidate) => candidate.id === submissionId);
 		if (item === undefined || item.mode === "write" || !(await this.withdraw(id, submissionId))) return null;
 		const data = (item.entry as { data?: InputData } | undefined)?.data;
-		if (data?.attachments === undefined) return { text: textOf(item.content), attachments: [] };
-		const text = data.text ?? "";
-		return { text, attachments: editableAttachments(item.content, data.attachments, text) };
+		if (data?.attachments === undefined && data?.skill === undefined) return { text: textOf(item.content), attachments: [] };
+		return {
+			text: data.text ?? "",
+			attachments: data.attachments === undefined ? [] : editableAttachments(item.content, data.attachments),
+			...(data.skill === undefined ? {} : { skill: data.skill }),
+		};
 	}
 
 	/**

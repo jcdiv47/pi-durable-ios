@@ -63,6 +63,8 @@ struct DisplayItem: Decodable, Identifiable, Hashable {
     var data: JSONValue?
     /// What came with a user message (`DisplayAttachment` in attachments.ts).
     var attachments: [DisplayAttachment]?
+    /// The skill the user ran with "/" for this message; the model got its body.
+    var skill: String?
 
     var date: Date? { timestamp.map { Date(timeIntervalSince1970: $0 / 1000) } }
 }
@@ -149,6 +151,8 @@ struct TakenBack: Decodable {
 
     let text: String
     let attachments: [Part]
+    /// The skill the message ran with "/", back in the composer's chip.
+    var skill: String?
 }
 
 /// One version of a surface, as a UI tool result or `PiRuntime.surfaces` carries it.

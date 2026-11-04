@@ -19,6 +19,9 @@ decisions that change the spec go in `docs/adr/`.
   (`BrowserView`, a SwiftUI `WebPage`), so the stack's edge swipe returns to the chat.
   Settings › MCP servers (`MCPSettingsView`, `MCPServers`): the user's MCP servers, kept in Swift with their cached
   tool lists (Application Support `mcp-servers.json`), the VPN hint (`VPNStatus`) and the chat's warning banner.
+  Settings › Instructions and Skills (`SkillsViews`, `Skills`): the user's AGENTS.md (Application Support `AGENTS.md`)
+  and imported skills (`skills/<name>/`); the composer's "/" menu and chip run a skill
+  ([ADR 0007](docs/adr/0007-instructions-and-skills.md)).
   `App/Sources/M0/`: the headless check modes.
 - `App/Sources/System/`: M3's system integration: App Intents, entities, Siri phrases and snippets
   (`PiAppIntents`), BackgroundTasks from `onWake` (`BackgroundWork`), notifications with actions (`Notifications`),
@@ -35,7 +38,8 @@ decisions that change the spec go in `docs/adr/`.
 - `Shared/Sources/`: compiled into the app and the widget: the `LiveActivityIntent`s behind widget and Live Activity
   buttons, which iOS performs in the app's process.
 - `Packages/PiRuntime`: JSContext host, polyfill natives, the sqlite3 facade, the URLSession fetch
-  bridge, the Keychain key source and the async host-call bridge (`JSRuntime.Options.hostCall`).
+  bridge, the Keychain key source, the async host-call bridge (`JSRuntime.Options.hostCall`) and `SkillLibrary`
+  (SKILL.md checks, import, and the `skills.*` host calls that read inside a skill's folder).
 - `Packages/PiAppleTools`: EventKit, HealthKit and CoreLocation handlers behind the JS Apple tools
   (`AppleToolHost`).
 - `Packages/PiUI`: generated UI (M2). The component catalog, validator, renderer (`SurfaceView`), previews,
@@ -49,7 +53,8 @@ decisions that change the spec go in `docs/adr/`.
   providers, the Apple tool stubs, the UI tools (`surfaces.ts`: specs in Pi documents, JSON Patch), scheduled tasks
   and `notify_schedule` (`schedule.ts`), the web tools (`web.ts`: `web_search` through DeepSeek or Brave,
   `web_fetch` through DeepSeek Fetch) over keyed HTTP services (`services.ts`), MCP servers (`mcp.ts`: a Streamable
-  HTTP client and the `mcp` extension, [ADR 0006](docs/adr/0006-mcp-servers.md)), the approval gate and the offline
+  HTTP client and the `mcp` extension, [ADR 0006](docs/adr/0006-mcp-servers.md)), the user's instructions and skills
+  (`instructions.ts`, `skills.ts`: prompt sections, `skill_read`, `skill_file`), the approval gate and the offline
   `scripted/assistant` model. `chat.ts`
   also has the entry points outside the chat (`ask` from intents and notification replies, `widgetAction`,
   `runSchedule`).
@@ -125,6 +130,8 @@ intended rendering change, re-record with `PI_RECORD_SNAPSHOTS=1 swift test` and
   its token (`mcp-<id>`) only through `ProviderKeys.setMCPHosts`, from Swift. The `mcp` extension is installed from
   the cached tool lists before the Harness opens, so interrupted calls resume without the network
   ([ADR 0006](docs/adr/0006-mcp-servers.md)).
+- Instructions and skills are written, imported and removed only by the user, in Settings; no tool may change them, and
+  a skill's scripts never run. Skill files are read only through `SkillLibrary`, which keeps paths inside the skill.
 - The `SqliteDatabase` facade must keep passing both Pi's storage conformance suite and
   `js/test/facade-cases.ts` (Pi's suite does not exercise rollback).
 - A new component, prop, family rule or data source goes in PiUI's catalog (`Schema/`), with a sample slot in

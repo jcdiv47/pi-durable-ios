@@ -19,11 +19,26 @@
 //   "chores …"    → create_surface and publish_surface for a widget whose checklist rows complete open reminders
 //   "habits …"    → set_value habits (a to-do list), then create_surface and publish_surface for a widget whose checklist
 //                   rows toggle it and whose buttons reset it or send a prompt
+//   "skill <name>" → skill_read the skill
+//   "skillfile <name> <path>" → skill_file a file of the skill
+//   "section <key>" → answers with the system prompt section `key` as it stands (or "(none)")
 //   anything else → "You said: …"
 
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxThinking, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 
-type Transcript = { messages: { role: string; content?: unknown; toolName?: string; isError?: boolean }[] };
+type Transcript = {
+	messages: { role: string; content?: unknown; toolName?: string; isError?: boolean; sections?: Record<string, string | null> }[];
+};
+
+/** A system prompt section as the transcript's system messages leave it: later messages replace, `null` removes. */
+function sectionText(messages: Transcript["messages"], key: string): string | undefined {
+	let value: string | undefined;
+	for (const message of messages) {
+		if (message.role !== "system" || message.sections === undefined || !(key in message.sections)) continue;
+		value = message.sections[key] ?? undefined;
+	}
+	return value;
+}
 
 function text(content: unknown): string {
 	if (typeof content === "string") return content;
@@ -230,6 +245,16 @@ export function createScriptedModel() {
 				);
 			case "slow":
 				return fauxAssistantMessage(longAnswer);
+			case "skill":
+				return fauxAssistantMessage(fauxToolCall("skill_read", { name: prompt.split(/\s+/)[1] ?? "" }), { stopReason: "toolUse" });
+			case "skillfile": {
+				const [, name = "", path = ""] = prompt.split(/\s+/);
+				return fauxAssistantMessage(fauxToolCall("skill_file", { name, path }), { stopReason: "toolUse" });
+			}
+			case "section": {
+				const key = prompt.split(/\s+/)[1] ?? "";
+				return fauxAssistantMessage(`Section ${key}: ${sectionText(messages, key) ?? "(none)"}`);
+			}
 			default: {
 				const content = messages[lastUser]?.content;
 				const images = Array.isArray(content) ? content.filter((block: { type?: string }) => block.type === "image").length : 0;

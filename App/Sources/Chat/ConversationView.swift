@@ -1,4 +1,5 @@
 import PhotosUI
+import PiRuntime
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -10,6 +11,8 @@ struct ConversationView: View {
     @State private var draft = ""
     /// Photos, camera shots and files for the next message.
     @State private var attachments: [Attachment] = []
+    /// A skill picked from the "/" menu: the next message runs it.
+    @State private var skill: String?
     @State private var choosingPhotos = false
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var importingFiles = false
@@ -95,15 +98,16 @@ struct ConversationView: View {
             store.conversationAppeared(conversationId)
             store.watch(conversationId)
             // What was left here last time; a view that stayed alive under a pushed screen still holds it.
-            if let kept = store.takeComposerDraft(conversationId), kept != .init(text: draft, attachments: attachments) {
+            if let kept = store.takeComposerDraft(conversationId), kept != .init(text: draft, attachments: attachments, skill: skill) {
                 draft = [draft, kept.text].filter { !$0.isEmpty }.joined(separator: "\n")
                 attachments += kept.attachments
+                skill = skill ?? kept.skill
             }
         }
         .onDisappear {
             store.conversationDisappeared(conversationId)
             voice.cancel()
-            store.keepComposerDraft(.init(text: draft, attachments: attachments), for: conversationId)
+            store.keepComposerDraft(.init(text: draft, attachments: attachments, skill: skill), for: conversationId)
         }
         .onChange(of: store.drafts[conversationId], initial: true) { takeDraft() }
     }
@@ -158,7 +162,13 @@ struct ConversationView: View {
         }
     }
 
-    private var hasDraft: Bool { !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty }
+    private var hasDraft: Bool { !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty || skill != nil }
+
+    /// The "/" menu's skills while a "/" command is typed at the start of an otherwise empty composer.
+    private var suggestedSkills: [SkillLibrary.Skill] {
+        guard skill == nil, attachments.isEmpty, let query = SkillSuggestions.query(draft) else { return [] }
+        return SkillSuggestions.matches(store.invocableSkills, query)
+    }
 
     private var imagesUnseen: Bool {
         store.model(state.model)?.images == false && attachments.contains { if case .image = $0.content { true } else { false } }
@@ -227,6 +237,13 @@ struct ConversationView: View {
     private var composer: some View {
         VStack(spacing: 8) {
             if !state.queue.isEmpty { queue }
+            if !suggestedSkills.isEmpty {
+                SkillSuggestions(skills: suggestedSkills) { picked in
+                    skill = picked.name
+                    draft = ""
+                    composing = true
+                }
+            }
             GlassEffectContainer(spacing: 8) {
                 HStack(alignment: .bottom, spacing: 8) {
                     attachMenu
@@ -238,6 +255,7 @@ struct ConversationView: View {
         .padding(.bottom, 8)
         .animation(.snappy, value: state.queue)
         .animation(.snappy, value: attachments)
+        .animation(.snappy, value: skill)
         .animation(.snappy, value: state.live.busy)
         .modifier(VoiceFeedback(voice: voice))
         .photosPicker(isPresented: $choosingPhotos, selection: $photoItems, maxSelectionCount: 10, matching: .images)
@@ -253,6 +271,10 @@ struct ConversationView: View {
     /// Attachments over the text, as Messages puts them in its field; a capsule while it holds one line.
     private var field: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if let skill {
+                SkillChip(name: skill) { self.skill = nil }
+                    .padding([.horizontal, .top], 8)
+            }
             if !attachments.isEmpty || attaching > 0 {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
@@ -267,7 +289,7 @@ struct ConversationView: View {
             }
             if voice.phase == .idle {
                 HStack(alignment: .bottom, spacing: 4) {
-                    TextField(state.live.busy ? "Queue a message" : "Message", text: $draft, axis: .vertical)
+                    TextField(skill != nil ? "Add to /\(skill!)" : state.live.busy ? "Queue a message" : "Message", text: $draft, axis: .vertical)
                         .lineLimit(1...6)
                         .focused($composing)
                         .padding(.leading, 16)
@@ -372,10 +394,12 @@ struct ConversationView: View {
             } else {
                 let text = draft
                 let sent = attachments
+                let ran = skill
                 composing = false
                 draft = ""
                 attachments = []
-                Task { await store.send(text, attachments: sent, to: conversationId) }
+                skill = nil
+                Task { await store.send(text, attachments: sent, skill: ran, to: conversationId) }
             }
         } label: {
             Image(systemName: stops ? "stop.fill" : "arrow.up")
@@ -425,6 +449,7 @@ struct ConversationView: View {
             guard let taken = await store.takeBack(message, from: conversationId) else { return }
             draft = [taken.text, draft].filter { !$0.isEmpty }.joined(separator: "\n")
             attachments = taken.attachments + attachments
+            if let ran = taken.skill { skill = ran }
             composing = true
         }
     }

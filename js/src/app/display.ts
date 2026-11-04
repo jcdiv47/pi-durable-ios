@@ -11,7 +11,8 @@ export type DisplayToolCall = { id: string; name: string; arguments: string };
 export type DisplayItem =
 	/** `origin`: where an input from outside the chat came from (Siri, a widget, a schedule). */
 	/** `attachments`: what came with the text (the model got them in the message after it). */
-	| { id: number; kind: "user"; text: string; timestamp?: number; origin?: string; attachments?: DisplayAttachment[] }
+	/** `skill`: the skill the user ran with "/" (the model got its body; the bubble shows its name). */
+	| { id: number; kind: "user"; text: string; timestamp?: number; origin?: string; attachments?: DisplayAttachment[]; skill?: string }
 	| {
 			id: number;
 			kind: "assistant";
@@ -157,10 +158,11 @@ export function displayItem(entry: EntryRecord): DisplayItem | undefined {
 			return {
 				id: entry.id,
 				kind: "user",
-				text: clip(data?.attachments === undefined ? textOf(message?.content) : (data.text ?? "")),
+				text: clip(data?.attachments === undefined && data?.skill === undefined ? textOf(message?.content) : (data.text ?? "")),
 				timestamp: message?.timestamp as number | undefined,
 				origin: data?.origin,
 				attachments: data?.attachments,
+				skill: data?.skill,
 			};
 		}
 		case "pi.compaction":
@@ -212,13 +214,17 @@ export function displayUsage(usage: UsageDoc | undefined): DisplayFrame["usage"]
 	return total;
 }
 
-/** A queued message's typed text; with attachments, the text alone, or what is attached when there is none. */
+/**
+ * A queued message's typed text; with attachments, the text alone, or what is attached when there is none. A skill run
+ * starts with the skill's "/" name.
+ */
 function queuedText(item: Extract<InboxState["items"][number], { content: unknown }>): string {
 	const data = (item.entry as { data?: InputData } | undefined)?.data;
-	if (data?.attachments === undefined) return textOf(item.content);
-	const text = data.text?.trim() ?? "";
+	if (data?.attachments === undefined && data?.skill === undefined) return textOf(item.content);
+	const typed = [data.skill === undefined ? "" : `/${data.skill}`, data.text?.trim() ?? ""].filter((part) => part !== "").join(" ");
+	if (data.attachments === undefined) return typed;
 	const summary = attachmentSummary(data.attachments);
-	return text === "" ? `📎 ${summary}` : `${text} (📎 ${summary})`;
+	return typed === "" ? `📎 ${summary}` : `${typed} (📎 ${summary})`;
 }
 
 /** Remembers which entries a watcher already sent, so the next frame carries only new ones. */
