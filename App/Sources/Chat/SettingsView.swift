@@ -98,7 +98,7 @@ struct SettingsView: View {
                 NavigationLink {
                     SSHHostsSettingsView(store: store)
                 } label: {
-                    SettingsRow("SSH Hosts", systemImage: "terminal", tint: .black) {
+                    SettingsRow("SSH Hosts", systemImage: "terminal", tint: .mint) {
                         Text(store.sshHosts.isEmpty ? "None" : "\(store.sshHosts.count)")
                     }
                 }
