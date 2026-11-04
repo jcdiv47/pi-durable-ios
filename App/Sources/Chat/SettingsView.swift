@@ -1,7 +1,161 @@
 import PiRuntime
 import SwiftUI
 
+/// Settings is an index: a few groups of rows, each opening one focused page, the way iOS Settings reads.
+/// Chat (how new conversations start, archived ones, links), Connections (model providers, web search, MCP servers),
+/// Permissions (tool approvals), and Pi itself (scheduled tasks, widgets, diagnostics).
 struct SettingsView: View {
+    @Bindable var store: ChatStore
+
+    private var savedProviders: Int { ChatStore.providers.filter { store.hasKey($0.id) }.count }
+    private var askingTools: Int { store.tools.filter { $0.server == nil && $0.policy == "ask" }.count }
+
+    var body: some View {
+        Form {
+            Section {
+                NavigationLink {
+                    ModelSettingsView(store: store)
+                } label: {
+                    SettingsRow("Default Model", systemImage: "cpu", tint: .purple) {
+                        Text(store.model(store.defaultModel)?.name ?? store.defaultModel.key)
+                    }
+                }
+                .accessibilityIdentifier("settings.model")
+                Picker(selection: $store.openLinksInApp) {
+                    Text("Pi").tag(true)
+                    Text("Default Browser").tag(false)
+                } label: {
+                    // A plain Label: the menu picker stacks a LabeledContent's icon over its title.
+                    Label {
+                        Text("Open Links In")
+                    } icon: {
+                        Image(systemName: "safari").foregroundStyle(.blue)
+                    }
+                }
+                .pickerStyle(.menu)
+                .accessibilityIdentifier("settings.links")
+                // A route, not a destination closure: its rows push conversations onto the same path.
+                NavigationLink(value: Route.archived) {
+                    SettingsRow("Archived Conversations", systemImage: "archivebox", tint: .indigo) {
+                        Text("\(store.archivedConversations.count)")
+                    }
+                }
+            } header: {
+                Text("Chat")
+            } footer: {
+                Text("In Pi, a page slides in over the chat; swipe right from the left edge to go back. Map links always open in Maps.")
+            }
+
+            Section {
+                NavigationLink {
+                    ProvidersSettingsView(store: store)
+                } label: {
+                    SettingsRow("Model Providers", systemImage: "key", tint: .orange) {
+                        Text(savedProviders == 0 ? "No keys" : "\(savedProviders) saved")
+                    }
+                }
+                .accessibilityIdentifier("settings.providers")
+                NavigationLink {
+                    WebSearchSettingsView(store: store)
+                } label: {
+                    SettingsRow("Web Search", systemImage: "magnifyingglass", tint: .teal) {
+                        Text(searchProviderName)
+                    }
+                }
+                .accessibilityIdentifier("settings.search")
+                NavigationLink {
+                    MCPServersSettingsView(store: store)
+                } label: {
+                    SettingsRow("MCP Servers", systemImage: "server.rack", tint: .gray) {
+                        Text(store.mcpServers.isEmpty ? "None" : "\(store.mcpServers.count)")
+                    }
+                }
+                .accessibilityIdentifier("settings.mcp")
+            } header: {
+                Text("Connections")
+            } footer: {
+                Text("Keys and tokens stay in the Keychain on this iPhone and go only to their own servers.")
+            }
+
+            Section {
+                NavigationLink {
+                    ToolApprovalsView(store: store)
+                } label: {
+                    SettingsRow("Tool Approvals", systemImage: "hand.raised", tint: .green) {
+                        if askingTools > 0 { Text("\(askingTools) ask first") }
+                    }
+                }
+                .accessibilityIdentifier("settings.approvals")
+            } header: {
+                Text("Permissions")
+            }
+
+            Section {
+                NavigationLink(value: Route.schedules) {
+                    SettingsRow("Scheduled Tasks", systemImage: "clock.arrow.circlepath", tint: .pink)
+                }
+                NavigationLink(value: Route.surfaces) {
+                    SettingsRow("Widgets", systemImage: "square.grid.2x2", tint: .cyan)
+                }
+                NavigationLink(value: Route.diagnostics) {
+                    SettingsRow("Diagnostics", systemImage: "stethoscope", tint: .secondary)
+                }
+            } header: {
+                Text("Pi")
+            }
+        }
+        .navigationTitle("Settings")
+        .task {
+            await store.refreshTools()
+            await store.refreshModels()
+        }
+    }
+
+    private var searchProviderName: String {
+        switch store.searchProvider {
+        case "deepseek": "DeepSeek"
+        case "brave": "Brave Search"
+        case "scripted": "Offline"
+        default: "Off"
+        }
+    }
+}
+
+/// A Settings index row: a tinted symbol, a title and an optional value on the trailing side.
+struct SettingsRow<Value: View>: View {
+    let title: String
+    let systemImage: String
+    let tint: Color
+    let value: Value
+
+    init(_ title: String, systemImage: String, tint: Color, @ViewBuilder value: () -> Value) {
+        self.title = title
+        self.systemImage = systemImage
+        self.tint = tint
+        self.value = value()
+    }
+
+    var body: some View {
+        LabeledContent {
+            value
+        } label: {
+            Label {
+                Text(title)
+            } icon: {
+                Image(systemName: systemImage).foregroundStyle(tint)
+            }
+        }
+    }
+}
+
+extension SettingsRow where Value == EmptyView {
+    init(_ title: String, systemImage: String, tint: Color) {
+        self.init(title, systemImage: systemImage, tint: tint) { EmptyView() }
+    }
+}
+
+/// Settings › Default Model: the model and effort new conversations start with.
+struct ModelSettingsView: View {
     @Bindable var store: ChatStore
     /// The efforts the default model supports; just `off` for one without reasoning, which gets no effort picker.
     private var defaultLevels: [String] { store.model(store.defaultModel)?.thinkingLevels ?? [] }
@@ -9,7 +163,7 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section {
-                Picker("Default model", selection: $store.defaultModel) {
+                Picker("Model", selection: $store.defaultModel) {
                     ForEach(store.models) { model in
                         Text("\(model.name) · \(model.providerName)").tag(model.ref)
                     }
@@ -19,7 +173,7 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.navigationLink)
                 if defaultLevels.count > 1 {
-                    Picker("Default effort", selection: Binding(
+                    Picker("Effort", selection: Binding(
                         get: { ThinkingLevel.clamp(store.defaultThinking, to: defaultLevels) },
                         set: { store.defaultThinking = $0 }
                     )) {
@@ -32,26 +186,54 @@ struct SettingsView: View {
             } footer: {
                 Text("New conversations start with this model and effort, and keep them. Conversations already started don't change.")
             }
+            if store.models.count <= 1 {
+                Section {
+                    NavigationLink("Add a Provider Key") { ProvidersSettingsView(store: store) }
+                } footer: {
+                    Text("Only the offline demo model is available until a provider has a key.")
+                }
+            }
+        }
+        .navigationTitle("Default Model")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
 
+/// Settings › Model Providers: one row per provider, each opening its key page.
+struct ProvidersSettingsView: View {
+    @Bindable var store: ChatStore
+
+    var body: some View {
+        Form {
             Section {
                 ForEach(ChatStore.providers, id: \.id) { provider in
                     NavigationLink {
                         ProviderKeyView(store: store, provider: provider.id, name: provider.name)
                     } label: {
-                        LabeledContent(provider.name) {
-                            Text(store.hasKey(provider.id) ? "Key saved" : "No key")
-                                .foregroundStyle(store.hasKey(provider.id) ? .green : .secondary)
-                        }
+                        KeyStatusRow(name: provider.name, saved: store.hasKey(provider.id))
                     }
                 }
-            } header: {
-                Text("Providers")
             } footer: {
                 Text("Keys stay in the Keychain on this iPhone. Pi's JavaScript never sees them: the app adds a key only to requests going to that provider's own servers.")
             }
+        }
+        .navigationTitle("Model Providers")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
 
+/// Settings › Web Search: the search provider, the keyed services and their monthly usage.
+struct WebSearchSettingsView: View {
+    @Bindable var store: ChatStore
+
+    private var capped: [(id: String, name: String)] {
+        ChatStore.services.filter { store.hasKey($0.id) && ServiceUsage.shared.cap(for: $0.id) != nil }.map { ($0.id, $0.name) }
+    }
+
+    var body: some View {
+        Form {
             Section {
-                Picker("Search with", selection: $store.searchProvider) {
+                Picker("Search With", selection: $store.searchProvider) {
                     Text("Off").tag("off")
                     Text("DeepSeek").tag("deepseek")
                     Text("Brave Search").tag("brave")
@@ -59,27 +241,39 @@ struct SettingsView: View {
                     Text("Offline (scripted)").tag("scripted")
                     #endif
                 }
+            } footer: {
+                Text("DeepSeek search uses the DeepSeek provider key, and reading pages always goes through DeepSeek. Pi asks before reading a page whose link didn't come from you or a search.")
+            }
+            Section("Service Keys") {
                 ForEach(ChatStore.services, id: \.id) { service in
                     NavigationLink {
                         ProviderKeyView(store: store, provider: service.id, name: service.name)
                     } label: {
+                        KeyStatusRow(name: service.name, saved: store.hasKey(service.id))
+                    }
+                }
+            }
+            if !capped.isEmpty {
+                Section("This Month") {
+                    ForEach(capped, id: \.id) { service in
                         LabeledContent(service.name) {
-                            Text(store.hasKey(service.id) ? "Key saved" : "No key")
-                                .foregroundStyle(store.hasKey(service.id) ? .green : .secondary)
+                            Text("\(ServiceUsage.shared.count(for: service.id)) of \(ServiceUsage.shared.cap(for: service.id)!) requests")
                         }
                     }
                 }
-                ForEach(ChatStore.services.filter { store.hasKey($0.id) && ServiceUsage.shared.cap(for: $0.id) != nil }, id: \.id) { service in
-                    LabeledContent("\(service.name) this month") {
-                        Text("\(ServiceUsage.shared.count(for: service.id)) of \(ServiceUsage.shared.cap(for: service.id)!) requests")
-                    }
-                }
-            } header: {
-                Text("Web search")
-            } footer: {
-                Text("DeepSeek search uses the DeepSeek key above, and reading pages always goes through DeepSeek. Pi asks before reading a page whose link didn't come from you or a search.")
             }
+        }
+        .navigationTitle("Web Search")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
 
+/// Settings › MCP Servers: the user's servers and the way to add one.
+struct MCPServersSettingsView: View {
+    @Bindable var store: ChatStore
+
+    var body: some View {
+        Form {
             Section {
                 ForEach(store.mcpServers) { server in
                     NavigationLink {
@@ -91,58 +285,53 @@ struct SettingsView: View {
                 NavigationLink {
                     MCPServerView(store: store, server: nil)
                 } label: {
-                    Label("Add server", systemImage: "plus")
+                    Label("Add Server", systemImage: "plus")
                 }
                 .accessibilityIdentifier("settings.mcp.add")
-            } header: {
-                Text("MCP servers")
             } footer: {
-                Text("Tools from MCP servers that speak Streamable HTTP. Tokens stay in the Keychain and go only to their server's host. Pi asks before tools that change things.")
+                Text("Tools from MCP servers that speak Streamable HTTP. Tokens stay in the Keychain and go only to their server's host. Pi asks before tools that change things; a server's tool approvals are on its page.")
             }
+        }
+        .navigationTitle("MCP Servers")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
 
-            Section {
-                Picker("Open links in", selection: $store.openLinksInApp) {
-                    Text("Pi").tag(true)
-                    Text("Default browser").tag(false)
-                }
-                .accessibilityIdentifier("settings.links")
-            } header: {
-                Text("Links")
-            } footer: {
-                Text("In Pi, a page slides in over the chat; swipe right from the left edge to go back. Map links always open in Maps.")
-            }
+/// Settings › Tool Approvals: Pi's own tools (MCP servers' tools are under their server).
+struct ToolApprovalsView: View {
+    @Bindable var store: ChatStore
 
+    var body: some View {
+        Form {
             Section {
-                // A route, not a destination closure: its rows push conversations onto the same path.
-                NavigationLink(value: Route.archived) {
-                    LabeledContent("Archived Conversations") {
-                        Text("\(store.archivedConversations.count)")
-                    }
-                }
-            } footer: {
-                Text("Archiving stops a conversation's work and its scheduled tasks and takes it out of the list. Its history stays on this iPhone.")
-            }
-
-            Section {
-                // MCP servers' tools are under their server.
                 ForEach(store.tools.filter { $0.server == nil }) { tool in
                     ToolPolicyPicker(store: store, tool: tool)
                 }
-            } header: {
-                Text("Tool approvals")
             } footer: {
                 Text("“Ask” pauses the conversation until you allow or deny the call.")
             }
         }
-        .navigationTitle("Settings")
-        .task {
-            await store.refreshTools()
-            await store.refreshModels()
+        .navigationTitle("Tool Approvals")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await store.refreshTools() }
+    }
+}
+
+/// A provider or service row: its name and whether its key is saved.
+struct KeyStatusRow: View {
+    let name: String
+    let saved: Bool
+
+    var body: some View {
+        LabeledContent(name) {
+            Text(saved ? "Key saved" : "No key")
+                .foregroundStyle(saved ? .green : .secondary)
         }
     }
 }
 
-/// A tool's approval policy: Allow, Ask or Never.
+/// A tool's approval policy: Allow, Ask or Never. A row with the description's first line and the policy; it opens
+/// the tool's page, which has the whole description (written for the model, so often long) and the choice.
 struct ToolPolicyPicker: View {
     let store: ChatStore
     let tool: ToolInfo
@@ -150,15 +339,78 @@ struct ToolPolicyPicker: View {
     var title: String?
 
     var body: some View {
-        Picker(selection: Binding(get: { tool.policy }, set: { policy in Task { await store.setPolicy(policy, for: tool.name) } })) {
-            Text("Allow").tag("auto")
-            Text("Ask").tag("ask")
-            Text("Never").tag("deny")
+        NavigationLink {
+            ToolPolicyView(store: store, name: tool.name, title: title ?? tool.name)
         } label: {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title ?? tool.name).font(.body.monospaced())
-                Text(tool.description).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+            // Centred, so the policy sits level with the chevron the list draws in the row's middle.
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title ?? tool.name).font(.body.monospaced())
+                    Text(tool.description).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                Text(ToolPolicy.name(tool.policy))
+                    .foregroundStyle(tool.policy == "ask" ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
             }
+        }
+        .accessibilityIdentifier("tool.\(tool.name)")
+    }
+}
+
+/// One tool: its policy, then its whole description.
+struct ToolPolicyView: View {
+    let store: ChatStore
+    let name: String
+    let title: String
+
+    /// Read from the store, so the choice shows once `setPolicy` has refreshed the tools.
+    private var tool: ToolInfo? { store.tools.first { $0.name == name } }
+
+    var body: some View {
+        Form {
+            if let tool {
+                Section {
+                    Picker("Approval", selection: Binding(get: { tool.policy }, set: { policy in Task { await store.setPolicy(policy, for: name) } })) {
+                        ForEach(ToolPolicy.all, id: \.self) { policy in
+                            Text(ToolPolicy.name(policy)).tag(policy)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets())
+                } footer: {
+                    Text(ToolPolicy.explanation(tool.policy))
+                }
+                Section("What Pi Is Told") {
+                    Text(tool.description)
+                        .font(.callout)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+enum ToolPolicy {
+    static let all = ["auto", "ask", "deny"]
+
+    static func name(_ policy: String) -> String {
+        switch policy {
+        case "auto": "Allow"
+        case "ask": "Ask"
+        case "deny": "Never"
+        default: policy
+        }
+    }
+
+    static func explanation(_ policy: String) -> String {
+        switch policy {
+        case "auto": "Pi runs this tool without asking."
+        case "ask": "Pi pauses the conversation until you allow or deny each call."
+        case "deny": "Pi can’t use this tool: a call is refused, and Pi is told you turned it off."
+        default: ""
         }
     }
 }

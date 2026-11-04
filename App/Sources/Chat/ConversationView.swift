@@ -6,6 +6,7 @@ struct ConversationView: View {
     @Bindable var store: ChatStore
     let conversationId: Int
     @Binding var path: [Route]
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var draft = ""
     /// Photos, camera shots and files for the next message.
     @State private var attachments: [Attachment] = []
@@ -237,7 +238,6 @@ struct ConversationView: View {
         .padding(.bottom, 8)
         .animation(.snappy, value: state.queue)
         .animation(.snappy, value: attachments)
-        .animation(.snappy, value: hasDraft)
         .animation(.snappy, value: state.live.busy)
         .modifier(VoiceFeedback(voice: voice))
         .photosPicker(isPresented: $choosingPhotos, selection: $photoItems, maxSelectionCount: 10, matching: .images)
@@ -278,12 +278,12 @@ struct ConversationView: View {
                         micButton
                             .padding(.vertical, 6)
                             .padding(.trailing, hasDraft || state.live.busy ? 0 : 6)
-                            .transition(.scale.combined(with: .opacity))
+                            .transition(.opacity)
                     }
                     if hasDraft || state.live.busy {
                         primaryButton
                             .padding(6)
-                            .transition(.scale.combined(with: .opacity))
+                            .transition(.opacity)
                     }
                 }
                 .frame(minHeight: Self.fieldHeight)
@@ -408,7 +408,7 @@ struct ConversationView: View {
             }
         }
         .glassEffect(.regular, in: .rect(cornerRadius: 20))
-        .transition(.move(edge: .bottom).combined(with: .opacity))
+        .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
     }
 
     private func act(on message: QueuedMessage, _ action: @escaping () async -> Void) {
@@ -569,9 +569,11 @@ private struct VoiceLevels: View {
     var body: some View {
         HStack(spacing: 3) {
             ForEach(levels.indices, id: \.self) { index in
+                // Full height, scaled: a scale is drawn, not laid out, so each level update moves no other view.
                 Capsule()
                     .fill(.tint)
-                    .frame(width: 3, height: 4 + CGFloat(levels[index]) * 20)
+                    .frame(width: 3, height: 24)
+                    .scaleEffect(y: (4 + CGFloat(levels[index]) * 20) / 24)
             }
         }
         .frame(height: 24)
