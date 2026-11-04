@@ -53,6 +53,11 @@ final class ChatStore {
     private(set) var mcpServers: [MCPServer] = MCPServerFile.load()
     /// Each server's state since this process last talked to it, by server ID.
     private(set) var mcpStatuses: [String: MCPStatus] = [:]
+    /// Settings › Instructions: the user's AGENTS.md, a prompt section in every conversation. Written by hand only.
+    private(set) var instructions = InstructionsFile.load()
+    /// Settings › Skills: the imported skills (docs/adr/0007-instructions-and-skills.md). Added and removed by hand only.
+    private(set) var skills: [SkillLibrary.Skill] = []
+    let skillLibrary = SkillLibrary(root: SkillLibrary.appRoot)
     /// Whether a VPN tunnel looked up when the app last came to the foreground (`VPNStatus`).
     private(set) var vpnUp = VPNStatus.tunnelUp()
     /// Surfaces on the Home Screen and Lock Screen.
@@ -66,6 +71,8 @@ final class ChatStore {
     struct Draft: Hashable {
         var text: String
         var attachments: [Attachment]
+        /// A skill picked from the composer's "/" menu: the message runs it.
+        var skill: String? = nil
     }
     /// What was left in a conversation's composer when its view went away, until it opens again. In memory only.
     private var composerDrafts: [Int: Draft] = [:]
@@ -197,6 +204,8 @@ final class ChatStore {
             let tools = appleTools
             let surfaces = surfaceHost!
             let notifications = notifications!
+            let skillLibrary = skillLibrary
+            skills = skillLibrary.list()
             let harness = try await PiHarness.load(bundle: AppModel.bundleURL, options: .init(
                 keys: keys,
                 usage: .shared,
@@ -206,6 +215,7 @@ final class ChatStore {
                 onLog: AppModel.forwardLog,
                 hostCall: { name, json in
                     if SurfaceHost.handlers.contains(name) { return try await surfaces.handle(name, json) }
+                    if SkillLibrary.handlers.contains(name) { return try skillLibrary.handle(name, json) }
                     if name == "notify.post" || name == "notify.schedule" {
                         let args = try JSONDecoder().decode(Notifications.NotifyArguments.self, from: Data(json.utf8))
                         return try await notifications.post(args)
@@ -221,7 +231,9 @@ final class ChatStore {
                 customProvider: custom,
                 searchProvider: searchProvider,
                 policies: settings.dictionary(forKey: "toolPolicies") as? [String: String],
-                mcpServers: mcpServersJSON
+                mcpServers: mcpServersJSON,
+                instructions: instructions,
+                skills: skills
             ))
             self.harness = harness
             conversations = try await harness.call("PiRuntime.conversations")
@@ -353,13 +365,17 @@ final class ChatStore {
         }
     }
 
-    func send(_ text: String, attachments: [Attachment] = [], to id: Int) async {
+    /// `skill`: one picked from the "/" menu; JS reads its body now and sends it first.
+    func send(_ text: String, attachments: [Attachment] = [], skill: String? = nil, to id: Int) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let harness, !trimmed.isEmpty || !attachments.isEmpty else { return }
+        guard let harness, !trimmed.isEmpty || !attachments.isEmpty || skill != nil else { return }
         watch(id)
         do {
             var arguments: [any Sendable] = [id, trimmed, UUID().uuidString]
-            if !attachments.isEmpty { arguments.append(try attachments.compactMap(InputAttachment.init).map { try harness.jsonArgument($0) }) }
+            if !attachments.isEmpty || skill != nil {
+                arguments.append(try attachments.compactMap(InputAttachment.init).map { try harness.jsonArgument($0) })
+            }
+            if let skill { arguments.append(skill) }
             try await harness.perform("PiRuntime.send", arguments)
             let title = meta(id)?.title ?? "Pi"
             activities.start(conversationId: id, title: title)
@@ -397,7 +413,7 @@ final class ChatStore {
                 Attachments.touch(file)
                 return true
             }
-            return Draft(text: taken.text, attachments: attachments)
+            return Draft(text: taken.text, attachments: attachments, skill: taken.skill)
         } catch {
             report("take back", error)
             return nil
@@ -561,6 +577,39 @@ final class ChatStore {
     }
 
     private var mcpServersJSON: String { JSONValue.array(mcpServers.map(\.config)).jsonText }
+
+    // MARK: Instructions and skills
+
+    /// Saves Settings › Instructions; applies from each conversation's next request.
+    func setInstructions(_ text: String) async {
+        guard text != instructions else { return }
+        instructions = text
+        do { try InstructionsFile.save(text) } catch { report("save instructions", error) }
+        guard let harness else { return }
+        do { try await harness.perform("PiRuntime.setInstructions", [text]) } catch { report("instructions", error) }
+    }
+
+    /// The skills the "/" menu offers.
+    var invocableSkills: [SkillLibrary.Skill] { skills.filter(\.userInvocable) }
+
+    /// Imports a skill folder or SKILL.md picked in Files; `replace` overwrites one of the same name.
+    func importSkill(from url: URL, replace: Bool) async throws -> SkillLibrary.Skill {
+        let skill = try skillLibrary.importSkill(from: url, replace: replace)
+        diagnostics.record("info", "skills", "Imported \(skill.name)\(skill.warnings.isEmpty ? "" : ": " + skill.warnings.joined(separator: " "))")
+        await skillsChanged()
+        return skill
+    }
+
+    func removeSkill(_ name: String) async {
+        do { try skillLibrary.remove(name) } catch { report("remove skill", error) }
+        await skillsChanged()
+    }
+
+    private func skillsChanged() async {
+        skills = skillLibrary.list()
+        guard let harness else { return }
+        do { try await harness.perform("PiRuntime.setSkills", [try skills.map { try harness.jsonArgument($0) }]) } catch { report("skills", error) }
+    }
 
     /// A warning for the chat when VPN-only servers can't be reached, or nil.
     var mcpWarning: String? {

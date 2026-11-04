@@ -16,6 +16,10 @@ public final class PiHarness: Sendable {
         /// Settings › MCP servers as JSON text: an array of servers with their cached tool lists (`McpServerConfig[]`
         /// in `js/src/app/mcp.ts`). Text, because the tools' schemas are arbitrary JSON.
         public var mcpServers: String?
+        /// Settings › Instructions: the user's AGENTS.md text, a prompt section in every conversation.
+        public var instructions: String?
+        /// Settings › Skills: the imported skills (`SkillLibrary.list()`).
+        public var skills: [SkillLibrary.Skill]?
         public var toolMs: Int?
 
         public init(
@@ -27,6 +31,8 @@ public final class PiHarness: Sendable {
             searchProvider: String? = nil,
             policies: [String: String]? = nil,
             mcpServers: String? = nil,
+            instructions: String? = nil,
+            skills: [SkillLibrary.Skill]? = nil,
             toolMs: Int? = nil
         ) {
             self.dbPath = dbPath
@@ -37,6 +43,8 @@ public final class PiHarness: Sendable {
             self.searchProvider = searchProvider
             self.policies = policies
             self.mcpServers = mcpServers
+            self.instructions = instructions
+            self.skills = skills
             self.toolMs = toolMs
         }
     }

@@ -15,8 +15,11 @@ export type DisplayAttachment =
 	| { kind: "text"; name?: string; preview: string; length: number }
 	| { kind: "link"; url: string; title?: string };
 
-/** What the input entry keeps besides the message: where it came from, the typed text and the attachments. */
-export type InputData = { origin?: string; text?: string; attachments?: DisplayAttachment[] };
+/**
+ * What the input entry keeps besides the message: where it came from, the typed text, the attachments, and the skill
+ * the user ran with "/" (its body went into the message; the transcript shows its name).
+ */
+export type InputData = { origin?: string; text?: string; attachments?: DisplayAttachment[]; skill?: string };
 
 /** A shared PDF or web page can be long; the model gets this much of each. */
 const MAX_TEXT = 100_000;
@@ -73,12 +76,13 @@ export type EditableAttachment =
 const cutNote = /\n… \(\d+ more characters not shown\)$/;
 
 /**
- * The inverse of `inputContent` for a queued message: the blocks after the typed text are the attachments in order.
- * Texts come out of their tags (a text over `MAX_TEXT` comes back cut); an image whose file is unknown is dropped.
+ * The inverse of `inputContent` for a queued message: each attachment is one block, and they come last, after the typed
+ * text (and a skill run's block). Texts come out of their tags (a text over `MAX_TEXT` comes back cut); an image whose
+ * file is unknown is dropped.
  */
-export function editableAttachments(content: unknown, attachments: readonly DisplayAttachment[], text: string): EditableAttachment[] {
+export function editableAttachments(content: unknown, attachments: readonly DisplayAttachment[]): EditableAttachment[] {
 	const blocks = Array.isArray(content) ? (content as (TextContent | ImageContent)[]) : [];
-	const parts = text.trim() === "" ? blocks : blocks.slice(1);
+	const parts = blocks.slice(Math.max(0, blocks.length - attachments.length));
 	const result: EditableAttachment[] = [];
 	attachments.forEach((attachment, index) => {
 		switch (attachment.kind) {

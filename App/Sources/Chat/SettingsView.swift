@@ -2,7 +2,7 @@ import PiRuntime
 import SwiftUI
 
 /// Settings is an index: a few groups of rows, each opening one focused page, the way iOS Settings reads.
-/// Chat (how new conversations start, archived ones, links), Connections (model providers, web search, MCP servers),
+/// Chat (how new conversations start, your instructions and skills, archived ones, links), Connections (model providers, web search, MCP servers),
 /// Permissions (tool approvals), and Pi itself (scheduled tasks, widgets, diagnostics).
 struct SettingsView: View {
     @Bindable var store: ChatStore
@@ -21,6 +21,22 @@ struct SettingsView: View {
                     }
                 }
                 .accessibilityIdentifier("settings.model")
+                NavigationLink {
+                    InstructionsView(store: store)
+                } label: {
+                    SettingsRow("Instructions", systemImage: "text.page", tint: .blue) {
+                        Text(store.instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "None" : "\(store.instructions.count.formatted()) characters")
+                    }
+                }
+                .accessibilityIdentifier("settings.instructions")
+                NavigationLink {
+                    SkillsView(store: store)
+                } label: {
+                    SettingsRow("Skills", systemImage: "book.closed", tint: .brown) {
+                        Text(store.skills.isEmpty ? "None" : "\(store.skills.count)")
+                    }
+                }
+                .accessibilityIdentifier("settings.skills")
                 Picker(selection: $store.openLinksInApp) {
                     Text("Pi").tag(true)
                     Text("Default Browser").tag(false)
