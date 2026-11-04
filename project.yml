@@ -25,6 +25,9 @@ packages:
     path: Packages/PiUI
   PiAppleTools:
     path: Packages/PiAppleTools
+  # SSH hosts (docs/adr/0012-ssh-hosts.md), over Citadel: the app's only third-party package.
+  PiSSH:
+    path: Packages/PiSSH
 
 targets:
   PiApp:
@@ -54,6 +57,7 @@ targets:
       - package: PiRuntime
       - package: PiUI
       - package: PiAppleTools
+      - package: PiSSH
       - target: PiWidgets
       - target: PiShare
       - sdk: JavaScriptCore.framework
@@ -113,7 +117,7 @@ targets:
             ts.net:
               NSIncludesSubdomains: true
               NSExceptionAllowsInsecureHTTPLoads: true
-        NSLocalNetworkUsageDescription: Pi connects to the MCP servers you add in Settings when they are on your home network.
+        NSLocalNetworkUsageDescription: Pi connects to the MCP servers and SSH hosts you add in Settings when they are on your home network.
     entitlements:
       path: App/PiApp.entitlements
       properties:

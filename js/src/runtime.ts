@@ -22,6 +22,7 @@ import { McpHost, type McpServerConfig } from "./app/mcp.ts";
 import { type AppleModel, type CustomProvider, ModelSetup } from "./app/models.ts";
 import { answerText, ScheduleTools, scheduleToolInfo } from "./app/schedule.ts";
 import { SkillHost, type SkillInfo } from "./app/skills.ts";
+import { type SshHostConfig, sshSettings, SshTools, sshToolInfo, sshTrusted } from "./app/ssh.ts";
 import { SurfaceTools, surfaceToolInfo } from "./app/surfaces.ts";
 import { fetchTrusted, type SearchProviderId, WebTools, webSettings, webToolInfo } from "./app/web.ts";
 import { createKillTestFaux, KillTestTools } from "./killtest.ts";
@@ -52,6 +53,8 @@ export interface OpenOptions {
 	readonly policies?: Record<string, ToolPolicy>;
 	/** Settings › MCP servers as JSON text (`McpServerConfig[]`), with each server's cached tool list. */
 	readonly mcpServers?: string;
+	/** Settings › SSH Hosts, without secrets. */
+	readonly sshHosts?: readonly SshHostConfig[];
 	/** Settings › Instructions: the user's AGENTS.md text. */
 	readonly instructions?: string;
 	/** Settings › Skills: the imported skills, as Swift parsed them. */
@@ -98,6 +101,8 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 	registry.install(AppleTools);
 	registry.install(SurfaceTools);
 	registry.install(WebTools);
+	sshSettings.hosts = [...(options.sshHosts ?? [])];
+	registry.install(SshTools);
 	// From the cached tool lists, so a call a crash interrupted finds its tool before any server answers.
 	mcp.install = (extension) => registry.install(extension);
 	mcp.setServers(parseServers(options.mcpServers));
@@ -133,7 +138,7 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 	root = await harness.root(context, {
 		agent: { model: { provider: options.provider, modelId: options.modelId }, extensions: [KillTestTools(0)] },
 	});
-	chat = new Chat(harness, approvals, [AppleTools, SurfaceTools, WebTools, mcp.extension, scheduleTools, InstructionsExtension, skills.extension, approvalGate], emit, (model, level) =>
+	chat = new Chat(harness, approvals, [AppleTools, SurfaceTools, WebTools, SshTools, mcp.extension, scheduleTools, InstructionsExtension, skills.extension, approvalGate], emit, (model, level) =>
 		setup.clampThinking(model, level),
 	);
 	await chat.upgrade();
@@ -142,6 +147,10 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 		if (conversation === undefined) return false;
 		// The URLs the model has seen: its active transcript.
 		return fetchTrusted(args, (await conversation.context(context)).entries);
+	};
+	approvals.trusted.ssh_exec = async (args, conversationId, context) => {
+		const conversation = await harness?.conversation(conversationId as never, context);
+		return conversation !== undefined && sshTrusted(args, (await conversation.context(context)).entries);
 	};
 	const wake = harness.wake();
 	onWake(wake);
@@ -358,7 +367,7 @@ const app = {
 	answerApproval: async (id: number, decision: Decision) => requireChat().answerApproval(id, decision),
 	setPolicies: async (policies: Record<string, ToolPolicy>) => requireChat().setPolicies(policies),
 	tools: async () =>
-		[...appleToolInfo, ...webToolInfo, ...surfaceToolInfo, ...scheduleToolInfo, ...mcp.toolInfo()].map((tool) => ({
+		[...appleToolInfo, ...webToolInfo, ...sshToolInfo, ...surfaceToolInfo, ...scheduleToolInfo, ...mcp.toolInfo()].map((tool) => ({
 			...tool,
 			policy: approvals.policy(tool.name),
 		})),
@@ -381,6 +390,10 @@ const app = {
 	/** Lists the tools of every enabled server (or those in `ids`) again; returns their statuses. */
 	refreshMcp: (ids?: string[]) => mcp.refresh(ids),
 	mcpStatuses: async () => mcp.statuses(),
+	// Settings › SSH Hosts changed; applies from the next tool call and model request.
+	setSshHosts: async (hosts: SshHostConfig[]) => {
+		sshSettings.hosts = [...hosts];
+	},
 	// Settings › Instructions and Settings › Skills changed; both apply from the next model request.
 	setInstructions: async (text: string) => {
 		instructionsSettings.text = text;

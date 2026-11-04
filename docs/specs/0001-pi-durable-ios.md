@@ -318,6 +318,10 @@ change only validation rules and tool descriptions, never the renderer.
 - **Photos** ([ADR 0010](../adr/0010-photo-search.md)): `photos_search` over an on-device MobileCLIP index; the model
   gets asset IDs and dates, the user sees thumbnails. The app downloads MobileCLIP once, in Settings
   ([ADR 0011](../adr/0011-download-mobileclip.md)).
+- **SSH** ([ADR 0012](../adr/0012-ssh-hosts.md)): `ssh_exec` and `ssh_job` run shell commands on the hosts the user
+  adds in Settings › SSH Hosts (Ed25519 key or password, pinned host keys), as detached jobs named after the tool task,
+  so a rerun after a kill waits for the same job. Asks first unless the host runs without asking and the conversation
+  holds no outside text.
 - Later: WeatherKit, MapKit search, Contacts, Notes via Shortcuts.
 
 ## Repository layout (proposed)

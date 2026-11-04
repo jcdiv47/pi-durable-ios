@@ -21,6 +21,7 @@
 //   "habits …"    → set_value habits (a to-do list), then create_surface and publish_surface for a widget whose checklist
 //                   rows toggle it and whose buttons reset it or send a prompt
 //   "skill <name>" → skill_read the skill
+//   "ssh <host> <command…>" → ssh_exec (asks unless the host runs without asking); "sshjob <host> <job>" → ssh_job
 //   "skillfile <name> <path>" → skill_file a file of the skill
 //   "section <key>" → answers with the system prompt section `key` as it stands (or "(none)")
 //   anything else → "You said: …"
@@ -246,6 +247,15 @@ export function createScriptedModel() {
 					fauxToolCall("notify_schedule", { title: "Pi reminder", body: prompt.slice(7) || "Stretch", at: new Date(Date.now() + 60_000).toISOString() }),
 					{ stopReason: "toolUse" },
 				);
+			case "ssh": {
+				// "ssh <host> <command…>"
+				const [, host = "", ...rest] = prompt.split(" ");
+				return fauxAssistantMessage(fauxToolCall("ssh_exec", { host, command: rest.join(" ") || "uname -a" }), { stopReason: "toolUse" });
+			}
+			case "sshjob": {
+				const [, host = "", job = ""] = prompt.split(/\s+/);
+				return fauxAssistantMessage(fauxToolCall("ssh_job", { host, job, wait_seconds: 0 }), { stopReason: "toolUse" });
+			}
 			case "slow":
 				return fauxAssistantMessage(longAnswer);
 			case "skill":

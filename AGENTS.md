@@ -19,6 +19,9 @@ decisions that change the spec go in `docs/adr/`.
   (`BrowserView`, a SwiftUI `WebPage`), so the stack's edge swipe returns to the chat.
   Settings › MCP servers (`MCPSettingsView`, `MCPServers`): the user's MCP servers, kept in Swift with their cached
   tool lists (Application Support `mcp-servers.json`), the VPN hint (`VPNStatus`) and the chat's warning banner.
+  Settings › SSH Hosts (`SSHSettingsView`, `SSHHosts`): the user's machines (Application Support `ssh-hosts.json`), their
+  passwords or keys in the Keychain service `dev.jcdiv47.pidurable.ssh` (`SSHSecrets`), host keys pinned in Settings
+  ([ADR 0012](docs/adr/0012-ssh-hosts.md)).
   Settings › Instructions and Skills (`SkillsViews`, `Skills`): the user's AGENTS.md (Application Support `AGENTS.md`)
   and the skills imported from Files or written in the editor (`SkillEditorView`, `skills/<name>/`); the composer's "/"
   menu and chip run a skill
@@ -53,6 +56,9 @@ decisions that change the spec go in `docs/adr/`.
   `PhotoVectors`, `PhotoIndex`, `ClipModelDownload`; [ADR 0010](docs/adr/0010-photo-search.md),
   [ADR 0011](docs/adr/0011-download-mobileclip.md)). The app's `PhotosCard` draws the
   matches and Settings › Photo Search (`PhotoSearchSettingsView`) shows the index.
+- `Packages/PiSSH`: SSH over Citadel, the app's only third-party package ([ADR 0012](docs/adr/0012-ssh-hosts.md)):
+  hosts and secrets (`SSHHost`, `SSHSecret`), Ed25519 keys and fingerprints (`SSHKeys`), the job scripts
+  (`SSHJobScript`), connections with pinned host keys (`SSHConnections`) and the `ssh.*` host calls (`SSHToolHost`).
 - `Packages/PiUI`: generated UI (M2). The component catalog, validator, renderer (`SurfaceView`), previews,
   native data sources (`NativeData`), the App Group files (`SurfaceStore`), `SurfaceHost`, which answers the
   JS UI tools, the components' sample slots (`Gallery/`) and the dial's tuning log (`Tuning/`). Shared by the app and the widget. The catalog lives only here ([ADR 0001](docs/adr/0001-surface-validation-in-swift.md)).
@@ -63,7 +69,7 @@ decisions that change the spec go in `docs/adr/`.
   resources. `src/app/` is the chat API Swift calls (`PiRuntime.*`): conversations, display frames,
   providers (`models.ts`, including the keyless `apple` provider), the Apple tool stubs, the UI tools (`surfaces.ts`: specs in Pi documents, JSON Patch), scheduled tasks
   and `notify_schedule` (`schedule.ts`), the web tools (`web.ts`: `web_search` through DeepSeek or Brave,
-  `web_fetch` through DeepSeek Fetch) over keyed HTTP services (`services.ts`), MCP servers (`mcp.ts`: a Streamable
+  `web_fetch` through DeepSeek Fetch) over keyed HTTP services (`services.ts`), SSH tools (`ssh.ts`: `ssh_exec`, `ssh_job`), MCP servers (`mcp.ts`: a Streamable
   HTTP client and the `mcp` extension, [ADR 0006](docs/adr/0006-mcp-servers.md)), the user's instructions and skills
   (`instructions.ts`, `skills.ts`: prompt sections, `skill_read`, `skill_file`), the approval gate and the offline
   `scripted/assistant` model. `chat.ts`
@@ -78,6 +84,7 @@ decisions that change the spec go in `docs/adr/`.
 cd js && bun install && bun run build && npx tsc -p .   # bundle + typecheck
 cd Packages/PiRuntime && swift test                      # conformance + harness + UI tool + MCP client tests in macOS JSC
 cd Packages/PiUI && swift test                           # validator, host and snapshot tests
+cd Packages/PiSSH && swift test                          # keys, job scripts, and commands against a local sshd
 xcodegen generate                                        # then open PiDurable.xcodeproj, or:
 scripts/m0-check.sh conformance                          # same suites inside the app's JSC (simulator)
 ```
@@ -150,6 +157,10 @@ intended rendering change, re-record with `PI_RECORD_SNAPSHOTS=1 swift test` and
   its token (`mcp-<id>`) only through `ProviderKeys.setMCPHosts`, from Swift. The `mcp` extension is installed from
   the cached tool lists before the Harness opens, so interrupted calls resume without the network
   ([ADR 0006](docs/adr/0006-mcp-servers.md)).
+- SSH hosts are added, changed and removed only by the user, in Settings; no tool may change one. Passwords, keys and
+  host keys never reach JS: JS names a host by its ID. Nothing logs in before the user trusted the host key. Every
+  command is a detached job named after its tool task (`SSHJobScript`), which is what makes `ssh_exec` replay-safe;
+  keep it so ([ADR 0012](docs/adr/0012-ssh-hosts.md)).
 - Instructions and skills are written, edited, imported and removed only by the user, in Settings; no tool may change them, and
   a skill's scripts never run. Skill files are read only through `SkillLibrary`, which keeps paths inside the skill.
 - The `SqliteDatabase` facade must keep passing both Pi's storage conformance suite and

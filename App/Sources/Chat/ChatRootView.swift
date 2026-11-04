@@ -1,3 +1,4 @@
+import PiSSH
 import SwiftUI
 
 enum Route: Hashable {
@@ -292,9 +293,21 @@ struct ApprovalSheet: View {
                             .listRowInsets(EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12))
                     }
                 }
-                Section("Details") {
-                    ForEach(request.arguments.fields, id: \.0) { key, value in
-                        LabeledContent(key) { Text(value).multilineTextAlignment(.trailing).textSelection(.enabled) }
+                if request.tool == "ssh_exec", let command = request.arguments["command"]?.string {
+                    // The whole command, as it will run (docs/adr/0012-ssh-hosts.md).
+                    Section("Command") {
+                        LabeledContent("Host", value: sshHostLabel)
+                        Text(command)
+                            .font(.callout.monospaced())
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityIdentifier("approval.command")
+                    }
+                } else {
+                    Section("Details") {
+                        ForEach(request.arguments.fields, id: \.0) { key, value in
+                            LabeledContent(key) { Text(value).multilineTextAlignment(.trailing).textSelection(.enabled) }
+                        }
                     }
                 }
                 Section {
@@ -334,6 +347,11 @@ struct ApprovalSheet: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Later", action: later) }
             }
         }
+    }
+
+    private var sshHostLabel: String {
+        let id = request.arguments["host"]?.string ?? "?"
+        return store.sshHosts.first { $0.id == id }.map { "\($0.name) (\($0.address))" } ?? id
     }
 
     private func answer(_ allow: Bool) {

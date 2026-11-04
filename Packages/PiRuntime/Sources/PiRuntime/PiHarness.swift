@@ -16,6 +16,8 @@ public final class PiHarness: Sendable {
         /// Settings › MCP servers as JSON text: an array of servers with their cached tool lists (`McpServerConfig[]`
         /// in `js/src/app/mcp.ts`). Text, because the tools' schemas are arbitrary JSON.
         public var mcpServers: String?
+        /// Settings › SSH Hosts, without secrets (`SshHostConfig[]` in `js/src/app/ssh.ts`).
+        public var sshHosts: [SSHHostInfo]?
         /// Settings › Instructions: the user's AGENTS.md text, a prompt section in every conversation.
         public var instructions: String?
         /// Settings › Skills: the imported skills (`SkillLibrary.list()`).
@@ -35,6 +37,7 @@ public final class PiHarness: Sendable {
             searchProvider: String? = nil,
             policies: [String: String]? = nil,
             mcpServers: String? = nil,
+            sshHosts: [SSHHostInfo]? = nil,
             instructions: String? = nil,
             skills: [SkillLibrary.Skill]? = nil,
             appleModels: [AppleIntelligence.Model]? = nil,
@@ -49,11 +52,38 @@ public final class PiHarness: Sendable {
             self.searchProvider = searchProvider
             self.policies = policies
             self.mcpServers = mcpServers
+            self.sshHosts = sshHosts
             self.instructions = instructions
             self.skills = skills
             self.appleModels = appleModels
             self.intelligenceTitles = intelligenceTitles
             self.toolMs = toolMs
+        }
+    }
+
+    /// An SSH host as JS sees it (docs/adr/0012-ssh-hosts.md): what the model may know, never a secret or a host key.
+    public struct SSHHostInfo: Codable, Sendable, Equatable {
+        public var id: String
+        public var name: String
+        /// `user@host` or `user@host:port`.
+        public var address: String
+        /// `login`, `bash`, `zsh`, `fish` or `sh`.
+        public var shell: String
+        public var enabled: Bool
+        /// Its host key is confirmed and its password or key saved.
+        public var ready: Bool
+        public var needsVpn: Bool
+        public var runWithoutAsking: Bool
+
+        public init(id: String, name: String, address: String, shell: String, enabled: Bool, ready: Bool, needsVpn: Bool, runWithoutAsking: Bool) {
+            self.id = id
+            self.name = name
+            self.address = address
+            self.shell = shell
+            self.enabled = enabled
+            self.ready = ready
+            self.needsVpn = needsVpn
+            self.runWithoutAsking = runWithoutAsking
         }
     }
 

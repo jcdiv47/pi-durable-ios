@@ -3,6 +3,7 @@ import Observation
 import os
 import PiAppleTools
 import PiRuntime
+import PiSSH
 import PiUI
 import SwiftUI
 import UIKit
@@ -53,6 +54,10 @@ final class ChatStore {
     private(set) var mcpServers: [MCPServer] = MCPServerFile.load()
     /// Each server's state since this process last talked to it, by server ID.
     private(set) var mcpStatuses: [String: MCPStatus] = [:]
+    /// Settings › SSH Hosts (docs/adr/0012-ssh-hosts.md). Added and changed by hand only; secrets in `SSHSecrets`.
+    private(set) var sshHosts: [SSHHost] = SSHHostFile.load()
+    /// Hosts whose password or key is in the Keychain.
+    private(set) var sshSecretIDs: Set<String> = []
     /// Settings › Instructions: the user's AGENTS.md, a prompt section in every conversation. Written by hand only.
     private(set) var instructions = InstructionsFile.load()
     /// Settings › Skills: the imported and written skills (docs/adr/0007-instructions-and-skills.md). Changed by hand only.
@@ -167,6 +172,8 @@ final class ChatStore {
         custom = settings.data(forKey: "customProvider").flatMap { try? JSONDecoder().decode(PiHarness.CustomProvider.self, from: $0) }
         ProviderKeys.setCustomHost(custom.flatMap { URL(string: $0.baseUrl)?.host() })
         ProviderKeys.setMCPHosts(Self.mcpHosts(mcpServers))
+        SSHHostList.shared.set(sshHosts)
+        sshSecretIDs = Set(sshHosts.filter(SSHSecrets.has).map(\.id))
         dial = settings.data(forKey: Self.dialKey).flatMap { try? JSONDecoder().decode(GenerativityDial.self, from: $0) } ?? GenerativityDial()
         surfaceHost = SurfaceHost(
             native: native,
@@ -224,6 +231,7 @@ final class ChatStore {
             let notifications = notifications!
             let skillLibrary = skillLibrary
             let intelligence = intelligence
+            let ssh = SSHToolHost(hosts: { SSHHostList.shared.hosts }, secret: SSHSecrets.secret(for:), installID: SSHInstall.id)
             skills = skillLibrary.list()
             let harness = try await PiHarness.load(bundle: AppModel.bundleURL, options: .init(
                 keys: keys,
@@ -239,6 +247,7 @@ final class ChatStore {
                     }
                     if SurfaceHost.handlers.contains(name) { return try await surfaces.handle(name, json) }
                     if SkillLibrary.handlers.contains(name) { return try skillLibrary.handle(name, json) }
+                    if SSHToolHost.handlers.contains(name) { return try await ssh.handle(name, json) }
                     if name == "notify.post" || name == "notify.schedule" {
                         let args = try JSONDecoder().decode(Notifications.NotifyArguments.self, from: Data(json.utf8))
                         return try await notifications.post(args)
@@ -256,6 +265,7 @@ final class ChatStore {
                 searchProvider: searchProvider,
                 policies: settings.dictionary(forKey: "toolPolicies") as? [String: String],
                 mcpServers: mcpServersJSON,
+                sshHosts: sshHostInfos,
                 instructions: instructions,
                 skills: skills,
                 appleModels: AppleIntelligence.models(),
@@ -774,6 +784,78 @@ final class ChatStore {
         }
         if cached {
             do { try MCPServerFile.save(mcpServers) } catch { report("save MCP servers", error) }
+        }
+    }
+
+    // MARK: SSH hosts
+
+    private var sshHostInfos: [PiHarness.SSHHostInfo] { sshHosts.map { $0.info(hasSecret: sshSecretIDs.contains($0.id)) } }
+
+    /// Adds or replaces a host. `secret`: a new password or key for the Keychain; nil keeps the saved one. A host whose
+    /// address changed loses its pinned host key: it may be another machine.
+    func saveSSHHost(_ host: SSHHost, secret: SSHSecret?) async {
+        var host = host
+        if let previous = sshHosts.first(where: { $0.id == host.id }), previous.host != host.host || previous.port != host.port {
+            host.hostKey = nil
+        }
+        if let secret {
+            do {
+                try SSHSecrets.set(secret, for: host)
+                sshSecretIDs.insert(host.id)
+            } catch {
+                report("save SSH login", error)
+            }
+        }
+        if let index = sshHosts.firstIndex(where: { $0.id == host.id }) { sshHosts[index] = host } else { sshHosts.append(host) }
+        await applySSHHosts()
+        await SSHConnections.shared.drop(host.id)
+        diagnostics.record("info", "ssh", "Saved \(host.name) (\(host.address))")
+    }
+
+    /// Pins the host key the user confirmed.
+    func trustSSHHostKey(_ id: String, key: String) async {
+        guard let index = sshHosts.firstIndex(where: { $0.id == id }) else { return }
+        sshHosts[index].hostKey = key
+        await applySSHHosts()
+        await SSHConnections.shared.drop(id)
+        diagnostics.record("info", "ssh", "Trusted \(sshHosts[index].name)'s host key \(SSHKeys.fingerprint(ofPublicKey: key) ?? "?")")
+    }
+
+    func removeSSHHost(_ id: String) async {
+        guard let host = sshHosts.first(where: { $0.id == id }) else { return }
+        SSHSecrets.remove(host)
+        sshSecretIDs.remove(id)
+        sshHosts.removeAll { $0.id == id }
+        await SSHConnections.shared.drop(id)
+        await applySSHHosts()
+    }
+
+    /// Settings' "Test connection": logs in with the saved login and the pinned key.
+    func testSSHHost(_ id: String) async throws -> SSHAbout {
+        guard let host = sshHosts.first(where: { $0.id == id }) else { throw SSHFailure("The host was removed.") }
+        guard let secret = SSHSecrets.secret(for: host) else { throw SSHFailure("Save a \(host.auth == .password ? "password" : "key") first.") }
+        do {
+            let about = try await SSHConnections.shared.test(host, secret: secret)
+            diagnostics.record("info", "ssh", "\(host.name): connected (\(about.system ?? "?"), \(about.shell ?? "?"))")
+            return about
+        } catch {
+            diagnostics.record("warn", "ssh", "\(host.name): \(error)")
+            if host.needsVpn, !VPNStatus.tunnelUp(), String(describing: error).contains("Can't reach") {
+                throw SSHFailure("\(error) The VPN looks off.")
+            }
+            throw error
+        }
+    }
+
+    /// Saves the list and hands it to the tool host and to JS (without secrets).
+    private func applySSHHosts() async {
+        do { try SSHHostFile.save(sshHosts) } catch { report("save SSH hosts", error) }
+        SSHHostList.shared.set(sshHosts)
+        guard let harness else { return }
+        do {
+            try await harness.perform("PiRuntime.setSshHosts", [try sshHostInfos.map { try harness.jsonArgument($0) }])
+        } catch {
+            report("SSH hosts", error)
         }
     }
 
