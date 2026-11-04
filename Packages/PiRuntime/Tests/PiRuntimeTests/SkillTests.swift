@@ -239,10 +239,10 @@ struct SkillChatTests {
         #expect(user["text"] as? String == "for Sunday" && user["skill"] as? String == "groceries")
         #expect(log.titles == ["for Sunday"])
 
-        // $ARGUMENTS takes the typed text in place.
-        try await harness.perform("PiRuntime.send", [meta.id, "milk, eggs", "r2", [] as [String], "tidy"])
+        // $ARGUMENTS takes the typed text in place, as written ("$&" is not a replacement pattern).
+        try await harness.perform("PiRuntime.send", [meta.id, "milk $& eggs", "r2", [] as [String], "tidy"])
         let tidy = try await answer(log, meta.id, after: 4)
-        #expect(tidy.contains("Tidy this note: milk, eggs") && !tidy.contains("$ARGUMENTS"))
+        #expect(tidy.contains("Tidy this note: milk $& eggs") && !tidy.contains("$ARGUMENTS"))
 
         // The message keeps the skill as it was sent, even after it is removed.
         try library.remove("tidy")

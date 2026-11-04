@@ -53,7 +53,7 @@ export function skillBlock(skill: SkillBody, ran: boolean): string {
 /** Where the typed text goes in a skill run: in place of `$ARGUMENTS` if the body has it, otherwise after the skill. */
 export function skillContent(skill: SkillBody, text: string): TextContent[] {
 	if (skill.body.includes("$ARGUMENTS")) {
-		return [{ type: "text", text: skillBlock({ ...skill, body: skill.body.replaceAll("$ARGUMENTS", text.trim()) }, true) }];
+		return [{ type: "text", text: skillBlock({ ...skill, body: skill.body.replaceAll("$ARGUMENTS", () => text.trim()) }, true) }];
 	}
 	const blocks: TextContent[] = [{ type: "text", text: skillBlock(skill, true) }];
 	if (text.trim() !== "") blocks.push({ type: "text", text });
