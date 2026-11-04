@@ -22,10 +22,13 @@ enum SSHJobScript {
     /// Starts the job unless its directory exists; prints `pi-ssh:started` or `pi-ssh:exists`.
     static func start(job: String, command: String, shell: SSHHost.Shell, delimiter: String = "PI_SSH_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))") -> String {
         precondition(validJob(job))
+        // Commands and their output are private to the account: other users on the machine must not read them.
         return """
+        umask 077
         b=\(base)
         d="$b/\(job)"
         mkdir -p "$b" 2>/dev/null || { echo "pi-ssh:error Can't create $b"; exit 0; }
+        chmod 700 "$b" 2>/dev/null
         find "$b" -mindepth 1 -maxdepth 1 -type d -mtime +\(keepDays) -exec rm -rf {} + 2>/dev/null
         if mkdir "$d" 2>/dev/null; then
         cat > "$d/cmd" <<'\(delimiter)'

@@ -117,6 +117,10 @@ struct SSHDTests {
             #expect(result.state == "done" && result.exitCode == 3)
             #expect(result.stdout == "> it's\n> a \"b\"\n> \(server.home.path)\nPI_SSH_RUN\n")
             #expect(result.stderr == "oops\n" && result.stderrBytes == 5)
+            let jobs = server.home.appendingPathComponent(".cache/pi-durable/ssh")
+            func mode(_ url: URL) throws -> Int { try (FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as! NSNumber).intValue }
+            #expect(try mode(jobs) == 0o700 && mode(jobs.appendingPathComponent("cmd-1")) == 0o700)
+            #expect(try mode(jobs.appendingPathComponent("cmd-1/out")) == 0o600, "other users can't read the output")
         }
     }
 
