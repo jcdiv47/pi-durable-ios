@@ -91,8 +91,11 @@ struct SSHHostView: View {
     @State private var fetchedKey: String?
     @State private var confirmingKey = false
     @State private var testing = false
-    @State private var testResult: String?
-    @State private var testFailed = false
+    /// The last test: what the machine said, or why it failed.
+    @State private var about: SSHAbout?
+    @State private var connectionError: String?
+    /// What was just copied, for the confirmation in its row.
+    @State private var copied: String?
     @State private var confirmingRemove = false
     @Environment(\.dismiss) private var dismiss
 
@@ -118,91 +121,87 @@ struct SSHHostView: View {
         }
     }
 
+    /// Whether Save has anything to save.
+    private var hasChanges: Bool {
+        guard let current else { return true }
+        return name != current.name || trimmedAddress != current.host || portNumber != current.port || user != current.user
+            || auth != current.auth || shell != current.shell || needsVpn != current.needsVpn || enabled != current.enabled
+            || runWithoutAsking != current.runWithoutAsking || !password.isEmpty || pendingKey != nil
+    }
+
+    /// A label on the left, the value typed on the right: the Settings app's layout, two values a line apart.
+    private func field(_ label: String, text: Binding<String>, prompt: String, keyboard: UIKeyboardType = .default) -> some View {
+        LabeledContent(label) {
+            TextField(label, text: text, prompt: Text(prompt))
+                .multilineTextAlignment(.trailing)
+                .keyboardType(keyboard)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+        }
+    }
+
     var body: some View {
         Form {
+            if let current { statusSection(current) }
+
             Section {
-                TextField("Name", text: $name, prompt: Text("Home server"))
-                TextField("Host", text: $address, prompt: Text("nas.tail1234.ts.net or 192.168.1.20"))
-                    .keyboardType(.URL)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
+                field("Name", text: $name, prompt: "Home server")
+                field("Host", text: $address, prompt: "192.168.1.20", keyboard: .URL)
                     .onChange(of: address) {
                         if !vpnTouched { needsVpn = MCPServer.isPrivate(host: trimmedAddress) }
                     }
                     .accessibilityIdentifier("ssh.host")
-                TextField("User", text: $user, prompt: Text("me"))
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
+                field("User", text: $user, prompt: "me")
                     .accessibilityIdentifier("ssh.user")
-                LabeledContent("Port") {
-                    TextField("Port", text: $port).keyboardType(.numberPad).multilineTextAlignment(.trailing)
-                }
-            }
-
-            Section {
-                Picker("Login", selection: $auth) {
-                    Text("Key").tag(SSHHost.Auth.key)
-                    Text("Password").tag(SSHHost.Auth.password)
-                }
-                if auth == .password {
-                    SecureField(hasSecret && current?.auth == .password ? "Saved; type to replace" : "Password", text: $password)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .accessibilityIdentifier("ssh.password")
-                } else {
-                    keyControls
-                }
+                field("Port", text: $port, prompt: "22", keyboard: .numberPad)
+                if let key = current?.hostKey { hostKeyRow(key) }
             } header: {
-                Text("Login")
+                Text("Machine")
             } footer: {
-                if auth == .password {
-                    Text("A key is safer: it can't be guessed, and you can remove it from the machine on its own.")
-                } else if publicKey == nil {
-                    Text("Pi makes an Ed25519 key that never leaves this iPhone, or uses one of yours (OpenSSH Ed25519, with or without a passphrase).")
-                }
+                if current == nil { Text("A name or IP address. A pasted ssh:// or http:// address works too.") }
             }
 
-            if auth == .key, let publicKey {
-                publicKeySection(publicKey)
-            }
+            loginSection
 
             Section {
                 Picker("Shell", selection: $shell) {
                     ForEach(SSHHost.Shell.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
-                Toggle("Run without asking", isOn: $runWithoutAsking)
-                    .accessibilityIdentifier("ssh.runWithoutAsking")
+                Toggle("Ask Before Each Command", isOn: Binding(get: { !runWithoutAsking }, set: { runWithoutAsking = !$0 }))
+                    .accessibilityIdentifier("ssh.askFirst")
                 Toggle("Needs VPN", isOn: Binding(get: { needsVpn }, set: { needsVpn = $0; vpnTouched = true }))
-                if current != nil { Toggle("On", isOn: $enabled) }
+                if current != nil { Toggle("Available to Pi", isOn: $enabled) }
             } header: {
                 Text("Commands")
             } footer: {
                 Text(runWithoutAsking
-                    ? "Pi runs commands on this host without asking, except in conversations that hold web pages, search results or MCP results: those could tell Pi what to run. Every command still shows in the chat."
-                    : "Pi asks before each command, showing it in full. Commands run in your home folder, in the shell you pick, without a terminal.")
+                    ? "Pi runs commands here without asking, except in conversations that read web pages or MCP results, which could tell it what to run."
+                    : "Pi shows each command in full and waits for you to allow it.")
             }
 
-            if let error {
-                Section { Text(error).foregroundStyle(.red).font(.footnote).textSelection(.enabled) }
-            }
-
-            Section {
-                Button {
-                    Task { await save() }
-                } label: {
-                    if saving { ProgressView() } else { Text(current == nil ? "Add Host" : "Save") }
-                }
-                .disabled(!canSave)
-                .accessibilityIdentifier("ssh.save")
-            }
-
-            if let current {
-                hostKeySection(current)
+            if current != nil {
                 Section {
                     Button("Remove Host", role: .destructive) { confirmingRemove = true }
                 }
             }
         }
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button {
+                    Task { await save() }
+                } label: {
+                    if saving { ProgressView() } else { Text(current == nil ? "Add" : "Save") }
+                }
+                .disabled(!canSave || !hasChanges)
+                .accessibilityIdentifier("ssh.save")
+            }
+        }
+        .task {
+            // The status card says whether the host works right now.
+            guard let current, current.enabled, current.hostKey != nil, hasSecret, about == nil, connectionError == nil else { return }
+            await test()
+        }
+        .sensoryFeedback(.success, trigger: copied) { _, new in new != nil }
         .navigationTitle(current?.name ?? "Add SSH Host")
         .navigationBarTitleDisplayMode(.inline)
         .fileImporter(isPresented: $importing, allowedContentTypes: [.item]) { result in
@@ -242,42 +241,91 @@ struct SSHHostView: View {
 
     // MARK: Key
 
-    @ViewBuilder private var keyControls: some View {
-        if let pendingKey {
-            LabeledContent("Key", value: pendingKey.encrypted ? "Imported, encrypted" : "New, not saved yet")
-            if pendingKey.encrypted {
-                SecureField("Passphrase", text: $passphrase)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
+    /// Login: how Pi signs in, and for a key, how to put it on the machine.
+    private var loginSection: some View {
+        Section {
+            Picker("Login", selection: $auth) {
+                Text("Key").tag(SSHHost.Auth.key)
+                Text("Password").tag(SSHHost.Auth.password)
             }
-        } else if savedKeyLogin {
-            LabeledContent("Key", value: "Saved in the Keychain")
-        }
-        Menu {
-            Button("Make a New Key", systemImage: "key") {
-                if savedKeyLogin { confirmingReplaceKey = true } else { generateKey() }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("ssh.auth")
+
+            if auth == .password {
+                LabeledContent("Password") {
+                    SecureField("Password", text: $password, prompt: Text(hasSecret && current?.auth == .password ? "Saved" : "Required"))
+                        .multilineTextAlignment(.trailing)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                }
+                .accessibilityIdentifier("ssh.password")
+            } else {
+                LabeledContent("Key") {
+                    Menu {
+                        Button("Make a New Key", systemImage: "key") {
+                            if savedKeyLogin { confirmingReplaceKey = true } else { generateKey() }
+                        }
+                        Button("Import from Files", systemImage: "folder") { importing = true }
+                        Button("Paste a Private Key", systemImage: "doc.on.clipboard") { pasteKey() }
+                    } label: {
+                        Text(keyStatus)
+                    }
+                    .accessibilityIdentifier("ssh.key")
+                }
+                if pendingKey?.encrypted == true {
+                    LabeledContent("Passphrase") {
+                        SecureField("Passphrase", text: $passphrase, prompt: Text("Required"))
+                            .multilineTextAlignment(.trailing)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                    }
+                }
+                if let publicKey {
+                    Menu {
+                        Button("Copy Public Key", systemImage: "doc.on.doc") { copy(publicKey, as: "public") }
+                        ShareLink(item: publicKey) { Label("Share Public Key", systemImage: "square.and.arrow.up") }
+                    } label: {
+                        LabeledContent("Public Key") {
+                            Text(copied == "public" ? "Copied" : SSHKeys.fingerprint(ofPublicKey: publicKey) ?? "")
+                                .font(.caption.monospaced())
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                    }
+                    .foregroundStyle(.primary)
+                    Button {
+                        copy(Self.setupCommand(publicKey), as: "setup")
+                    } label: {
+                        Label(copied == "setup" ? "Copied. Paste It on the Machine" : "Copy Setup Command",
+                              systemImage: copied == "setup" ? "checkmark" : "terminal")
+                    }
+                    .accessibilityIdentifier("ssh.setupCommand")
+                }
             }
-            Button("Import from Files", systemImage: "folder") { importing = true }
-            Button("Paste a Private Key", systemImage: "doc.on.clipboard") { pasteKey() }
-        } label: {
-            Text(pendingKey == nil && !savedKeyLogin ? "Choose a Key…" : "Change Key…")
+        } header: {
+            Text("Login")
+        } footer: {
+            if let error {
+                Text(error).foregroundStyle(.red)
+            } else if auth == .key, publicKey != nil {
+                Text("The setup command adds this key to ~/.ssh/authorized_keys. Paste it into a terminal on the machine.")
+            } else if auth == .key {
+                Text("Pi can make an Ed25519 key that stays on this iPhone, or use one of yours.")
+            }
         }
-        .accessibilityIdentifier("ssh.key")
     }
 
-    private func publicKeySection(_ line: String) -> some View {
-        Section {
-            Text(line)
-                .font(.caption.monospaced())
-                .textSelection(.enabled)
-                .lineLimit(4)
-            Button("Copy Public Key", systemImage: "doc.on.doc") { UIPasteboard.general.string = line }
-            Button("Copy Setup Command", systemImage: "terminal") { UIPasteboard.general.string = Self.setupCommand(line) }
-            ShareLink(item: line) { Label("Share Public Key", systemImage: "square.and.arrow.up") }
-        } header: {
-            Text("Public Key")
-        } footer: {
-            Text("Add this line to ~/.ssh/authorized_keys on the machine. The setup command does that when you paste it into a terminal there.")
+    private var keyStatus: String {
+        if let pendingKey { return pendingKey.encrypted ? "Imported (not saved)" : "New (not saved)" }
+        return savedKeyLogin ? "Ed25519" : "Choose…"
+    }
+
+    private func copy(_ text: String, as tag: String) {
+        UIPasteboard.general.string = text
+        copied = tag
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            if copied == tag { copied = nil }
         }
     }
 
@@ -325,53 +373,112 @@ struct SSHHostView: View {
 
     // MARK: Host key
 
-    private func hostKeySection(_ host: SSHHost) -> some View {
-        Section {
-            if let key = host.hostKey {
-                LabeledContent("Host key", value: SSHKeys.typeName(ofPublicKey: key))
-                Text(SSHKeys.fingerprint(ofPublicKey: key) ?? "?")
-                    .font(.caption.monospaced())
-                    .textSelection(.enabled)
-            } else {
-                LabeledContent("Host key", value: "Not confirmed")
-            }
-            Button {
-                Task { await checkHostKey() }
-            } label: {
-                HStack {
-                    Text(host.hostKey == nil ? "Get Host Key" : "Check Host Key Again")
-                    if checkingKey { Spacer(); ProgressView() }
+    // MARK: Status
+
+    /// The top of the page: the host, whether it works, and the one thing to do next.
+    private func statusSection(_ host: SSHHost) -> some View {
+        let status = status(of: host)
+        return Section {
+            HStack(spacing: 12) {
+                Image(systemName: "terminal.fill")
+                    .font(.title3)
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .background(status.color.gradient, in: .rect(cornerRadius: 10))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(host.name).font(.headline)
+                    Text(host.address)
+                        .font(.subheadline.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Label(status.title, systemImage: status.icon)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(status.color)
+                        .padding(.top, 2)
                 }
+                Spacer(minLength: 0)
             }
-            .disabled(checkingKey)
-            .accessibilityIdentifier("ssh.hostKey")
-            if host.hostKey != nil {
+            .padding(.vertical, 4)
+            .accessibilityElement(children: .combine)
+
+            if let detail = status.detail {
+                Text(detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+            if let action = status.action {
                 Button {
-                    Task { await test() }
+                    Task { if action == .getKey { await checkHostKey() } else { await test() } }
                 } label: {
                     HStack {
-                        Text("Test Connection")
-                        if testing { Spacer(); ProgressView() }
+                        Text(action == .getKey ? "Get Host Key" : about == nil && connectionError == nil ? "Test Connection" : "Test Again")
+                        Spacer()
+                        if checkingKey || testing { ProgressView() }
                     }
                 }
-                .disabled(testing || !hasSecret)
-                .accessibilityIdentifier("ssh.test")
-            }
-            if let testResult {
-                Text(testResult)
-                    .font(.footnote)
-                    .foregroundStyle(testFailed ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
-                    .textSelection(.enabled)
-            }
-        } header: {
-            Text("Connection")
-        } footer: {
-            if host.hostKey == nil {
-                Text("Pi reads the machine's host key and shows its fingerprint before it sends any password or key. Nothing runs until you trust it.")
-            } else if !store.vpnUp && host.needsVpn {
-                Text("No VPN tunnel is up on this iPhone.")
+                .disabled(checkingKey || testing)
+                .accessibilityIdentifier(action == .getKey ? "ssh.hostKey" : "ssh.test")
             }
         }
+    }
+
+    private enum NextStep { case getKey, test }
+
+    private struct Status {
+        var title: String
+        var icon: String
+        var color: Color
+        var detail: String?
+        var action: NextStep?
+    }
+
+    /// Where the host stands, in the order setting it up goes: on, host key, login, connection.
+    private func status(of host: SSHHost) -> Status {
+        let vpnHint = host.needsVpn && !store.vpnUp ? " No VPN tunnel is up on this iPhone." : ""
+        if !host.enabled {
+            return Status(title: "Off", icon: "pause.circle.fill", color: .gray, detail: "Pi can't use this host until you make it available again.")
+        }
+        if host.hostKey == nil {
+            return Status(
+                title: "Confirm the host key", icon: "key.horizontal.fill", color: .orange,
+                detail: connectionError.map { $0 + vpnHint } ?? "Pi shows the machine's fingerprint before it sends any password or key.",
+                action: .getKey
+            )
+        }
+        if !hasSecret {
+            return Status(title: "No login saved", icon: "exclamationmark.circle.fill", color: .orange, detail: "Add a key or a password below.")
+        }
+        if testing && about == nil && connectionError == nil {
+            return Status(title: "Connecting…", icon: "ellipsis.circle.fill", color: .secondary, action: .test)
+        }
+        if let connectionError {
+            return Status(title: "Can't connect", icon: "xmark.circle.fill", color: .red, detail: connectionError + vpnHint, action: .test)
+        }
+        if let about {
+            let shell = about.shell.map { "login shell \(($0 as NSString).lastPathComponent)" }
+            let detail = [about.hostname, about.system, shell].compactMap { $0 }.joined(separator: " · ")
+            return Status(title: "Connected", icon: "checkmark.circle.fill", color: .green, detail: detail.isEmpty ? nil : detail, action: .test)
+        }
+        return Status(title: "Ready", icon: "checkmark.circle", color: .green, action: .test)
+    }
+
+    /// The pinned host key, in the Machine section; its menu checks it again.
+    private func hostKeyRow(_ key: String) -> some View {
+        Menu {
+            Button("Check Host Key Again", systemImage: "arrow.clockwise") { Task { await checkHostKey() } }
+            Button("Copy Fingerprint", systemImage: "doc.on.doc") { copy(SSHKeys.fingerprint(ofPublicKey: key) ?? "", as: "fingerprint") }
+        } label: {
+            LabeledContent("Host Key") {
+                Text(copied == "fingerprint" ? "Copied" : "\(SSHKeys.typeName(ofPublicKey: key)) \(SSHKeys.fingerprint(ofPublicKey: key) ?? "?")")
+                    .font(.caption.monospaced())
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+        .foregroundStyle(.primary)
     }
 
     private var keyAlertTitle: String {
@@ -396,10 +503,9 @@ struct SSHHostView: View {
         do {
             fetchedKey = try await SSHConnections.shared.hostKey(host: host.host, port: host.port)
             confirmingKey = true
-            testResult = nil
+            connectionError = nil
         } catch {
-            testFailed = true
-            testResult = String(describing: error) + (host.needsVpn && !VPNStatus.tunnelUp() ? " The VPN looks off." : "")
+            connectionError = String(describing: error)
         }
     }
 
@@ -408,14 +514,11 @@ struct SSHHostView: View {
         testing = true
         defer { testing = false }
         do {
-            let about = try await store.testSSHHost(id)
-            testFailed = false
-            testResult = ["Connected.", about.hostname.map { "Host: \($0)" }, about.system.map { "System: \($0)" }, about.shell.map { "Login shell: \($0)" }]
-                .compactMap { $0 }
-                .joined(separator: "\n")
+            about = try await store.testSSHHost(id)
+            connectionError = nil
         } catch {
-            testFailed = true
-            testResult = String(describing: error)
+            about = nil
+            connectionError = String(describing: error)
         }
     }
 
@@ -483,6 +586,9 @@ struct SSHHostView: View {
         updated.runWithoutAsking = runWithoutAsking
         await store.saveSSHHost(updated, secret: secret)
         savedID = id
+        // The host may have changed: the last test no longer says anything.
+        about = nil
+        connectionError = nil
         password = ""
         pendingKey = nil
         passphrase = ""
