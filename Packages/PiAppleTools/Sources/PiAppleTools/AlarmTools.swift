@@ -11,7 +11,9 @@ import SwiftUI
 /// counts down on the Lock Screen and in the Dynamic Island (the widget extension's `PiAlarmLiveActivity`).
 ///
 /// An alarm's ID is derived from the tool task's idempotency key, so a call that runs again after a crash finds the
-/// alarm it already scheduled instead of adding a second one.
+/// alarm it already scheduled instead of adding a second one. Before scheduling, the label and when it first rings are
+/// saved; a replay that finds no alarm and a first ring in the past does not set it again (it rang, or it would ring
+/// late), and one whose first ring is still ahead sets it, since a scheduled one would still be there.
 final class AlarmTools: Sendable {
     struct SetArguments: Decodable {
         let label: String
@@ -35,25 +37,32 @@ final class AlarmTools: Sendable {
         if let existing = try AlarmManager.shared.alarms.first(where: { $0.id == id }) {
             return ["alarm": describe(existing), "alreadyScheduled": true]
         }
-        if let label = PiAlarms.labels()[id.uuidString] {
-            return ["alarm": ["id": id.uuidString, "label": label], "alreadyScheduled": true, "note": "It has already rung or been cancelled."]
+        let planned = PiAlarms.firstRing(id)
+        if let planned, planned <= .now {
+            return ["alarm": ["id": id.uuidString, "label": PiAlarms.labels()[id.uuidString] ?? args.label], "alreadyScheduled": true, "note": "It has already rung or been cancelled."]
         }
         let label = args.label.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !label.isEmpty else { throw AppleToolError("label is empty") }
-        let kind = try Self.kind(args)
+        var kind = try Self.kind(args)
+        if let planned, case .timer = kind { kind = .timer(planned.timeIntervalSinceNow) }
+        guard let first = planned ?? Self.firstRing(kind) else { throw AppleToolError("Could not work out when the alarm rings.") }
         let attributes = PiAlarmAttributes(presentation: Self.presentation(label, countdown: kind.isTimer), metadata: PiAlarmMetadata(label: label), tintColor: .orange)
         let configuration: AlarmManager.AlarmConfiguration<PiAlarmMetadata>
         switch kind {
         case .timer(let seconds): configuration = .timer(duration: seconds, attributes: attributes)
         case .alarm(let schedule): configuration = .alarm(schedule: schedule, attributes: attributes)
         }
+        PiAlarms.setLabel(label, for: id)
+        PiAlarms.setFirstRing(first, for: id)
         do {
             let alarm = try await AlarmManager.shared.schedule(id: id, configuration: configuration)
-            if case .timer(let seconds) = kind { PiAlarms.setTimerEnd(Date.now.addingTimeInterval(seconds), for: id) }
-            PiAlarms.setLabel(label, for: id)
             return ["alarm": describe(alarm)]
-        } catch AlarmManager.AlarmError.maximumLimitReached {
-            throw AppleToolError("Pi has as many alarms as iOS allows. Cancel one with alarms_cancel first.")
+        } catch {
+            PiAlarms.setFirstRing(nil, for: id)
+            if case AlarmManager.AlarmError.maximumLimitReached = error {
+                throw AppleToolError("Pi has as many alarms as iOS allows. Cancel one with alarms_cancel first.")
+            }
+            throw error
         }
     }
 
@@ -126,6 +135,13 @@ final class AlarmTools: Sendable {
         return .alarm(.relative(.init(time: .init(hour: parts[0], minute: parts[1]), repeats: weekdays.isEmpty ? .never : .weekly(weekdays))))
     }
 
+    private static func firstRing(_ kind: Kind) -> Date? {
+        switch kind {
+        case .timer(let seconds): Date.now.addingTimeInterval(seconds)
+        case .alarm(let schedule): PiAlarms.nextDate(schedule)
+        }
+    }
+
     private static func weekday(_ name: String) throws -> Locale.Weekday {
         guard let day = PiAlarms.weekdayNames.first(where: { $0.0 == name.lowercased() })?.1 else {
             throw AppleToolError("Unknown weekday: \(name). Use monday … sunday.")
@@ -157,9 +173,8 @@ final class AlarmTools: Sendable {
     }
 }
 
-/// Pi's alarms for the app's Alarms page, and what AlarmKit does not give back: labels and timers' end times, kept in
-/// the app's defaults by alarm ID. Labels are never removed: a label is also the record that an alarm was scheduled,
-/// so a call replayed after its alarm rang does not set it again.
+/// Pi's alarms for the app's Alarms page, and what AlarmKit does not give back: labels and when each first rings (a
+/// timer's end), kept in the app's defaults by alarm ID. They are also `AlarmTools.set`'s record of what it scheduled.
 public enum PiAlarms {
     public struct Summary: Identifiable, Sendable {
         public let id: UUID
@@ -173,7 +188,7 @@ public enum PiAlarms {
     }
 
     private static let labelsKey = "pi.alarmLabels"
-    private static let timerEndsKey = "pi.timerEnds"
+    private static let firstRingsKey = "pi.alarmFirstRings"
 
     static let weekdayNames: [(String, Locale.Weekday)] = [
         ("monday", .monday), ("tuesday", .tuesday), ("wednesday", .wednesday), ("thursday", .thursday),
@@ -211,7 +226,14 @@ public enum PiAlarms {
 
     /// When an alarm rings next, for sorting, the Alarms page and the model.
     static func nextDate(_ alarm: Alarm, now: Date = .now) -> Date? {
-        switch alarm.schedule {
+        guard let schedule = alarm.schedule else {
+            return alarm.state == .paused ? nil : firstRing(alarm.id)
+        }
+        return nextDate(schedule, now: now)
+    }
+
+    static func nextDate(_ schedule: Alarm.Schedule, now: Date = .now) -> Date? {
+        switch schedule {
         case .fixed(let date): return date
         case .relative(let relative):
             let calendar = Calendar.current
@@ -228,8 +250,6 @@ public enum PiAlarms {
                 }.min()
             @unknown default: return nil
             }
-        case nil:
-            return alarm.state == .paused ? nil : timerEnds()[alarm.id.uuidString].map(Date.init(timeIntervalSince1970:))
         @unknown default: return nil
         }
     }
@@ -244,14 +264,14 @@ public enum PiAlarms {
         UserDefaults.standard.set(all, forKey: labelsKey)
     }
 
-    private static func timerEnds() -> [String: Double] {
-        UserDefaults.standard.dictionary(forKey: timerEndsKey) as? [String: Double] ?? [:]
+    static func firstRing(_ id: UUID) -> Date? {
+        (UserDefaults.standard.dictionary(forKey: firstRingsKey)?[id.uuidString] as? Double).map(Date.init(timeIntervalSince1970:))
     }
 
-    static func setTimerEnd(_ end: Date, for id: UUID) {
-        var all = timerEnds()
-        all[id.uuidString] = end.timeIntervalSince1970
-        UserDefaults.standard.set(all, forKey: timerEndsKey)
+    static func setFirstRing(_ date: Date?, for id: UUID) {
+        var all = UserDefaults.standard.dictionary(forKey: firstRingsKey) ?? [:]
+        all[id.uuidString] = date?.timeIntervalSince1970
+        UserDefaults.standard.set(all, forKey: firstRingsKey)
     }
 }
 #endif
