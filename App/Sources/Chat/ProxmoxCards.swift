@@ -468,10 +468,11 @@ struct PveBackupsCard: View {
             source: "Proxmox Backups",
             symbol: "externaldrive.badge.timemachine",
             tint: Pve.tint,
-            title: value.only.map { "Backups of \($0)" } ?? (problems == 0 ? "All Backed Up" : "\(problems) Need\(problems == 1 ? "s" : "") Attention"),
+            title: value.only.map { "Backups of \($0)" }
+                ?? (problems > 0 ? "\(problems) Need\(problems == 1 ? "s" : "") Attention" : confirmed ? "All Backed Up" : "Backups"),
             subtitle: subtitle,
             share: share,
-            expandable: !full && (value.last.count > 5 || !value.jobs.isEmpty)
+            expandable: !full && (value.last.count > 5 || !value.jobs.isEmpty || !value.failed.isEmpty)
         ) { expanded in
             let all = full || expanded
             VStack(alignment: .leading, spacing: 10) {
@@ -502,6 +503,11 @@ struct PveBackupsCard: View {
                 }
             }
         }
+    }
+
+    /// Every guest is in a job and each one's last backup worked: not while one runs, or without the coverage list.
+    private var confirmed: Bool {
+        value.uncovered != nil && !value.last.isEmpty && value.last.allSatisfy { $0.state == "ok" }
     }
 
     private var subtitle: String {
