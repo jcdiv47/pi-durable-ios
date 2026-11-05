@@ -23,6 +23,9 @@ decisions that change the spec go in `docs/adr/`.
   Settings › SSH Hosts (`SSHSettingsView`, `SSHHosts`): the user's machines (Application Support `ssh-hosts.json`), their
   passwords or keys in the Keychain service `dev.jcdiv47.pidurable.ssh` (`SSHSecrets`), host keys pinned in Settings
   ([ADR 0012](docs/adr/0012-ssh-hosts.md)).
+  Settings › Proxmox (`ProxmoxSettingsView`, `Proxmox`): the user's Proxmox VE node (UserDefaults `proxmoxServer`), its
+  API token in the Keychain as `proxmox`, its own certificate pinned by fingerprint
+  ([ADR 0013](docs/adr/0013-proxmox.md)).
   Settings › Instructions and Skills (`SkillsViews`, `Skills`): the user's AGENTS.md (Application Support `AGENTS.md`)
   and the skills imported from Files or written in the editor (`SkillEditorView`, `skills/<name>/`); the composer's "/"
   menu and chip run a skill
@@ -48,7 +51,8 @@ decisions that change the spec go in `docs/adr/`.
 - `Shared/Sources/`: compiled into the app and the widget: the `LiveActivityIntent`s behind widget and Live Activity
   buttons, which iOS performs in the app's process.
 - `Packages/PiRuntime`: JSContext host, polyfill natives, the sqlite3 facade, the URLSession fetch
-  bridge (with `localHosts`: hosts answered in the process), the Keychain key source, the async host-call bridge
+  bridge (with `localHosts`: hosts answered in the process, and `PinnedCertificates`: self-signed servers trusted by
+  fingerprint), the Keychain key source, the async host-call bridge
   (`JSRuntime.Options.hostCall`), `AppleIntelligence` (Foundation Models as an OpenAI-compatible endpoint on
   `apple-intelligence.pi.local`, plus titles and summaries) and `SkillLibrary`
   (SKILL.md checks, import, and the `skills.*` host calls that read inside a skill's folder).
@@ -70,7 +74,7 @@ decisions that change the spec go in `docs/adr/`.
   resources. `src/app/` is the chat API Swift calls (`PiRuntime.*`): conversations, display frames,
   providers (`models.ts`, including the keyless `apple` provider), the Apple tool stubs, the UI tools (`surfaces.ts`: specs in Pi documents, JSON Patch), scheduled tasks
   and `notify_schedule` (`schedule.ts`), the web tools (`web.ts`: `web_search` through DeepSeek or Brave,
-  `web_fetch` through DeepSeek Fetch) over keyed HTTP services (`services.ts`), SSH tools (`ssh.ts`: `ssh_exec`, `ssh_job`), MCP servers (`mcp.ts`: a Streamable
+  `web_fetch` through DeepSeek Fetch) over keyed HTTP services (`services.ts`), SSH tools (`ssh.ts`: `ssh_exec`, `ssh_job`), the Proxmox VE reads (`proxmox.ts`: `pve_*`), MCP servers (`mcp.ts`: a Streamable
   HTTP client and the `mcp` extension, [ADR 0006](docs/adr/0006-mcp-servers.md)), the user's instructions and skills
   (`instructions.ts`, `skills.ts`: prompt sections, `skill_read`, `skill_file`), the approval gate and the offline
   `scripted/assistant` model. `chat.ts`
@@ -162,6 +166,10 @@ intended rendering change, re-record with `PI_RECORD_SNAPSHOTS=1 swift test` and
   host keys never reach JS: JS names a host by its ID. Nothing logs in before the user trusted the host key. Every
   command is a detached job named after its tool task (`SSHJobScript`), which is what makes `ssh_exec` replay-safe;
   keep it so ([ADR 0012](docs/adr/0012-ssh-hosts.md)).
+- The Proxmox node, its token and its certificate are set only by the user, in Settings. The token goes only to the
+  node's host and only once its certificate is pinned (`ProviderKeys.setProxmoxHost`, `PinnedCertificates`); what it
+  may do is the role the user gave it on the node. No `pve_*` tool reaches a path other than its own: there is no
+  generic API tool ([ADR 0013](docs/adr/0013-proxmox.md)).
 - Instructions and skills are written, edited, imported and removed only by the user, in Settings; no tool may change them, and
   a skill's scripts never run. Skill files are read only through `SkillLibrary`, which keeps paths inside the skill.
 - The `SqliteDatabase` facade must keep passing both Pi's storage conformance suite and
