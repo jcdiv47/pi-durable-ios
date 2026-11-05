@@ -12,6 +12,7 @@ final class FakeProxmox: LocalHTTPService, @unchecked Sendable {
 
     private static let hourly = "UPID:pve:0001:0001:6AEC2976:vzdump::root@pam:"
     private static let daily = "UPID:pve:0002:0002:6AEB1111:vzdump::root@pam:"
+    private static let media = "UPID:pve:0003:0003:6AEA0000:vzdump::root@pam:"
 
     func respond(to request: LocalHTTPRequest, send: @escaping @Sendable (LocalHTTPEvent) -> Void) async {
         let authorization = request.headers.first { $0.0.lowercased() == "authorization" }?.1 ?? ""
@@ -36,7 +37,7 @@ final class FakeProxmox: LocalHTTPService, @unchecked Sendable {
              {"id":"node/pve","type":"node","node":"pve","status":"online","cpu":0.02,"maxcpu":16,"mem":16540188672,"maxmem":30294454272,"disk":37971218432,"maxdisk":100861726720,"uptime":8445689},
              {"id":"lxc/100","type":"lxc","node":"pve","vmid":100,"name":"memos","status":"running","cpu":0.001,"maxcpu":4,"mem":50040832,"maxmem":4294967296,"disk":987582464,"maxdisk":105089261568,"uptime":1158296,"tags":"community-script;notes"},
              {"id":"lxc/111","type":"lxc","node":"pve","vmid":111,"name":"hermesagent","status":"stopped","maxcpu":2,"maxmem":4294967296,"maxdisk":21474836480},
-             {"id":"qemu/120","type":"qemu","node":"pve","vmid":120,"name":"haos","status":"running","cpu":0.005,"maxcpu":4,"mem":2529144832,"maxmem":4294967296,"maxdisk":68719476736,"uptime":1158173},
+             {"id":"qemu/120","type":"qemu","node":"pve","vmid":120,"name":"haos","pool":"media","status":"running","cpu":0.005,"maxcpu":4,"mem":2529144832,"maxmem":4294967296,"maxdisk":68719476736,"uptime":1158173},
              {"id":"storage/pve/local-lvm","type":"storage","node":"pve","storage":"local-lvm","status":"available","plugintype":"lvmthin","shared":0,"disk":164691000000,"maxdisk":852878000000,"content":"images,rootdir"}
             ]}
             """#)
@@ -47,7 +48,8 @@ final class FakeProxmox: LocalHTTPService, @unchecked Sendable {
             return (200, """
             {"data":[
              {"upid":"\(Self.hourly)","node":"pve","type":"vzdump","id":"","user":"root@pam","status":"job errors","starttime":\(now - 600),"endtime":\(now - 480)},
-             {"upid":"\(Self.daily)","node":"pve","type":"vzdump","id":"","user":"root@pam","status":"OK","starttime":\(now - 40000),"endtime":\(now - 39000)}
+             {"upid":"\(Self.daily)","node":"pve","type":"vzdump","id":"","user":"root@pam","status":"OK","starttime":\(now - 40000),"endtime":\(now - 39000)},
+             {"upid":"\(Self.media)","node":"pve","type":"vzdump","id":"","user":"root@pam","status":"OK","starttime":\(now - 90000),"endtime":\(now - 89000)}
             ]}
             """)
         case "/nodes/pve/tasks/\(Self.hourly)/log":
@@ -59,10 +61,13 @@ final class FakeProxmox: LocalHTTPService, @unchecked Sendable {
             """#)
         case "/nodes/pve/tasks/\(Self.daily)/log":
             return (200, #"{"data":[{"n":1,"t":"INFO: starting new backup job: vzdump --all 1 --exclude 120 --storage backup-daily --mode snapshot"}],"total":80}"#)
+        case "/nodes/pve/tasks/\(Self.media)/log":
+            return (200, #"{"data":[{"n":1,"t":"INFO: starting new backup job: vzdump --pool media --storage backup-monthly --mode stop"}],"total":20}"#)
         case "/cluster/backup":
             return (200, #"""
             {"data":[{"id":"backup-hourly","enabled":1,"schedule":"*/1:00","storage":"backup-hourly","vmid":"100,111","mode":"snapshot","next-run":1793865600},
-             {"id":"backup-daily","enabled":1,"schedule":"04:15","storage":"backup-daily","all":1,"exclude":"120","mode":"snapshot"}]}
+             {"id":"backup-daily","enabled":1,"schedule":"04:15","storage":"backup-daily","all":1,"exclude":"120","mode":"snapshot"},
+             {"id":"backup-media","enabled":1,"schedule":"sat 03:00","storage":"backup-monthly","pool":"media","mode":"stop"}]}
             """#)
         case "/cluster/backup-info/not-backed-up":
             return (200, #"{"data":[{"vmid":120,"name":"haos","type":"qemu"}]}"#)
@@ -140,6 +145,16 @@ struct ProxmoxChatTests {
         #expect(text.contains("Not in any backup job: 120 haos"), "\(text)")
         #expect(text.contains("- 100 memos (CT): OK (took 00:00:04)") && text.contains("→ backup-hourly"), "\(text)")
         #expect(text.contains("- 111 hermesagent (CT): failed: CT is locked (snapshot)"), "\(text)")
+    }
+
+    @Test("A job that backs up a pool covers the pool's guests", .timeLimit(.minutes(1)))
+    func poolJob() async throws {
+        let (result, _, _) = try await run(#"pve backups {"vmid":120}"#)
+        let text = result["text"] as? String ?? ""
+        #expect(result["isError"] as? Bool == false, "\(text)")
+        #expect(text.contains("- backup-media: sat 03:00 → backup-monthly, pool media") && !text.contains("No backup job covers"), "\(text)")
+        #expect(!text.contains("- backup-daily"), "\(text)")
+        #expect(text.contains("- 120 haos (VM): OK") && text.contains("→ backup-monthly"), "\(text)")
     }
 
     @Test("pve_guest shows config without its digest, notes as plain text, and snapshots", .timeLimit(.minutes(1)))

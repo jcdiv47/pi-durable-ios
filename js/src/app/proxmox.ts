@@ -48,6 +48,8 @@ type Resource = {
 	shared?: number;
 	content?: string;
 	hastate?: string;
+	/** The resource pool a guest is in. */
+	pool?: string;
 };
 
 type Guest = Resource & { vmid: number; node: string; type: "lxc" | "qemu" };
@@ -500,23 +502,34 @@ type BackupJob = {
 	"next-run"?: number;
 };
 
+/** The guests a backup job selects: all (but its exclusions), a pool's, or a list. */
+function jobVmids(job: Pick<BackupJob, "all" | "exclude" | "pool" | "vmid">, guests: readonly Guest[]): number[] {
+	const exclude = new Set((job.exclude ?? "").split(",").filter(Boolean).map(Number));
+	if (job.all) return guests.map((g) => g.vmid).filter((id) => !exclude.has(id));
+	if (job.pool) return guests.filter((g) => g.pool === job.pool && !exclude.has(g.vmid)).map((g) => g.vmid);
+	return (job.vmid ?? "").split(",").filter(Boolean).map(Number);
+}
+
 /** Which guests a vzdump task's first log line names, and where it backs them up. */
-export function vzdumpTarget(line: string, guests: readonly number[]): { vmids: number[]; storage?: string } | undefined {
+export function vzdumpTarget(line: string, guests: readonly Guest[]): { vmids: number[]; storage?: string } | undefined {
 	const match = /vzdump\s+(.*)$/.exec(line);
 	if (match === null) return undefined;
 	const words = match[1]!.split(/\s+/);
 	const vmids: number[] = [];
 	let all = false;
-	const exclude = new Set<number>();
+	let pool: string | undefined;
+	let exclude: string | undefined;
 	let storage: string | undefined;
+	const value = (i: number) => words[i + 1]?.replace(/^'|'$/g, "");
 	for (let i = 0; i < words.length; i++) {
 		const word = words[i]!;
 		if (/^\d+$/.test(word)) vmids.push(Number(word));
 		else if (word === "--all") all = words[i + 1] !== "0";
-		else if (word === "--exclude") for (const id of (words[i + 1] ?? "").split(",")) exclude.add(Number(id));
-		else if (word === "--storage") storage = words[i + 1]?.replace(/^'|'$/g, "");
+		else if (word === "--pool") pool = value(i);
+		else if (word === "--exclude") exclude = value(i);
+		else if (word === "--storage") storage = value(i);
 	}
-	return { vmids: all ? guests.filter((id) => !exclude.has(id)) : vmids, storage };
+	return { vmids: all || pool ? jobVmids({ all: all ? 1 : 0, pool, exclude }, guests) : vmids, storage };
 }
 
 /** Per guest, the result its full log gives: finished, or the error. */
@@ -559,13 +572,8 @@ const pveBackups = defineTool({
 		]);
 
 		// Guests some enabled job backs up: the ones whose last result to look for.
-		const ids = guests.map((g) => g.vmid);
 		const covered = new Set<number>();
-		for (const job of jobs) {
-			if (job.enabled === 0) continue;
-			const exclude = new Set((job.exclude ?? "").split(",").filter(Boolean).map(Number));
-			for (const id of job.all ? ids.filter((i) => !exclude.has(i)) : (job.vmid ?? "").split(",").filter(Boolean).map(Number)) covered.add(id);
-		}
+		for (const job of jobs) if (job.enabled !== 0) for (const id of jobVmids(job, guests)) covered.add(id);
 		const wanted = new Set(only !== undefined ? [only] : [...covered].filter((id) => byId.has(id)));
 
 		// Newest task first: its first log line names its guests. A failed task's whole log says which of them failed.
@@ -577,7 +585,7 @@ const pveBackups = defineTool({
 				api<{ t: string }[]>(logPath(t), { start: "0", limit: "1" }, signal).catch(() => [] as { t: string }[]),
 			);
 			for (const [index, task] of batch.entries()) {
-				const target = vzdumpTarget(firsts[index]?.[0]?.t ?? "", ids) ?? (task.id && /^\d+$/.test(task.id) ? { vmids: [Number(task.id)] } : undefined);
+				const target = vzdumpTarget(firsts[index]?.[0]?.t ?? "", guests) ?? (task.id && /^\d+$/.test(task.id) ? { vmids: [Number(task.id)] } : undefined);
 				if (target === undefined) continue;
 				const fresh = target.vmids.filter((id) => wanted.has(id) && !last.has(id));
 				if (fresh.length === 0) continue;
@@ -601,10 +609,7 @@ const pveBackups = defineTool({
 				: job.pool
 					? `pool ${job.pool}`
 					: `guests ${(job.vmid ?? "").split(",").join(", ")}`;
-		const relevantJobs = only === undefined ? jobs : jobs.filter((job) => {
-			const exclude = new Set((job.exclude ?? "").split(",").filter(Boolean).map(Number));
-			return job.all ? !exclude.has(only) : (job.vmid ?? "").split(",").map(Number).includes(only);
-		});
+		const relevantJobs = only === undefined ? jobs : jobs.filter((job) => jobVmids(job, guests).includes(only));
 		const notCovered = only === undefined ? (uncovered ?? []) : (uncovered ?? []).filter((g) => g.vmid === only);
 		return text([
 			relevantJobs.length > 0 ? "Backup jobs:" : only !== undefined ? `No backup job covers guest ${only}.` : "No backup jobs.",
