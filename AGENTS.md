@@ -25,7 +25,8 @@ decisions that change the spec go in `docs/adr/`.
   ([ADR 0012](docs/adr/0012-ssh-hosts.md)).
   Settings › Proxmox (`ProxmoxSettingsView`, `Proxmox`): the user's Proxmox VE node (UserDefaults `proxmoxServer`), its
   API token in the Keychain as `proxmox`, its own certificate pinned by fingerprint
-  ([ADR 0013](docs/adr/0013-proxmox.md)).
+  ([ADR 0013](docs/adr/0013-proxmox.md)). The Proxmox page (`ProxmoxView`, More menu, `pidurable://proxmox`) and the
+  chat's `pve_*` cards (`ProxmoxCards`, from the tools' `details.card`) draw the node, its guests and its backups.
   Settings › Instructions and Skills (`SkillsViews`, `Skills`): the user's AGENTS.md (Application Support `AGENTS.md`)
   and the skills imported from Files or written in the editor (`SkillEditorView`, `skills/<name>/`); the composer's "/"
   menu and chip run a skill

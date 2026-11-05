@@ -134,6 +134,13 @@ struct ProxmoxChatTests {
         #expect(text.contains("- 111 hermesagent (CT) · stopped"), "\(text)")
         #expect(text.contains("- local-lvm (lvmthin): 153 GiB of 794 GiB used (19%)"), "\(text)")
         #expect(!fake.authorizations.isEmpty && fake.authorizations.allSatisfy { $0 == "PVEAPIToken=pi-host-key:proxmox" }, "\(fake.authorizations)")
+        // The chat's card reads the same result as data.
+        let card = try #require(result["data"] as? [String: Any], "\(result)")
+        let node = try #require((card["nodes"] as? [[String: Any]])?.first)
+        #expect(node["name"] as? String == "pve" && node["maxcpu"] as? Int == 16 && node["version"] as? String == "pve-manager 9.2.5")
+        #expect((card["containers"] as? [String: Int]) == ["running": 1, "total": 2])
+        #expect((card["down"] as? [[String: Any]])?.map { $0["vmid"] as? Int } == [111])
+        #expect((card["storages"] as? [[String: Any]])?.first?["used"] as? Int == 164_691_000_000)
     }
 
     @Test("pve_backups ties each task to its guests and reads a failed task's log for which failed", .timeLimit(.minutes(1)))
@@ -145,6 +152,28 @@ struct ProxmoxChatTests {
         #expect(text.contains("Not in any backup job: 120 haos"), "\(text)")
         #expect(text.contains("- 100 memos (CT): OK (took 00:00:04)") && text.contains("→ backup-hourly"), "\(text)")
         #expect(text.contains("- 111 hermesagent (CT): failed: CT is locked (snapshot)"), "\(text)")
+        let card = try #require(result["data"] as? [String: Any], "\(result)")
+        let last = (card["last"] as? [[String: Any]] ?? []).map { "\($0["vmid"] ?? "?") \($0["state"] ?? "?")" }
+        #expect(last == ["100 ok", "111 failed", "120 ok"], "\(last)")
+        #expect((card["uncovered"] as? [[String: Any]])?.map { $0["vmid"] as? Int } == [120])
+        #expect((card["jobs"] as? [[String: Any]])?.count == 3)
+    }
+
+    @Test("The Proxmox page reads the node, its guests and its backups without the model", .timeLimit(.minutes(1)))
+    func dashboard() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fake = FakeProxmox()
+        let harness = try await openProxmoxChat(ChatLog(), db: directory.appendingPathComponent("chat.sqlite").path, fake: fake)
+        try await harness.perform("PiRuntime.setProxmox", [Self.ready])
+        let json = try await harness.call("PiRuntime.proxmoxDashboard") as JSONAny
+        let value = try #require(json.value as? [String: Any])
+        #expect((value["guests"] as? [String: Any])?["node"] as? String == "pve")
+        #expect(((value["guests"] as? [String: Any])?["guests"] as? [[String: Any]])?.map { $0["vmid"] as? Int } == [100, 111, 120])
+        #expect(((value["overview"] as? [String: Any])?["vms"] as? [String: Int]) == ["running": 1, "total": 1])
+        #expect(((value["backups"] as? [String: Any])?["last"] as? [[String: Any]])?.count == 3)
+        #expect(fake.authorizations.allSatisfy { $0 == "PVEAPIToken=pi-host-key:proxmox" })
+        try await harness.close()
     }
 
     @Test("A job that backs up a pool covers the pool's guests", .timeLimit(.minutes(1)))
@@ -209,5 +238,20 @@ struct ProxmoxChatTests {
         try await until { !log.busy(meta.id) && log.items(meta.id).count == 6 }
         #expect(log.last(meta.id, kind: "assistant")?["text"] as? String == "Section proxmox: (none)")
         try await harness.close()
+    }
+}
+
+/// Any JSON, for tests that look into a result without a type for it.
+struct JSONAny: Decodable {
+    let value: Any
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let object = try? container.decode([String: JSONAny].self) { value = object.mapValues(\.value) }
+        else if let array = try? container.decode([JSONAny].self) { value = array.map(\.value) }
+        else if let int = try? container.decode(Int.self) { value = int }
+        else if let double = try? container.decode(Double.self) { value = double }
+        else if let bool = try? container.decode(Bool.self) { value = bool }
+        else if let string = try? container.decode(String.self) { value = string }
+        else { value = NSNull() }
     }
 }

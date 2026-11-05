@@ -21,7 +21,7 @@ import { InstructionsExtension, instructionsSettings } from "./app/instructions.
 import { McpHost, type McpServerConfig } from "./app/mcp.ts";
 import { type AppleModel, type CustomProvider, ModelSetup } from "./app/models.ts";
 import { answerText, ScheduleTools, scheduleToolInfo } from "./app/schedule.ts";
-import { type ProxmoxConfig, proxmoxSettings, ProxmoxTools, proxmoxToolInfo } from "./app/proxmox.ts";
+import { type ProxmoxConfig, proxmoxDashboard, proxmoxSettings, ProxmoxTools, proxmoxToolInfo } from "./app/proxmox.ts";
 import { SkillHost, type SkillInfo } from "./app/skills.ts";
 import { type SshHostConfig, sshSettings, SshTools, sshToolInfo, sshTrusted } from "./app/ssh.ts";
 import { SurfaceTools, surfaceToolInfo } from "./app/surfaces.ts";
@@ -404,6 +404,8 @@ const app = {
 		// Removed: null, or no address.
 		proxmoxSettings.server = config?.url ? config : undefined;
 	},
+	/** The Proxmox page: the node, its guests and its backups, read the way the pve_* tools read them. */
+	proxmoxDashboard: () => proxmoxDashboard(),
 	// Settings › Instructions and Settings › Skills changed; both apply from the next model request.
 	setInstructions: async (text: string) => {
 		instructionsSettings.text = text;

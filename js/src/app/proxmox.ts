@@ -6,6 +6,7 @@
 // (docs/adr/0004-http-api-services.md). The token's rights are enforced by Proxmox; a 403 comes back as "the token
 // may not do this".
 
+import type { JsonValue } from "@earendil-works/chord";
 import { bool, lit, num, obj, opt, str, union } from "@earendil-works/pi-schema";
 import { defineExtension, defineTool, section } from "@earendil-works/pi-durable";
 import { ServiceError, serviceFetch, servicePlaceholder, services, serviceUrl } from "./services.ts";
@@ -188,15 +189,136 @@ function when(epoch: number | undefined): string {
 	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/** The node's name when there is one node, so guest lines don't repeat it. */
-let onlyNode: string | undefined;
-
 const kind = (type: string) => (type === "lxc" ? "CT" : "VM");
-const label = (g: Pick<Guest, "vmid" | "name" | "type">) => `${g.vmid} ${g.name ?? "?"} (${kind(g.type)})`;
+const label = (g: { vmid: number; name?: string; type: string }) => `${g.vmid} ${g.name ?? "?"} (${kind(g.type)})`;
 const tags = (value: string | undefined) => (value ? value.split(/[;,\s]+/).filter(Boolean) : []);
 
-function guestLine(g: Guest): string {
-	const parts = [label(g), g.template ? "template" : (g.status ?? "?")];
+// ---- structured results: the chat's cards and the Proxmox page draw these (times are UNIX seconds) ----
+
+export type PveGuestRow = {
+	vmid: number;
+	name?: string;
+	type: "lxc" | "qemu";
+	node: string;
+	status: string;
+	template?: boolean;
+	cpu?: number;
+	maxcpu?: number;
+	mem?: number;
+	maxmem?: number;
+	disk?: number;
+	maxdisk?: number;
+	uptime?: number;
+	tags: string[];
+	lock?: string;
+	hastate?: string;
+};
+
+export type PveTaskRow = { upid: string; node: string; type: string; id?: string; user: string; status: string; start: number; end?: number };
+
+export type PveNodeRow = {
+	name: string;
+	status: string;
+	uptime?: number;
+	cpu?: number;
+	maxcpu?: number;
+	mem?: number;
+	maxmem?: number;
+	disk?: number;
+	maxdisk?: number;
+	load?: string[];
+	version?: string;
+};
+
+export type PveStorageRow = { name: string; node?: string; type?: string; shared: boolean; status: string; used?: number; total?: number; content: string[] };
+
+export type PveCount = { running: number; total: number };
+
+export type PveOverview = {
+	at: number;
+	nodes: PveNodeRow[];
+	containers: PveCount;
+	vms: PveCount;
+	/** Guests (not templates) that aren't running. */
+	down: PveGuestRow[];
+	storages: PveStorageRow[];
+	/** Tasks that failed in the last 24 hours. */
+	failed: PveTaskRow[];
+};
+
+export type PveGuestList = { at: number; node?: string; filters?: string; guests: PveGuestRow[] };
+
+export type PveBackupJob = {
+	id: string;
+	label: string;
+	schedule?: string;
+	storage?: string;
+	/** Which guests, in words: "all guests except 120", "pool media", "guests 100, 111". */
+	guests: string;
+	mode?: string;
+	enabled: boolean;
+	next?: number;
+};
+
+export type PveLastBackup = {
+	vmid: number;
+	name?: string;
+	type?: "lxc" | "qemu";
+	state: "ok" | "failed" | "running" | "none";
+	result: string;
+	at?: number;
+	storage?: string;
+};
+
+export type PveBackups = {
+	at: number;
+	/** The one guest asked about. */
+	only?: number;
+	jobs: PveBackupJob[];
+	/** Guests in no backup job; undefined when the token may not read it. */
+	uncovered?: { vmid: number; name?: string }[];
+	last: PveLastBackup[];
+	/** How many backup tasks were read, and when the oldest started. */
+	scanned: number;
+	since?: number;
+	/** Backup tasks that failed in the last 7 days. */
+	failed: PveTaskRow[];
+};
+
+function guestRow(g: Guest): PveGuestRow {
+	return {
+		vmid: g.vmid,
+		name: g.name,
+		type: g.type,
+		node: g.node,
+		status: g.status ?? "unknown",
+		template: g.template ? true : undefined,
+		cpu: g.cpu,
+		maxcpu: g.maxcpu,
+		mem: g.mem,
+		maxmem: g.maxmem,
+		disk: g.disk,
+		maxdisk: g.maxdisk,
+		uptime: g.uptime,
+		tags: tags(g.tags),
+		lock: g.lock,
+		hastate: g.hastate,
+	};
+}
+
+function taskRow(t: Task): PveTaskRow {
+	const status = t.endtime === undefined && t.status === undefined ? "running" : (t.status ?? "?");
+	return { upid: t.upid, node: t.node, type: t.type, id: t.id || undefined, user: t.user, status, start: t.starttime, end: t.endtime };
+}
+
+/** The node's name when there is one node, so guest lines don't repeat it. */
+function soleNode(all: readonly Resource[]): string | undefined {
+	const nodes = all.filter((r) => r.type === "node");
+	return nodes.length === 1 ? nodes[0]!.node : undefined;
+}
+
+function guestLine(g: PveGuestRow, onlyNode?: string): string {
+	const parts = [label(g), g.template ? "template" : g.status];
 	if (g.status === "running") {
 		parts.push(`CPU ${cpu(g.cpu)} of ${g.maxcpu ?? "?"}`, `memory ${size(g.mem)} of ${size(g.maxmem)}`, `up ${duration(g.uptime)}`);
 	} else {
@@ -205,19 +327,23 @@ function guestLine(g: Guest): string {
 	if (g.maxdisk) parts.push(g.type === "lxc" && g.disk ? `disk ${size(g.disk)} of ${size(g.maxdisk)}` : `disk ${size(g.maxdisk)}`);
 	if (g.lock) parts.push(`locked: ${g.lock}`);
 	if (g.hastate) parts.push(`HA: ${g.hastate}`);
-	if (g.tags) parts.push(`tags: ${tags(g.tags).join(", ")}`);
-	if (g.node && onlyNode !== g.node) parts.push(`node ${g.node}`);
+	if (g.tags.length > 0) parts.push(`tags: ${g.tags.join(", ")}`);
+	if (onlyNode !== g.node) parts.push(`node ${g.node}`);
 	return `- ${parts.join(" · ")}`;
 }
 
-function taskLine(t: Task): string {
-	const status = t.endtime === undefined && t.status === undefined ? "running" : (t.status ?? "?");
-	const took = t.endtime !== undefined ? ` (${duration(t.endtime - t.starttime)})` : "";
-	return `- ${when(t.starttime)} ${t.type}${t.id ? ` ${t.id}` : ""}: ${status}${took} · ${t.user} · ${t.upid}`;
+function taskLine(task: Task | PveTaskRow): string {
+	const t = "starttime" in task ? taskRow(task) : task;
+	const took = t.end !== undefined ? ` (${duration(t.end - t.start)})` : "";
+	return `- ${when(t.start)} ${t.type}${t.id ? ` ${t.id}` : ""}: ${t.status}${took} · ${t.user} · ${t.upid}`;
 }
 
-function text(lines: (string | undefined | false)[]) {
-	return { output: [{ type: "text" as const, text: lines.filter((l): l is string => typeof l === "string").join("\n") }] };
+function text(lines: (string | undefined | false)[], card?: PveOverview | PveGuestList | PveBackups) {
+	return {
+		output: [{ type: "text" as const, text: lines.filter((l): l is string => typeof l === "string").join("\n") }],
+		// The chat draws it as a card (`cardTools` in display.ts). Plain JSON: no undefined values.
+		details: card === undefined ? undefined : ({ card: JSON.parse(JSON.stringify(card)) } as JsonValue),
+	};
 }
 
 // ---- tools -----------------------------------------------------------------
@@ -230,6 +356,90 @@ async function tasksOn(nodes: readonly string[], params: Record<string, string>,
 	return lists.flat().sort((a, b) => b.starttime - a.starttime);
 }
 
+/** The node at a glance: what pve_overview says, and the Proxmox page's top card. */
+export async function overviewData(signal?: AbortSignal, preloaded?: Resource[]): Promise<PveOverview> {
+	const all = preloaded ?? (await resources(signal));
+	const online = onlineNodes(all);
+	const statuses = await mapLimit(online, 4, (node) =>
+		api<{ pveversion?: string; loadavg?: string[] }>(`/nodes/${segment(node)}/status`, {}, signal).catch(() => undefined),
+	);
+	const guests = guestsOf(all).filter((g) => !g.template);
+	const seen = new Set<string>();
+	const storages = all.filter((r) => {
+		if (r.type !== "storage" || r.storage === undefined) return false;
+		const key = r.shared ? r.storage : `${r.node}/${r.storage}`;
+		if (seen.has(key)) return false;
+		seen.add(key);
+		return true;
+	});
+	const failed = await tasksOn(online, { errors: "1", since: String(now() - DAY), limit: "20" }, signal);
+	const count = (type: string): PveCount => ({
+		running: guests.filter((g) => g.type === type && g.status === "running").length,
+		total: guests.filter((g) => g.type === type).length,
+	});
+	return {
+		at: now(),
+		nodes: all
+			.filter((r) => r.type === "node")
+			.map((n) => {
+				const status = n.node === undefined ? undefined : statuses[online.indexOf(n.node)];
+				return {
+					name: n.node ?? "?",
+					status: n.status ?? "unknown",
+					uptime: n.uptime,
+					cpu: n.cpu,
+					maxcpu: n.maxcpu,
+					mem: n.mem,
+					maxmem: n.maxmem,
+					disk: n.disk,
+					maxdisk: n.maxdisk,
+					load: status?.loadavg,
+					version: status?.pveversion?.split("/").slice(0, 2).join(" "),
+				};
+			}),
+		containers: count("lxc"),
+		vms: count("qemu"),
+		down: guests.filter((g) => g.status !== "running").map(guestRow),
+		storages: storages.map((s) => ({
+			name: s.storage!,
+			node: s.shared ? undefined : s.node,
+			type: s.plugintype,
+			shared: Boolean(s.shared),
+			status: s.status ?? "unknown",
+			used: s.disk,
+			total: s.maxdisk,
+			content: s.content ? s.content.split(",") : [],
+		})),
+		failed: failed.map(taskRow),
+	};
+}
+
+function overviewText(o: PveOverview, onlyNode?: string) {
+	return [
+		...o.nodes.map((n) =>
+			n.status !== "online"
+				? `Node ${n.name}: ${n.status}`
+				: `Node ${n.name}: online, up ${duration(n.uptime)} · CPU ${cpu(n.cpu)} of ${n.maxcpu ?? "?"} cores` +
+					(n.load ? ` (load ${n.load.join(" ")})` : "") +
+					` · memory ${size(n.mem)} of ${size(n.maxmem)}${percent(n.mem, n.maxmem)}` +
+					` · root disk ${size(n.disk)} of ${size(n.maxdisk)}${percent(n.disk, n.maxdisk)}` +
+					(n.version ? ` · ${n.version}` : ""),
+		),
+		`Guests: ${o.containers.running} of ${o.containers.total} containers and ${o.vms.running} of ${o.vms.total} VMs running.`,
+		o.down.length > 0 ? "Not running:" : "Every guest is running.",
+		...o.down.map((g) => guestLine(g, onlyNode)),
+		"Storages:",
+		...o.storages.map(
+			(s) =>
+				`- ${s.name} (${s.type ?? "?"}${s.shared ? ", shared" : ""}): ` +
+				(s.status === "available" ? `${size(s.used)} of ${size(s.total)} used${percent(s.used, s.total)}` : s.status) +
+				(s.content.length > 0 ? ` · holds ${s.content.join(", ")}` : ""),
+		),
+		o.failed.length > 0 ? `Tasks that failed in the last 24 hours (${o.failed.length}):` : "No task failed in the last 24 hours.",
+		...o.failed.map(taskLine),
+	];
+}
+
 const pveOverview = defineTool({
 	name: "pve_overview",
 	description:
@@ -238,57 +448,33 @@ const pveOverview = defineTool({
 	parameters: obj({}),
 	replay: "safe",
 	execute: async (_args, _api, context) => {
-		const signal = context.abortSignal;
-		const all = await resources(signal);
-		const nodes = all.filter((r) => r.type === "node");
-		onlyNode = nodes.length === 1 ? nodes[0]!.node : undefined;
-		const online = onlineNodes(all);
-		const statuses = await mapLimit(online, 4, (node) =>
-			api<{ pveversion?: string; loadavg?: string[] }>(`/nodes/${segment(node)}/status`, {}, signal).catch(() => undefined),
-		);
-		const guests = guestsOf(all).filter((g) => !g.template);
-		const down = guests.filter((g) => g.status !== "running");
-		const seen = new Set<string>();
-		const storages = all.filter((r) => {
-			if (r.type !== "storage" || r.storage === undefined) return false;
-			const key = r.shared ? r.storage : `${r.node}/${r.storage}`;
-			if (seen.has(key)) return false;
-			seen.add(key);
-			return true;
-		});
-		const failed = await tasksOn(online, { errors: "1", since: String(now() - DAY), limit: "20" }, signal);
-		const running = (type: string) => guests.filter((g) => g.type === type && g.status === "running").length;
-		const count = (type: string) => guests.filter((g) => g.type === type).length;
-		return text([
-			...nodes.map((n) => {
-				const status = statuses[online.indexOf(n.node ?? "")];
-				if (n.status !== "online") return `Node ${n.node}: ${n.status ?? "unknown"}`;
-				return (
-					`Node ${n.node}: online, up ${duration(n.uptime)} · CPU ${cpu(n.cpu)} of ${n.maxcpu ?? "?"} cores` +
-					(status?.loadavg ? ` (load ${status.loadavg.join(" ")})` : "") +
-					` · memory ${size(n.mem)} of ${size(n.maxmem)}${percent(n.mem, n.maxmem)}` +
-					` · root disk ${size(n.disk)} of ${size(n.maxdisk)}${percent(n.disk, n.maxdisk)}` +
-					(status?.pveversion ? ` · ${status.pveversion.split("/").slice(0, 2).join(" ")}` : "")
-				);
-			}),
-			`Guests: ${running("lxc")} of ${count("lxc")} containers and ${running("qemu")} of ${count("qemu")} VMs running.`,
-			down.length > 0 ? "Not running:" : "Every guest is running.",
-			...down.map(guestLine),
-			"Storages:",
-			...storages.map(
-				(s) =>
-					`- ${s.storage} (${s.plugintype ?? "?"}${s.shared ? ", shared" : ""}): ` +
-					(s.status === "available" ? `${size(s.disk)} of ${size(s.maxdisk)} used${percent(s.disk, s.maxdisk)}` : (s.status ?? "unknown")) +
-					(s.content ? ` · holds ${s.content.split(",").join(", ")}` : ""),
-			),
-			failed.length > 0 ? `Tasks that failed in the last 24 hours (${failed.length}):` : "No task failed in the last 24 hours.",
-			...failed.map(taskLine),
-		]);
+		const all = await resources(context.abortSignal);
+		const overview = await overviewData(context.abortSignal, all);
+		return text(overviewText(overview, soleNode(all)), overview);
 	},
 });
 
 const statusType = union([lit("running"), lit("stopped"), lit("paused")], { description: "Only guests in this state" });
 const guestType = union([lit("lxc"), lit("qemu")], { description: "lxc for containers, qemu for VMs" });
+
+export async function guestsData(
+	filter: { status?: string; type?: string; tag?: string } = {},
+	signal?: AbortSignal,
+	preloaded?: Resource[],
+): Promise<PveGuestList> {
+	const all = preloaded ?? (await resources(signal));
+	const tag = filter.tag?.trim().toLowerCase();
+	const guests = guestsOf(all).filter(
+		(g) =>
+			(filter.status === undefined || g.status === filter.status) &&
+			(filter.type === undefined || g.type === filter.type) &&
+			(tag === undefined || tag === "" || tags(g.tags).some((t) => t.toLowerCase() === tag)),
+	);
+	const filters = [filter.status, filter.type === "lxc" ? "containers" : filter.type === "qemu" ? "VMs" : undefined, tag && `tagged ${tag}`]
+		.filter(Boolean)
+		.join(", ");
+	return { at: now(), node: soleNode(all), filters: filters || undefined, guests: guests.map(guestRow) };
+}
 
 const pveGuests = defineTool({
 	name: "pve_guests",
@@ -302,23 +488,15 @@ const pveGuests = defineTool({
 	}),
 	replay: "safe",
 	execute: async (args, _api, context) => {
-		const all = await resources(context.abortSignal);
-		const nodes = all.filter((r) => r.type === "node");
-		onlyNode = nodes.length === 1 ? nodes[0]!.node : undefined;
-		const tag = args.tag?.trim().toLowerCase();
-		const guests = guestsOf(all).filter(
-			(g) =>
-				(args.status === undefined || g.status === args.status) &&
-				(args.type === undefined || g.type === args.type) &&
-				(tag === undefined || tag === "" || tags(g.tags).some((t) => t.toLowerCase() === tag)),
+		const list = await guestsData(args, context.abortSignal);
+		const count = list.guests.length;
+		return text(
+			[
+				`${count} guest${count === 1 ? "" : "s"}${list.filters ? ` (${list.filters})` : ""}${list.node ? ` on ${list.node}` : ""}:`,
+				...list.guests.map((g) => guestLine(g, list.node)),
+			],
+			list,
 		);
-		const filters = [args.status, args.type === "lxc" ? "containers" : args.type === "qemu" ? "VMs" : undefined, tag && `tagged ${tag}`]
-			.filter(Boolean)
-			.join(", ");
-		return text([
-			`${guests.length} guest${guests.length === 1 ? "" : "s"}${filters ? ` (${filters})` : ""}${onlyNode ? ` on ${onlyNode}` : ""}:`,
-			...guests.map(guestLine),
-		]);
 	},
 });
 
@@ -547,6 +725,129 @@ export function vzdumpOutcomes(lines: readonly string[]): Map<number, string> {
 /** How many backup tasks to look back through for each guest's last result. */
 const BACKUP_SCAN = 72;
 
+function jobGuests(job: BackupJob): string {
+	if (job.all) return `all guests${job.exclude ? ` except ${job.exclude.split(",").join(", ")}` : ""}`;
+	if (job.pool) return `pool ${job.pool}`;
+	return `guests ${(job.vmid ?? "").split(",").join(", ")}`;
+}
+
+/** Backup jobs and each covered guest's last backup: what pve_backups says, and the Proxmox page's backups card. */
+export async function backupsData(only?: number, signal?: AbortSignal, preloaded?: Resource[]): Promise<PveBackups> {
+	const all = preloaded ?? (await resources(signal));
+	const guests = guestsOf(all).filter((g) => !g.template);
+	const byId = new Map(guests.map((g) => [g.vmid, g]));
+	if (only !== undefined && !byId.has(only)) throw new Error(`No guest ${only} on the node. List them with pve_guests.`);
+	const nodes = onlineNodes(all);
+	const [jobs, uncovered, recent, failed] = await Promise.all([
+		api<BackupJob[]>("/cluster/backup", {}, signal),
+		api<{ vmid: number; name?: string; type?: string }[]>("/cluster/backup-info/not-backed-up", {}, signal).catch(() => undefined),
+		tasksOn(nodes, { typefilter: "vzdump", limit: String(BACKUP_SCAN) }, signal),
+		tasksOn(nodes, { typefilter: "vzdump", errors: "1", since: String(now() - 7 * DAY), limit: "20" }, signal),
+	]);
+
+	// Guests some enabled job backs up: the ones whose last result to look for.
+	const covered = new Set<number>();
+	for (const job of jobs) if (job.enabled !== 0) for (const id of jobVmids(job, guests)) covered.add(id);
+	const wanted = new Set(only !== undefined ? [only] : [...covered].filter((id) => byId.has(id)));
+
+	// Newest task first: its first log line names its guests. A failed task's whole log says which of them failed.
+	const last = new Map<number, Omit<PveLastBackup, "vmid" | "name" | "type">>();
+	const logPath = (t: Task) => `/nodes/${segment(t.node)}/tasks/${segment(t.upid)}/log`;
+	for (let i = 0; i < recent.length && [...wanted].some((id) => !last.has(id)); i += 12) {
+		const batch = recent.slice(i, i + 12);
+		const firsts = await mapLimit(batch, 6, (t) =>
+			api<{ t: string }[]>(logPath(t), { start: "0", limit: "1" }, signal).catch(() => [] as { t: string }[]),
+		);
+		for (const [index, task] of batch.entries()) {
+			const target = vzdumpTarget(firsts[index]?.[0]?.t ?? "", guests) ?? (task.id && /^\d+$/.test(task.id) ? { vmids: [Number(task.id)] } : undefined);
+			if (target === undefined) continue;
+			const fresh = target.vmids.filter((id) => wanted.has(id) && !last.has(id));
+			if (fresh.length === 0) continue;
+			const running = task.endtime === undefined && task.status === undefined;
+			let outcomes = new Map<number, string>();
+			if (!running && task.status !== "OK") {
+				const log = await api<{ t: string }[]>(logPath(task), { start: "0", limit: "5000" }, signal).catch(() => []);
+				outcomes = vzdumpOutcomes(log.map((l) => l.t));
+			}
+			for (const id of fresh) {
+				const outcome = outcomes.get(id);
+				const [state, result]: [PveLastBackup["state"], string] = running
+					? ["running", "running now"]
+					: task.status === "OK"
+						? ["ok", "OK"]
+						: outcome !== undefined
+							? [outcome.startsWith("OK") ? "ok" : "failed", outcome]
+							: ["failed", `the task ended with: ${task.status ?? "?"}`];
+				last.set(id, { state, result, at: task.starttime, storage: target.storage });
+			}
+		}
+	}
+
+	const since = recent.at(-1)?.starttime;
+	const relevantJobs = only === undefined ? jobs : jobs.filter((job) => jobVmids(job, guests).includes(only));
+	return {
+		at: now(),
+		only,
+		jobs: relevantJobs.map((job) => ({
+			id: job.id,
+			label: job.comment?.trim() || job.id,
+			schedule: job.schedule,
+			storage: job.storage,
+			guests: jobGuests(job),
+			mode: job.mode,
+			enabled: job.enabled !== 0,
+			next: job.enabled === 0 ? undefined : job["next-run"],
+		})),
+		uncovered:
+			uncovered === undefined
+				? undefined
+				: (only === undefined ? uncovered : uncovered.filter((g) => g.vmid === only)).map((g) => ({ vmid: g.vmid, name: g.name })),
+		last: [...wanted]
+			.sort((a, b) => a - b)
+			.map((id) => {
+				const guest = byId.get(id);
+				const found = last.get(id);
+				return {
+					vmid: id,
+					name: guest?.name,
+					type: guest?.type,
+					...(found ?? {
+						state: "none" as const,
+						result: `no backup task for it since ${when(since)}${covered.has(id) ? "; its job may not have run since" : ""}`,
+					}),
+				};
+			}),
+		scanned: recent.length,
+		since,
+		failed: failed.map(taskRow),
+	};
+}
+
+function backupsText(b: PveBackups) {
+	return [
+		b.jobs.length > 0 ? "Backup jobs:" : b.only !== undefined ? `No backup job covers guest ${b.only}.` : "No backup jobs.",
+		...b.jobs.map(
+			(job) =>
+				`- ${job.label}: ${job.schedule ?? "?"} → ${job.storage ?? "?"}, ${job.guests}` +
+				`${job.mode ? `, ${job.mode} mode` : ""}${!job.enabled ? " · disabled" : job.next ? ` · next ${when(job.next)}` : ""}`,
+		),
+		b.only === undefined && b.uncovered !== undefined
+			? b.uncovered.length > 0
+				? `Not in any backup job: ${b.uncovered.map((g) => `${g.vmid} ${g.name ?? ""}`.trim()).join(", ")}`
+				: "Every guest is in a backup job."
+			: undefined,
+		b.last.length > 0 ? `Last backup per guest (from the last ${b.scanned} backup tasks, local time):` : undefined,
+		...b.last.map((l) => {
+			const name = l.type ? label({ vmid: l.vmid, name: l.name, type: l.type }) : String(l.vmid);
+			return l.state === "none"
+				? `- ${name}: ${l.result}`
+				: `- ${name}: ${l.result} · ${when(l.at)}${l.storage ? ` → ${l.storage}` : ""}`;
+		}),
+		b.failed.length > 0 ? `Backup tasks that failed in the last 7 days (${b.failed.length}):` : "No backup task failed in the last 7 days.",
+		...b.failed.map(taskLine),
+	];
+}
+
 const pveBackups = defineTool({
 	name: "pve_backups",
 	description:
@@ -557,86 +858,17 @@ const pveBackups = defineTool({
 	}),
 	replay: "safe",
 	execute: async (args, _api, context) => {
-		const signal = context.abortSignal;
-		const only = args.vmid === undefined ? undefined : vmidOf(args.vmid);
-		const all = await resources(signal);
-		const guests = guestsOf(all).filter((g) => !g.template);
-		const byId = new Map(guests.map((g) => [g.vmid, g]));
-		if (only !== undefined && !byId.has(only)) throw new Error(`No guest ${only} on the node. List them with pve_guests.`);
-		const nodes = onlineNodes(all);
-		const [jobs, uncovered, recent, failed] = await Promise.all([
-			api<BackupJob[]>("/cluster/backup", {}, signal),
-			api<{ vmid: number; name?: string; type?: string }[]>("/cluster/backup-info/not-backed-up", {}, signal).catch(() => undefined),
-			tasksOn(nodes, { typefilter: "vzdump", limit: String(BACKUP_SCAN) }, signal),
-			tasksOn(nodes, { typefilter: "vzdump", errors: "1", since: String(now() - 7 * DAY), limit: "20" }, signal),
-		]);
-
-		// Guests some enabled job backs up: the ones whose last result to look for.
-		const covered = new Set<number>();
-		for (const job of jobs) if (job.enabled !== 0) for (const id of jobVmids(job, guests)) covered.add(id);
-		const wanted = new Set(only !== undefined ? [only] : [...covered].filter((id) => byId.has(id)));
-
-		// Newest task first: its first log line names its guests. A failed task's whole log says which of them failed.
-		const last = new Map<number, { at: number; storage?: string; result: string }>();
-		const logPath = (t: Task) => `/nodes/${segment(t.node)}/tasks/${segment(t.upid)}/log`;
-		for (let i = 0; i < recent.length && [...wanted].some((id) => !last.has(id)); i += 12) {
-			const batch = recent.slice(i, i + 12);
-			const firsts = await mapLimit(batch, 6, (t) =>
-				api<{ t: string }[]>(logPath(t), { start: "0", limit: "1" }, signal).catch(() => [] as { t: string }[]),
-			);
-			for (const [index, task] of batch.entries()) {
-				const target = vzdumpTarget(firsts[index]?.[0]?.t ?? "", guests) ?? (task.id && /^\d+$/.test(task.id) ? { vmids: [Number(task.id)] } : undefined);
-				if (target === undefined) continue;
-				const fresh = target.vmids.filter((id) => wanted.has(id) && !last.has(id));
-				if (fresh.length === 0) continue;
-				const running = task.endtime === undefined && task.status === undefined;
-				let outcomes = new Map<number, string>();
-				if (!running && task.status !== "OK") {
-					const log = await api<{ t: string }[]>(logPath(task), { start: "0", limit: "5000" }, signal).catch(() => []);
-					outcomes = vzdumpOutcomes(log.map((l) => l.t));
-				}
-				for (const id of fresh) {
-					const result = running ? "running now" : task.status === "OK" ? "OK" : (outcomes.get(id) ?? `the task ended with: ${task.status ?? "?"}`);
-					last.set(id, { at: task.starttime, storage: target.storage, result });
-				}
-			}
-		}
-
-		const listed = [...wanted].sort((a, b) => a - b);
-		const jobGuests = (job: BackupJob) =>
-			job.all
-				? `all guests${job.exclude ? ` except ${job.exclude.split(",").join(", ")}` : ""}`
-				: job.pool
-					? `pool ${job.pool}`
-					: `guests ${(job.vmid ?? "").split(",").join(", ")}`;
-		const relevantJobs = only === undefined ? jobs : jobs.filter((job) => jobVmids(job, guests).includes(only));
-		const notCovered = only === undefined ? (uncovered ?? []) : (uncovered ?? []).filter((g) => g.vmid === only);
-		return text([
-			relevantJobs.length > 0 ? "Backup jobs:" : only !== undefined ? `No backup job covers guest ${only}.` : "No backup jobs.",
-			...relevantJobs.map(
-				(job) =>
-					`- ${job.comment?.trim() || job.id}: ${job.schedule ?? "?"} → ${job.storage ?? "?"}, ${jobGuests(job)}` +
-					`${job.mode ? `, ${job.mode} mode` : ""}${job.enabled === 0 ? " · disabled" : job["next-run"] ? ` · next ${when(job["next-run"])}` : ""}`,
-			),
-			only === undefined && uncovered !== undefined
-				? notCovered.length > 0
-					? `Not in any backup job: ${notCovered.map((g) => `${g.vmid} ${g.name ?? ""}`.trim()).join(", ")}`
-					: "Every guest is in a backup job."
-				: undefined,
-			listed.length > 0 ? `Last backup per guest (from the last ${recent.length} backup tasks, local time):` : undefined,
-			...listed.map((id) => {
-				const guest = byId.get(id);
-				const name = guest ? label(guest) : String(id);
-				const result = last.get(id);
-				return result === undefined
-					? `- ${name}: no backup task for it since ${when(recent.at(-1)?.starttime)}${covered.has(id) ? "; its job may not have run since" : ""}`
-					: `- ${name}: ${result.result} · ${when(result.at)}${result.storage ? ` → ${result.storage}` : ""}`;
-			}),
-			failed.length > 0 ? `Backup tasks that failed in the last 7 days (${failed.length}):` : "No backup task failed in the last 7 days.",
-			...failed.map(taskLine),
-		]);
+		const backups = await backupsData(args.vmid === undefined ? undefined : vmidOf(args.vmid), context.abortSignal);
+		return text(backupsText(backups), backups);
 	},
 });
+
+/** The Proxmox page (`PiRuntime.proxmoxDashboard`): the node, its guests and its backups, read without the model. */
+export async function proxmoxDashboard(): Promise<{ overview: PveOverview; guests: PveGuestList; backups: PveBackups }> {
+	const all = await resources();
+	const [overview, backups] = await Promise.all([overviewData(undefined, all), backupsData(undefined, undefined, all)]);
+	return JSON.parse(JSON.stringify({ overview, guests: await guestsData({}, undefined, all), backups }));
+}
 
 const proxmoxSection = section("proxmox", () => {
 	const config = proxmoxSettings.server;

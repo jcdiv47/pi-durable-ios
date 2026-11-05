@@ -943,6 +943,16 @@ final class ChatStore {
         }
     }
 
+    /// The Proxmox page: the node, its guests and its backups, read in JS the way the pve_* tools read them.
+    func proxmoxDashboard() async throws -> PveDashboard {
+        guard let server = proxmox else { throw ProxmoxFailure("Add your node in Settings › Proxmox.") }
+        guard server.info(hasToken: hasProxmoxToken).ready else {
+            throw ProxmoxFailure("Finish setting up the node in Settings › Proxmox: trust its certificate and save a token.")
+        }
+        guard let harness else { throw ProxmoxFailure("Pi isn't open yet.") }
+        return try await harness.call("PiRuntime.proxmoxDashboard")
+    }
+
     private func applyProxmox() async {
         ProxmoxServerFile.save(proxmox)
         Self.pinProxmox(proxmox)

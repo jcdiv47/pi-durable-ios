@@ -1,6 +1,6 @@
 # ADR 0013: Proxmox VE
 
-Date: 2026-11-05. Status: accepted; step 1 (the reads) is built. Spec: 0001, "Network". Builds on [ADR 0004](0004-http-api-services.md),
+Date: 2026-11-05. Status: accepted; steps 1 (the reads) and 2 (the cards and the Proxmox page) are built. Spec: 0001, "Network". Builds on [ADR 0004](0004-http-api-services.md),
 [ADR 0006](0006-mcp-servers.md) and [ADR 0012](0012-ssh-hosts.md).
 
 ## Context
@@ -166,6 +166,9 @@ Built for step 1:
   unready one (nothing is sent), the prompt section; JS only ever sends `PVEAPIToken=pi-host-key:proxmox`.
 - The six tools against `pve` itself with the read-only token, from Bun.
 
+Built for step 2: the overview and backups tests also check the card data, and a dashboard test reads the page's
+data without a conversation. The dashboard against `pve`, from Bun.
+
 Planned:
 
 - `cd Packages/PiRuntime && swift test`: a fake Proxmox API (a `URLProtocol`), recorded from `pve`, for the tools'
@@ -181,7 +184,14 @@ Planned:
 
 1. Settings › Proxmox, the pinned trust, `ProviderKeys.setProxmoxHost`, and the read tools, with a `PVEAuditor`
    token. Use it for a while. **Done.**
-2. The guest and task cards.
+2. The cards, and the Proxmox page. **Done**, as built: `pve_overview`, `pve_guests` and `pve_backups` return their
+   result as data in `details.card` beside the text the model reads (`detailCardTools` in display.ts), and the chat
+   draws the node card (CPU, memory and root disk rings, guests that aren't running, storages, failed tasks), the
+   guests card and the backups card (`ProxmoxCards`; problems first). The Proxmox page (`ProxmoxView`, the list's More
+   menu, `pidurable://proxmox`) draws all three from `PiRuntime.proxmoxDashboard`, which reads the node the way the
+   tools do, without the model, every 30 seconds while it's open. A guest's context menu asks Pi about it. No
+   overcommit warning: the token can't list a thin pool's volumes, and the guests' configs leave out snapshots and
+   leftover volumes, so a sum from them is wrong (574 GiB against LVM's 878 on `pve`).
 3. The write tools with the replay rules and the `PiOperator` token.
 4. App Intents: guests as entities ("Restart vaultwarden"), from the guest list Swift keeps of the last answer;
    intents run through `ask` with request IDs from their payload.
