@@ -27,6 +27,7 @@
 //   anything else → "You said: …"
 
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxThinking, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
+import { declinedMessage } from "./approvals.ts";
 
 type Transcript = {
 	messages: { role: string; content?: unknown; toolName?: string; isError?: boolean; sections?: Record<string, string | null> }[];
@@ -182,6 +183,9 @@ export function createScriptedModel() {
 			return fauxAssistantMessage(fauxToolCall("set_value", { key: "nudge", value: `Refreshed at ${new Date().toISOString().slice(11, 16)} UTC` }), {
 				stopReason: "toolUse",
 			});
+		}
+		if (results.length > 0 && results.every((r) => r.isError && text(r.content).includes(declinedMessage))) {
+			return fauxAssistantMessage("Okay, I didn't do that. Tell me if you'd like something different.");
 		}
 		if (results.length > 0) {
 			const summary = results.map((r) => `${r.toolName}: ${r.isError ? "error" : "ok"} — ${text(r.content).slice(0, 200)}`);

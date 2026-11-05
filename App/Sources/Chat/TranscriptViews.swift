@@ -243,8 +243,9 @@ struct WorkRow: View {
                     if running {
                         ProgressView().controlSize(.mini)
                     } else {
-                        Image(systemName: results.contains { $0.isError == true } ? "exclamationmark.triangle" : "apple.terminal")
-                            .foregroundStyle(results.contains { $0.isError == true } ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                        let failed = results.contains(where: \.isFailure)
+                        Image(systemName: failed ? "exclamationmark.triangle" : results.contains(where: \.isDeclined) ? "hand.raised" : "apple.terminal")
+                            .foregroundStyle(failed ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
                     }
                     if running, let start = steps.first?.date {
                         TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -302,8 +303,10 @@ struct WorkRow: View {
     private func summary(calls: [ToolCallItem], results: [DisplayItem], running: Bool, seconds: TimeInterval?) -> String {
         let time = seconds.map { " \(Self.elapsed($0))" } ?? ""
         var parts = ["\(running ? "Working" : "Worked")\(time)", calls.count == 1 ? "1 step" : "\(calls.count) steps"]
-        let failed = results.filter { $0.isError == true }.count
+        let failed = results.filter(\.isFailure).count
         if failed > 0 { parts.append("\(failed) failed") }
+        let declined = results.filter(\.isDeclined).count
+        if declined > 0 { parts.append("\(declined) declined") }
         return parts.joined(separator: " · ")
     }
 
@@ -420,6 +423,7 @@ struct ToolCallCard: View {
 
     private var status: (String, Color, String) {
         if let result {
+            if result.isDeclined { return ("hand.raised.fill", .secondary, "Declined") }
             return result.isError == true ? ("xmark.octagon.fill", .red, "Failed") : ("checkmark.circle.fill", .green, "Done")
         }
         if approval != nil { return ("hand.raised.fill", .orange, "Waiting for approval") }
@@ -457,7 +461,10 @@ struct ToolCallCard: View {
             }
             if expanded {
                 Text(prettyJSON(call.arguments)).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
-                if let output = result?.text ?? live?.output, !output.isEmpty {
+                if result?.isDeclined == true {
+                    Divider()
+                    Text("You declined this, so Pi didn't run it.").font(.caption).foregroundStyle(.secondary)
+                } else if let output = result?.text ?? live?.output, !output.isEmpty {
                     Divider()
                     Text(output)
                         .font(.caption.monospaced())

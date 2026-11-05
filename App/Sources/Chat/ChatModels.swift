@@ -67,6 +67,13 @@ struct DisplayItem: Decodable, Identifiable, Hashable {
     var skill: String?
 
     var date: Date? { timestamp.map { Date(timeIntervalSince1970: $0 / 1000) } }
+
+    /// A tool result the approval gate blocked because the user said no (`declinedMessage` in approvals.ts): the user's
+    /// choice, so the transcript says "Declined", not "Failed".
+    var isDeclined: Bool { isError == true && text?.contains("The user declined this action.") == true }
+
+    /// A result that went wrong, as opposed to one the user declined.
+    var isFailure: Bool { isError == true && !isDeclined }
 }
 
 /// An attachment as the transcript shows it; the model got the content itself.
