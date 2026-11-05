@@ -18,6 +18,8 @@ public final class PiHarness: Sendable {
         public var mcpServers: String?
         /// Settings › SSH Hosts, without secrets (`SshHostConfig[]` in `js/src/app/ssh.ts`).
         public var sshHosts: [SSHHostInfo]?
+        /// Settings › Proxmox, without the token or the certificate (`ProxmoxConfig` in `js/src/app/proxmox.ts`).
+        public var proxmox: ProxmoxInfo?
         /// Settings › Instructions: the user's AGENTS.md text, a prompt section in every conversation.
         public var instructions: String?
         /// Settings › Skills: the imported skills (`SkillLibrary.list()`).
@@ -38,6 +40,7 @@ public final class PiHarness: Sendable {
             policies: [String: String]? = nil,
             mcpServers: String? = nil,
             sshHosts: [SSHHostInfo]? = nil,
+            proxmox: ProxmoxInfo? = nil,
             instructions: String? = nil,
             skills: [SkillLibrary.Skill]? = nil,
             appleModels: [AppleIntelligence.Model]? = nil,
@@ -53,11 +56,28 @@ public final class PiHarness: Sendable {
             self.policies = policies
             self.mcpServers = mcpServers
             self.sshHosts = sshHosts
+            self.proxmox = proxmox
             self.instructions = instructions
             self.skills = skills
             self.appleModels = appleModels
             self.intelligenceTitles = intelligenceTitles
             self.toolMs = toolMs
+        }
+    }
+
+    /// The Proxmox VE node as JS sees it (docs/adr/0013-proxmox.md): its address and whether it's ready, never the
+    /// token or the certificate.
+    public struct ProxmoxInfo: Codable, Sendable, Equatable {
+        /// `https://host:8006`.
+        public var url: String
+        /// A token is saved and the certificate trusted.
+        public var ready: Bool
+        public var needsVpn: Bool
+
+        public init(url: String, ready: Bool, needsVpn: Bool) {
+            self.url = url
+            self.ready = ready
+            self.needsVpn = needsVpn
         }
     }
 

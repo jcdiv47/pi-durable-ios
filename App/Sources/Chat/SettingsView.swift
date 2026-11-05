@@ -108,6 +108,14 @@ struct SettingsView: View {
                     }
                 }
                 .accessibilityIdentifier("settings.ssh")
+                NavigationLink {
+                    ProxmoxSettingsView(store: store)
+                } label: {
+                    SettingsRow("Proxmox", systemImage: "cube.box.fill", tint: .orange) {
+                        Text(store.proxmox?.host ?? "None")
+                    }
+                }
+                .accessibilityIdentifier("settings.proxmox")
             } header: {
                 Text("Connections")
             } footer: {

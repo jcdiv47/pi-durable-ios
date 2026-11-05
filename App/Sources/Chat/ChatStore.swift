@@ -58,6 +58,8 @@ final class ChatStore {
     private(set) var sshHosts: [SSHHost] = SSHHostFile.load()
     /// Hosts whose password or key is in the Keychain.
     private(set) var sshSecretIDs: Set<String> = []
+    /// Settings › Proxmox (docs/adr/0013-proxmox.md): the user's node. Its token is the Keychain item `proxmox`.
+    private(set) var proxmox: ProxmoxServer? = ProxmoxServerFile.load()
     /// Settings › Instructions: the user's AGENTS.md, a prompt section in every conversation. Written by hand only.
     private(set) var instructions = InstructionsFile.load()
     /// Settings › Skills: the imported and written skills (docs/adr/0007-instructions-and-skills.md). Changed by hand only.
@@ -174,6 +176,7 @@ final class ChatStore {
         ProviderKeys.setMCPHosts(Self.mcpHosts(mcpServers))
         SSHHostList.shared.set(sshHosts)
         sshSecretIDs = Set(sshHosts.filter(SSHSecrets.has).map(\.id))
+        Self.pinProxmox(proxmox)
         dial = settings.data(forKey: Self.dialKey).flatMap { try? JSONDecoder().decode(GenerativityDial.self, from: $0) } ?? GenerativityDial()
         surfaceHost = SurfaceHost(
             native: native,
@@ -223,7 +226,7 @@ final class ChatStore {
 
     private func start() async {
         importKeysIfPresent()
-        keyedProviders = Set(((Self.providers + Self.services).map(\.id) + mcpServers.map(\.keyName)).filter { keys.hasKey(for: $0) })
+        keyedProviders = Set(((Self.providers + Self.services).map(\.id) + mcpServers.map(\.keyName) + [Self.proxmoxKey]).filter { keys.hasKey(for: $0) })
         do {
             let directory = try SharedContainer.directory("pi")
             let tools = appleTools
@@ -266,6 +269,7 @@ final class ChatStore {
                 policies: settings.dictionary(forKey: "toolPolicies") as? [String: String],
                 mcpServers: mcpServersJSON,
                 sshHosts: sshHostInfos,
+                proxmox: proxmoxInfo,
                 instructions: instructions,
                 skills: skills,
                 appleModels: AppleIntelligence.models(),
@@ -869,6 +873,99 @@ final class ChatStore {
         }
     }
 
+    // MARK: Proxmox
+
+    static let proxmoxKey = "proxmox"
+
+    var hasProxmoxToken: Bool { keyedProviders.contains(Self.proxmoxKey) }
+
+    private var proxmoxInfo: PiHarness.ProxmoxInfo? { proxmox?.info(hasToken: hasProxmoxToken) }
+
+    /// The token may go to the node's host only once its certificate is pinned.
+    private static func pinProxmox(_ server: ProxmoxServer?) {
+        guard let server, let host = server.host, let fingerprint = server.fingerprint else {
+            ProviderKeys.setProxmoxHost(nil)
+            PinnedCertificates.set([:])
+            return
+        }
+        PinnedCertificates.set([host: fingerprint])
+        ProviderKeys.setProxmoxHost(host)
+    }
+
+    /// Saves the node. `token`: a new one for the Keychain; nil keeps the saved one. A new address loses the pinned
+    /// certificate: it may be another server.
+    func saveProxmox(_ server: ProxmoxServer, token: String?) async {
+        var server = server
+        if let previous = proxmox, previous.url != server.url { server.fingerprint = nil }
+        if let token {
+            do {
+                try keys.setKey(token, for: Self.proxmoxKey)
+                keyedProviders.insert(Self.proxmoxKey)
+            } catch {
+                report("save Proxmox token", error)
+            }
+        }
+        proxmox = server
+        await applyProxmox()
+        diagnostics.record("info", "proxmox", "Saved \(server.url)")
+    }
+
+    func trustProxmoxCertificate(_ fingerprint: String) async {
+        guard var server = proxmox else { return }
+        server.fingerprint = fingerprint
+        proxmox = server
+        await applyProxmox()
+        diagnostics.record("info", "proxmox", "Trusted \(server.host ?? "?")'s certificate \(fingerprint)")
+    }
+
+    func removeProxmox() async {
+        try? keys.removeKey(for: Self.proxmoxKey)
+        keyedProviders.remove(Self.proxmoxKey)
+        proxmox = nil
+        await applyProxmox()
+    }
+
+    /// Settings' "Test Connection", with the saved token and the pinned certificate.
+    func testProxmox() async throws -> ProxmoxAbout {
+        guard let server = proxmox else { throw ProxmoxFailure("Add the node first.") }
+        guard server.fingerprint != nil else { throw ProxmoxFailure("Trust the node's certificate first.") }
+        guard let token = keys.apiKey(for: Self.proxmoxKey), !token.isEmpty else { throw ProxmoxFailure("Save a token first.") }
+        do {
+            let about = try await ProxmoxClient.test(server, token: token)
+            diagnostics.record("info", "proxmox", "\(server.host ?? "?"): \(about.version); \(about.privileges.count) privileges")
+            return about
+        } catch {
+            diagnostics.record("warn", "proxmox", "\(server.host ?? "?"): \(error)")
+            if server.needsVpn, !VPNStatus.tunnelUp(), String(describing: error).contains("Can't reach") {
+                throw ProxmoxFailure("\(error) The VPN looks off.")
+            }
+            throw error
+        }
+    }
+
+    /// The Proxmox page: the node, its guests and its backups, read in JS the way the pve_* tools read them.
+    func proxmoxDashboard() async throws -> PveDashboard {
+        guard let server = proxmox else { throw ProxmoxFailure("Add your node in Settings › Proxmox.") }
+        guard server.info(hasToken: hasProxmoxToken).ready else {
+            throw ProxmoxFailure("Finish setting up the node in Settings › Proxmox: trust its certificate and save a token.")
+        }
+        guard let harness else { throw ProxmoxFailure("Pi isn't open yet.") }
+        return try await harness.call("PiRuntime.proxmoxDashboard")
+    }
+
+    private func applyProxmox() async {
+        ProxmoxServerFile.save(proxmox)
+        Self.pinProxmox(proxmox)
+        guard let harness else { return }
+        do {
+            // Removed: an empty address.
+            let info = proxmoxInfo ?? PiHarness.ProxmoxInfo(url: "", ready: false, needsVpn: false)
+            try await harness.perform("PiRuntime.setProxmox", [try harness.jsonArgument(info)])
+        } catch {
+            report("Proxmox", error)
+        }
+    }
+
     // MARK: Tasks
 
     func refreshTasks() async {
@@ -1274,7 +1371,7 @@ final class ChatStore {
     /// it moves into the Keychain here and the file is deleted.
     private func importKeysIfPresent() {
         #if DEBUG
-        for (provider, _) in Self.providers + Self.services {
+        for provider in (Self.providers + Self.services).map(\.id) + [Self.proxmoxKey] {
             let url = M0Files.url("import-\(provider).key")
             guard let key = try? String(contentsOf: url, encoding: .utf8) else { continue }
             try? FileManager.default.removeItem(at: url)

@@ -16,6 +16,8 @@ export const services = {
 	deepseek: { id: "deepseek", name: "DeepSeek" },
 	// Brave's free plan: 1 request per second (and 2,000 a month, capped in Swift).
 	brave: { id: "brave", name: "Brave Search", minIntervalMs: 1100 },
+	// The user's own node (docs/adr/0013-proxmox.md); its host is set from Swift, as `custom`'s is.
+	proxmox: { id: "proxmox", name: "Proxmox VE" },
 } satisfies Record<string, Service>;
 
 /** The value to put where the service's key goes; also valid inside a URL query. */
@@ -70,6 +72,8 @@ export class ServiceError extends Error {
 	constructor(
 		message: string,
 		readonly status?: number,
+		/** The API's own error text, if it sent one. */
+		readonly detail?: string,
 	) {
 		super(message);
 		this.name = "ServiceError";
@@ -99,7 +103,7 @@ function failure(service: Service, status: number, body: string): ServiceError {
 					: status >= 500
 						? "the service had an error. Try again later."
 						: "the request was rejected.";
-	return new ServiceError(`${service.name}: ${why}${detail ? ` (${status}: ${detail})` : ` (${status})`}`, status);
+	return new ServiceError(`${service.name}: ${why}${detail ? ` (${status}: ${detail})` : ` (${status})`}`, status, detail || undefined);
 }
 
 /**
