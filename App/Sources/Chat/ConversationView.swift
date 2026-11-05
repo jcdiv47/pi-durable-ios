@@ -26,6 +26,8 @@ struct ConversationView: View {
     @State private var voice = VoiceInput()
     /// Counts messages sent from the composer, for the send haptic.
     @State private var sent = 0
+    /// The screen's width, which bounds the header (see `header`).
+    @State private var width: CGFloat = 0
 
     private var state: ConversationState { store.state(conversationId) }
     private var meta: ConversationMeta? { store.meta(conversationId) }
@@ -100,6 +102,7 @@ struct ConversationView: View {
         .toolbar {
             ToolbarItem(placement: .principal) { header }
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .onAppear {
             store.conversationAppeared(conversationId)
             store.watch(conversationId)
@@ -145,6 +148,9 @@ struct ConversationView: View {
             .foregroundStyle(.secondary)
             .lineLimit(1)
         }
+        // The bar lays a principal item out at its ideal width after a cancelled back swipe, and a long title's
+        // ideal width runs past the screen. Capped to the room between the back buttons, the title truncates instead.
+        .frame(maxWidth: width > 0 ? max(width - 136, 120) : nil)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("conversation.header")
     }
