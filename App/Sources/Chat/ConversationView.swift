@@ -249,7 +249,7 @@ struct ConversationView: View {
     /// The height of a one-line field, and of the Attach button beside it.
     private static let fieldHeight: CGFloat = 44
 
-    /// As Messages: Attach in a circle beside the field, and Send (or Stop) inside the field's trailing end.
+    /// Attach in a circle before the field, and Send (or Stop) in one after it, always there.
     private var composer: some View {
         VStack(spacing: 8) {
             if !state.queue.isEmpty { queue }
@@ -264,6 +264,7 @@ struct ConversationView: View {
                 HStack(alignment: .bottom, spacing: 8) {
                     attachMenu
                     field
+                    primaryButton
                 }
             }
         }
@@ -314,12 +315,6 @@ struct ConversationView: View {
                         .accessibilityIdentifier("composer")
                     if draft.isEmpty {
                         micButton
-                            .padding(.vertical, 6)
-                            .padding(.trailing, hasDraft || state.live.busy ? 0 : 6)
-                            .transition(.opacity)
-                    }
-                    if hasDraft || state.live.busy {
-                        primaryButton
                             .padding(6)
                             .transition(.opacity)
                     }
@@ -401,9 +396,11 @@ struct ConversationView: View {
         }
     }
 
-    /// Send, or Stop while an answer runs and the field is empty. Text typed during an answer is queued.
+    /// Send, or Stop while an answer runs and the field is empty. Text typed during an answer is queued. Dimmed while
+    /// there is nothing to send, attachments are loading, or voice input is on.
     private var primaryButton: some View {
         let stops = state.live.busy && !hasDraft
+        let enabled = stops || (hasDraft && attaching == 0 && voice.phase == .idle)
         return Button {
             if stops {
                 Task { await store.abort(conversationId) }
@@ -420,16 +417,16 @@ struct ConversationView: View {
             }
         } label: {
             Image(systemName: stops ? "stop.fill" : "arrow.up")
-                .font(.system(size: stops ? 13 : 16, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: 32, height: 32)
-                .background(.tint, in: .circle)
+                .font(.system(size: stops ? 15 : 18, weight: .bold))
+                .foregroundStyle(enabled ? AnyShapeStyle(.white) : AnyShapeStyle(.tertiary))
+                .frame(width: Self.fieldHeight, height: Self.fieldHeight)
                 .contentTransition(.symbolEffect(.replace))
+                .glassEffect(enabled ? .regular.tint(.accentColor).interactive() : .regular, in: .circle)
         }
         .buttonStyle(.plain)
-        .disabled(!stops && attaching > 0)
-        .opacity(!stops && attaching > 0 ? 0.4 : 1)
+        .disabled(!enabled)
         .animation(.snappy, value: stops)
+        .animation(.snappy, value: enabled)
         .accessibilityLabel(stops ? "Stop" : state.live.busy ? "Queue" : "Send")
         .accessibilityIdentifier(stops ? "stop" : "send")
     }
