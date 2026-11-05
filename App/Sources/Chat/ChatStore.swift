@@ -394,6 +394,16 @@ final class ChatStore {
     /// The newest conversation nothing was ever sent in: the compose button opens it instead of making another.
     var unusedConversation: ConversationMeta? { conversations.first { !$0.started } }
 
+    /// Opens a conversation with `text` in its composer, to edit and send: the unused one if there is one, else a new one.
+    /// Empty pages (no scheduled tasks, no alarms) use it to show what to ask.
+    func compose(_ text: String) async {
+        var id = unusedConversation?.id
+        if id == nil { id = await newConversation()?.id }
+        guard let id else { return }
+        drafts[id] = Draft(text: text, attachments: [])
+        open(.conversation(id))
+    }
+
     func newConversation() async -> ConversationMeta? {
         guard let harness else { return nil }
         do {

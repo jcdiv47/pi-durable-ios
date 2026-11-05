@@ -215,7 +215,8 @@ struct ChatTests {
         try await until { !log.busy(meta.id) && log.items(meta.id).count >= 8 }
         let denied = log.last(meta.id, kind: "toolResult")
         #expect(denied?["isError"] as? Bool == true)
-        #expect((denied?["text"] as? String)?.contains("declined") == true)
+        #expect((denied?["text"] as? String)?.contains("The user declined this action.") == true, "DisplayItem.isDeclined matches this text")
+        #expect((log.last(meta.id, kind: "assistant")?["text"] as? String)?.hasPrefix("Okay, I didn't do that.") == true)
         #expect(log.calls("calendar.createEvent") == 1, "a denied call never reaches Swift")
         try await harness.close()
     }

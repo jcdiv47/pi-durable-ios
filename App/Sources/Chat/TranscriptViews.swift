@@ -45,6 +45,68 @@ enum TranscriptRow: Identifiable {
         }
         return rows
     }
+
+    /// The answers that end a turn: an assistant message with text whose next row is the user's (or nothing, once the run
+    /// is over). These get the Copy, Share and Fork buttons; answers in the middle of a turn keep them in the long-press menu.
+    static func turnEnds(_ rows: [TranscriptRow], busy: Bool) -> Set<Int> {
+        var ends: Set<Int> = []
+        for (index, row) in rows.enumerated() {
+            guard case let .item(item, _) = row, item.kind == .assistant, !(item.text ?? "").isEmpty else { continue }
+            let next = rows.dropFirst(index + 1).first
+            switch next {
+            case nil: if !busy { ends.insert(item.id) }
+            case let .item(following, _)? where following.kind == .user: ends.insert(item.id)
+            default: break
+            }
+        }
+        return ends
+    }
+}
+
+/// Under an answer that ends a turn: Copy (which turns into a check for a moment), Share and Fork, small and quiet so
+/// they read as tools for the answer above, not as part of it.
+struct AnswerActions: View {
+    let text: String
+    let fork: () -> Void
+    @State private var copied = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Button {
+                UIPasteboard.general.string = text
+                copied = true
+                Task {
+                    try? await Task.sleep(for: .seconds(1.5))
+                    copied = false
+                }
+            } label: {
+                Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    .contentTransition(.symbolEffect(.replace))
+                    .frame(width: 32, height: 32)
+                    .contentShape(.rect)
+            }
+            .accessibilityLabel(copied ? "Copied" : "Copy")
+            ShareLink(item: text) {
+                Image(systemName: "square.and.arrow.up")
+                    .frame(width: 32, height: 32)
+                    .contentShape(.rect)
+            }
+            .accessibilityLabel("Share")
+            Button(action: fork) {
+                Image(systemName: "arrow.triangle.branch")
+                    .frame(width: 32, height: 32)
+                    .contentShape(.rect)
+            }
+            .accessibilityLabel("Fork from here")
+        }
+        .buttonStyle(.plain)
+        .font(.footnote.weight(.medium))
+        .foregroundStyle(.secondary)
+        .padding(.leading, -8)
+        .padding(.top, -6)
+        .sensoryFeedback(.success, trigger: copied) { _, new in new }
+        .accessibilityIdentifier("answer.actions")
+    }
 }
 
 /// One committed transcript entry.
@@ -181,8 +243,9 @@ struct WorkRow: View {
                     if running {
                         ProgressView().controlSize(.mini)
                     } else {
-                        Image(systemName: results.contains { $0.isError == true } ? "exclamationmark.triangle" : "apple.terminal")
-                            .foregroundStyle(results.contains { $0.isError == true } ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                        let failed = results.contains(where: \.isFailure)
+                        Image(systemName: failed ? "exclamationmark.triangle" : results.contains(where: \.isDeclined) ? "hand.raised" : "apple.terminal")
+                            .foregroundStyle(failed ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
                     }
                     if running, let start = steps.first?.date {
                         TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -240,8 +303,10 @@ struct WorkRow: View {
     private func summary(calls: [ToolCallItem], results: [DisplayItem], running: Bool, seconds: TimeInterval?) -> String {
         let time = seconds.map { " \(Self.elapsed($0))" } ?? ""
         var parts = ["\(running ? "Working" : "Worked")\(time)", calls.count == 1 ? "1 step" : "\(calls.count) steps"]
-        let failed = results.filter { $0.isError == true }.count
+        let failed = results.filter(\.isFailure).count
         if failed > 0 { parts.append("\(failed) failed") }
+        let declined = results.filter(\.isDeclined).count
+        if declined > 0 { parts.append("\(declined) declined") }
         return parts.joined(separator: " · ")
     }
 
@@ -358,6 +423,7 @@ struct ToolCallCard: View {
 
     private var status: (String, Color, String) {
         if let result {
+            if result.isDeclined { return ("hand.raised.fill", .secondary, "Declined") }
             return result.isError == true ? ("xmark.octagon.fill", .red, "Failed") : ("checkmark.circle.fill", .green, "Done")
         }
         if approval != nil { return ("hand.raised.fill", .orange, "Waiting for approval") }
@@ -382,18 +448,23 @@ struct ToolCallCard: View {
             }
             .buttonStyle(.plain)
             if let approval {
-                // The same glass buttons as the approval sheet.
+                Text("\(ToolTitles.action(for: call.name))?")
+                    .font(.subheadline.weight(.semibold))
+                // The same glass buttons as the approval sheet, Deny first as there.
                 GlassEffectContainer {
                     HStack {
-                        Button("Allow") { Task { await store.answer(approval, allow: true) } }.buttonStyle(.glassProminent).tint(.green)
                         Button("Deny", role: .destructive) { Task { await store.answer(approval, allow: false) } }.buttonStyle(.glass)
+                        Button("Allow") { Task { await store.answer(approval, allow: true) } }.buttonStyle(.glassProminent).tint(.green)
                     }
                 }
                 .controlSize(.small)
             }
             if expanded {
                 Text(prettyJSON(call.arguments)).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
-                if let output = result?.text ?? live?.output, !output.isEmpty {
+                if result?.isDeclined == true {
+                    Divider()
+                    Text("You declined this, so Pi didn't run it.").font(.caption).foregroundStyle(.secondary)
+                } else if let output = result?.text ?? live?.output, !output.isEmpty {
                     Divider()
                     Text(output)
                         .font(.caption.monospaced())

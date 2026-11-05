@@ -10,21 +10,20 @@ struct SurfacesView: View {
         Form {
             Section {
                 if store.published.isEmpty {
-                    Text("Nothing published yet. Ask Pi to design a widget, then add the Pi widget to your Home Screen or Lock Screen and choose it in the widget's settings.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Nothing published yet. Ask Pi to design a widget, then add the Pi widget to your Home Screen or Lock Screen and choose it in the widget's settings.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        Button("Design a Widget", systemImage: "square.and.pencil") {
+                            Task { await store.compose("Make a Home Screen widget that shows ") }
+                        }
+                        .buttonStyle(.glassProminent)
+                    }
+                    .padding(.vertical, 4)
                 }
                 ForEach(store.published) { entry in
                     NavigationLink(value: Route.surface(entry.publishedId)) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(entry.title).font(.headline)
-                            Text(entry.families.compactMap(SurfaceFamily.init(rawValue:)).map(\.displayName).joined(separator: ", "))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text("Version \(entry.version) · \(Date(timeIntervalSince1970: entry.publishedAt / 1000), format: .relative(presentation: .named))")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                        }
+                        PublishedRow(entry: entry, store: store)
                     }
                     .swipeActions {
                         Button("Remove", systemImage: "rectangle.badge.minus", role: .destructive) {
@@ -37,8 +36,8 @@ struct SurfacesView: View {
             }
 
             Section {
-                NavigationLink(value: Route.gallery) { Label("Component gallery", systemImage: "square.grid.3x3") }
-                NavigationLink(value: Route.tuning) { Label("Design tuning", systemImage: "slider.horizontal.3") }
+                NavigationLink(value: Route.gallery) { SettingsRow("Component Gallery", systemImage: "square.grid.3x3.fill", tint: .blue) }
+                NavigationLink(value: Route.tuning) { SettingsRow("Design Tuning", systemImage: "slider.horizontal.3", tint: .gray) }
             } footer: {
                 Text("Every component Pi can use, in each size, and what the log of Pi's designs says about the levels below.")
             }
@@ -67,8 +66,66 @@ struct SurfacesView: View {
             }
         }
         .navigationTitle("Widgets")
-        .task { await store.refreshPublished() }
-        .refreshable { await store.refreshPublished() }
+        // The thumbnails draw native and $doc values too.
+        .task {
+            await store.refreshPublished()
+            await store.refreshSurfaceData()
+        }
+        .refreshable {
+            await store.refreshPublished()
+            await store.refreshSurfaceData(force: true)
+        }
+    }
+}
+
+/// A published widget: how it looks (its first Home Screen size, drawn small), its title, and where it can go.
+private struct PublishedRow: View {
+    let entry: PublishedEntry
+    let store: ChatStore
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var families: [SurfaceFamily] { entry.families.compactMap(SurfaceFamily.init(rawValue:)) }
+
+    var body: some View {
+        HStack(spacing: 14) {
+            thumbnail
+            VStack(alignment: .leading, spacing: 3) {
+                Text(entry.title).font(.headline)
+                Text(summary)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Text("Version \(entry.version) · \(Date(timeIntervalSince1970: entry.publishedAt / 1000), format: .relative(presentation: .named))")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    /// "Home Screen: small, medium · Lock Screen" rather than every family's full name.
+    private var summary: String {
+        let home = families.filter { !$0.isAccessory && $0 != .card }.map { $0.displayName.replacingOccurrences(of: "Home Screen ", with: "") }
+        var parts: [String] = []
+        if !home.isEmpty { parts.append("Home Screen: \(home.joined(separator: ", "))") }
+        if families.contains(where: \.isAccessory) { parts.append("Lock Screen") }
+        return parts.joined(separator: " · ")
+    }
+
+    @ViewBuilder private var thumbnail: some View {
+        let height: CGFloat = 64
+        if let family = families.first(where: { !$0.isAccessory && $0 != .card }), let surface = SurfaceStore.shared?.surface(entry.publishedId) {
+            let size = family.size
+            let scale = height / size.height
+            FramedSurface(spec: surface.parsed, family: family, appearance: colorScheme == .dark ? .dark : .light, data: store.surfaceData)
+                .frame(width: size.width, height: size.height)
+                .scaleEffect(scale, anchor: .topLeading)
+                .frame(width: size.width * scale, height: height, alignment: .topLeading)
+                .overlay(RoundedRectangle(cornerRadius: 24 * scale, style: .continuous).strokeBorder(.separator, lineWidth: 0.5))
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        } else {
+            SettingsIcon(systemImage: "lock.rectangle", tint: .indigo, size: 44)
+        }
     }
 }
 

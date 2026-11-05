@@ -22,6 +22,9 @@ export type ApprovalRequest = {
 };
 
 /** Tools that ask by default: writes the user should see first. */
+/** Why a declined call is blocked: the model reads it, and the transcript (`DisplayItem.isDeclined`) shows "Declined". */
+export const declinedMessage = "The user declined this action.";
+
 export const defaultPolicies: Record<string, ToolPolicy> = {
 	calendar_create_event: "ask",
 	reminders_create: "ask",
@@ -130,7 +133,7 @@ export class Approvals {
 							);
 							decision = await api.memo<Decision>("approval", answered, context);
 						}
-						return decision === "allow" ? undefined : { block: "The user declined this action." };
+						return decision === "allow" ? undefined : { block: declinedMessage };
 					},
 				}),
 			],

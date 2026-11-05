@@ -13,7 +13,8 @@ decisions that change the spec go in `docs/adr/`.
 - `App/Sources/Chat/`: the chat app (`ChatStore.shared` owns the Harness; conversation list, transcript,
   approval sheet, settings, diagnostics, scheduled tasks, the component gallery and design tuning). The transcript
   folds tool calls into "Worked" rows (`TranscriptRow`), draws Apple tool results as native cards (`ResultCards`,
-  from `cardTools` in display.ts) and assistant text as Markdown (`MarkdownText`). The composer's mic (`VoiceInput`)
+  from `cardTools` in display.ts) and assistant text as Markdown (`MarkdownText`). Approvals lead with what a tool does in words (`ToolTitles`, `ApprovalDetails`), the tool's
+  name second; the list groups conversations by date (`ConversationSections`), as Notes does. The composer's mic (`VoiceInput`)
   records, and OpenAI's transcription (`gpt-transcribe`, the `openai` provider key, sent from Swift) fills the field.
   Links go through the root's `openURL` action: with Settings › Links on Pi, web links push `Route.browser`
   (`BrowserView`, a SwiftUI `WebPage`), so the stack's edge swipe returns to the chat.
