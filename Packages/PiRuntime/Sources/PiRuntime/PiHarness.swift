@@ -170,6 +170,8 @@ public final class PiHarness: Sendable {
     /// Creates a runtime and evaluates the bundle (`pi-runtime.js`) in it.
     public static func load(bundle url: URL, options: JSRuntime.Options = .init()) async throws -> PiHarness {
         let source = try String(contentsOf: url, encoding: .utf8)
+        var options = options
+        options.resourceDirectory = options.resourceDirectory ?? url.deletingLastPathComponent()
         let runtime = JSRuntime(options: options)
         let start = ContinuousClock.now
         try await runtime.evaluate(source, sourceURL: url)

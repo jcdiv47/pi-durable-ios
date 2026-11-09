@@ -99,8 +99,28 @@ enum M0Runner {
             report["widgetsOnScreen"] = configurations.map { "\($0.kind) \($0.family)" }
         }
         report["provisioningProfile"] = embeddedProfile()
+        report["webAssembly"] = webAssemblyCheck()
         try M0Files.writeJSON("capabilities.json", report)
         model.status = "Capabilities written to Documents/m0/capabilities.json"
+    }
+
+    /// Whether a bare JSContext (no JIT on a device) has WebAssembly: Code Mode's QuickJS sandbox needs it.
+    private static func webAssemblyCheck() -> [String: Any] {
+        guard let context = JSContext() else { return ["ok": false, "error": "no JSContext"] }
+        // (module (func (export "add") (param i32 i32) (result i32) local.get 0 local.get 1 i32.add))
+        let result = context.evaluateScript("""
+        (() => {
+          if (typeof WebAssembly !== "object") return { ok: false, typeof: typeof WebAssembly };
+          try {
+            const bytes = new Uint8Array([0,97,115,109,1,0,0,0,1,7,1,96,2,127,127,1,127,3,2,1,0,7,7,1,3,97,100,100,0,0,10,9,1,7,0,32,0,32,1,106,11]);
+            const instance = new WebAssembly.Instance(new WebAssembly.Module(bytes), {});
+            return { ok: instance.exports.add(2, 3) === 5, typeof: "object", async: typeof WebAssembly.instantiate };
+          } catch (error) {
+            return { ok: false, typeof: "object", error: String(error) };
+          }
+        })()
+        """)
+        return (result?.toDictionary() as? [String: Any]) ?? ["ok": false, "error": String(describing: context.exception)]
     }
 
     private static var isSimulator: Bool {
@@ -315,8 +335,44 @@ enum M0Runner {
         report["footprintPeakDuringRunMB"] = peak
         report["footprintSamples"] = samples
         report["footprintAfterRunMB"] = ProcessMetrics.footprintMB()
+        model.status = "Measuring: Code Mode…"
+        report["codeMode"] = try await codeModeBenchmark(harness)
+        report["footprintAfterCodeModeMB"] = ProcessMetrics.footprintMB()
         try M0Files.writeJSON("metrics.json", report)
         model.status = "Measurements written to Documents/m0/metrics.json"
+    }
+
+    /// Code Mode scripts through the offline model's "code" cue: the first compiles QuickJS (a cold start), the second
+    /// is warm, the third computes, which shows QuickJS's speed when it is itself interpreted (no JIT on a device).
+    private static func codeModeBenchmark(_ harness: PiHarness) async throws -> [String: Any] {
+        struct Meta: Decodable { let id: Int }
+        struct Frame: Decodable {
+            struct Item: Decodable { let kind: String; let toolName: String?; let text: String?; let isError: Bool? }
+            let items: [Item]
+        }
+        let scripts = [
+            ("first", "return 1"),
+            ("warm", "return 2"),
+            ("loop1e5", "let s = 0; for (let i = 0; i < 1e5; i++) s += i % 7; text(String(s))"),
+        ]
+        var results: [String: Any] = [:]
+        for (index, (name, code)) in scripts.enumerated() {
+            let meta: Meta = try await harness.call("PiRuntime.createConversation", ["scripted", "assistant"])
+            let start = ContinuousClock.now
+            try await harness.perform("PiRuntime.send", [meta.id, "code \(code)", "measure-code-\(index)"])
+            var result: Frame.Item?
+            while result == nil, ContinuousClock.now - start < .seconds(120) {
+                try await Task.sleep(for: .milliseconds(50))
+                let frame: Frame = try await harness.call("PiRuntime.transcript", [meta.id])
+                result = frame.items.first { $0.kind == "toolResult" && $0.toolName == "codemode" }
+            }
+            results[name] = [
+                "totalMs": (ContinuousClock.now - start).milliseconds,
+                "isError": result?.isError ?? true,
+                "output": String((result?.text ?? "no result in 120 s").prefix(300)),
+            ]
+        }
+        return results
     }
 
     /// A CPU-bound loop plus JSON work: shows the cost of running without the JIT.

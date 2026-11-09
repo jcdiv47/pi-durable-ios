@@ -448,8 +448,18 @@ struct ToolCallCard: View {
             }
             .buttonStyle(.plain)
             if let approval {
-                Text("\(ToolTitles.action(for: call.name))?")
+                // A Code Mode script's call asks on the codemode row: name the script's tool and what it would do.
+                Text("\(ToolTitles.action(for: approval.tool))?")
                     .font(.subheadline.weight(.semibold))
+                if approval.tool != call.name {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("From the script: \(approval.tool)").font(.caption.monospaced())
+                        ForEach(ApprovalDetails.rows(approval.arguments), id: \.key) { row in
+                            Text("\(row.label): \(row.value)").font(.caption).lineLimit(2)
+                        }
+                    }
+                    .foregroundStyle(.secondary)
+                }
                 // The same glass buttons as the approval sheet, Deny first as there.
                 GlassEffectContainer {
                     HStack {
@@ -460,7 +470,7 @@ struct ToolCallCard: View {
                 .controlSize(.small)
             }
             if expanded {
-                Text(prettyJSON(call.arguments)).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+                Text(call.name == "codemode" ? scriptCode(call.arguments) : prettyJSON(call.arguments)).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
                 if result?.isDeclined == true {
                     Divider()
                     Text("You declined this, so Pi didn't run it.").font(.caption).foregroundStyle(.secondary)

@@ -48,6 +48,10 @@ targets:
       - path: App/Resources/pi-conformance.js
         optional: true
         buildPhase: resources
+      # Code Mode's QuickJS sandbox, copied from quickjs-wasi by the same phase; read on the first script.
+      - path: App/Resources/quickjs.wasm
+        optional: true
+        buildPhase: resources
       # Photo search's MobileCLIP encoders and CLIP tokenizer, from scripts/fetch-mobileclip.sh (not checked in: too
       # big, and under Apple's sample code license; docs/adr/0010-photo-search.md). Without them the app downloads them
       # in Settings › Photo Search (docs/adr/0011-download-mobileclip.md).

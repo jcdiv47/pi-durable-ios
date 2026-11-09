@@ -433,6 +433,14 @@ extension JSONValue {
 }
 
 /// Pretty JSON text for a tool call's arguments, as the model sent them.
+/// A `codemode` call's script as written, rather than as an escaped JSON string.
+func scriptCode(_ arguments: String) -> String {
+    guard let object = try? JSONSerialization.jsonObject(with: Data(arguments.utf8)) as? [String: Any],
+          let code = object["code"] as? String
+    else { return prettyJSON(arguments) }
+    return code
+}
+
 func prettyJSON(_ text: String) -> String {
     guard let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)),
           let data = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])

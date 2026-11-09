@@ -24,13 +24,17 @@ public final class JSRuntime: @unchecked Sendable {
         /// Hosts served in this process instead of the network (lowercased), such as Apple Intelligence's
         /// OpenAI-compatible endpoint (docs/adr/0008-apple-intelligence.md). `fetch` to one never leaves the device.
         public var localHosts: [String: any LocalHTTPService]
+        /// Where `__native.readResource(name)` reads files by plain name, such as Code Mode's `quickjs.wasm`.
+        /// `PiHarness.load` sets it to the bundle's directory when nil.
+        public var resourceDirectory: URL?
         public init(
             keys: ProviderKeySource? = nil,
             usage: ServiceUsage? = nil,
             onEvent: (@Sendable (String) -> Void)? = nil,
             onLog: (@Sendable (String, String) -> Void)? = nil,
             hostCall: HostCallHandler? = nil,
-            localHosts: [String: any LocalHTTPService] = [:]
+            localHosts: [String: any LocalHTTPService] = [:],
+            resourceDirectory: URL? = nil
         ) {
             self.keys = keys
             self.usage = usage
@@ -38,6 +42,7 @@ public final class JSRuntime: @unchecked Sendable {
             self.onLog = onLog
             self.hostCall = hostCall
             self.localHosts = localHosts
+            self.resourceDirectory = resourceDirectory
         }
     }
 
@@ -280,6 +285,17 @@ public final class JSRuntime: @unchecked Sendable {
             return JSValue(object: String(decoding: data, as: UTF8.self), in: context)
         }
         set("utf8Decode", utf8Decode)
+
+        // Bytes of a file in `resourceDirectory`, by plain name only (no paths), or null.
+        let readResource: @convention(block) (String) -> JSValue = { [weak self] name in
+            let context = JSContext.current()!
+            guard let directory = self?.options.resourceDirectory,
+                  !name.isEmpty, !name.contains("/"), !name.hasPrefix("."),
+                  let data = try? Data(contentsOf: directory.appendingPathComponent(name), options: .mappedIfSafe)
+            else { return JSValue(nullIn: context) }
+            return JSBytes.uint8Array(data, in: context)
+        }
+        set("readResource", readResource)
 
         let fetchStart: @convention(block) (Int, JSValue) -> Void = { [weak self] id, request in
             guard let self else { return }

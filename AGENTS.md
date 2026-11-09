@@ -77,7 +77,9 @@ decisions that change the spec go in `docs/adr/`.
   and `notify_schedule` (`schedule.ts`), the web tools (`web.ts`: `web_search` through DeepSeek or Brave,
   `web_fetch` through DeepSeek Fetch) over keyed HTTP services (`services.ts`), SSH tools (`ssh.ts`: `ssh_exec`, `ssh_job`), the Proxmox VE reads (`proxmox.ts`: `pve_*`), MCP servers (`mcp.ts`: a Streamable
   HTTP client and the `mcp` extension, [ADR 0006](docs/adr/0006-mcp-servers.md)), the user's instructions and skills
-  (`instructions.ts`, `skills.ts`: prompt sections, `skill_read`, `skill_file`), the approval gate and the offline
+  (`instructions.ts`, `skills.ts`: prompt sections, `skill_read`, `skill_file`), Code Mode (`codemode.ts`: the
+  `codemode` tool, scripts that call the other tools in QuickJS-wasm, read from the bundle resource `quickjs.wasm` on
+  the first script; [ADR 0014](docs/adr/0014-code-mode.md)), the approval gate and the offline
   `scripted/assistant` model. `chat.ts`
   also has the entry points outside the chat (`ask` from intents and notification replies, `widgetAction`,
   `runSchedule`).
@@ -173,6 +175,11 @@ intended rendering change, re-record with `PI_RECORD_SNAPSHOTS=1 swift test` and
   generic API tool ([ADR 0013](docs/adr/0013-proxmox.md)).
 - Instructions and skills are written, edited, imported and removed only by the user, in Settings; no tool may change them, and
   a skill's scripts never run. Skill files are read only through `SkillLibrary`, which keeps paths inside the skill.
+- Code Mode scripts reach only the conversation's tools; every nested call goes through the approval gate, and its
+  request carries the `codemode` call's ID. QuickJS runs on the JS queue, so keep its interrupt budget: a script that
+  computes holds the queue. JSC's async WebAssembly API never settles there (`polyfills.ts` wraps the synchronous
+  one), and bytes in wasm memory reach Swift only through copies (`JSBytes`)
+  ([ADR 0014](docs/adr/0014-code-mode.md)).
 - The `SqliteDatabase` facade must keep passing both Pi's storage conformance suite and
   `js/test/facade-cases.ts` (Pi's suite does not exercise rollback).
 - A new component, prop, family rule or data source goes in PiUI's catalog (`Schema/`), with a sample slot in

@@ -16,6 +16,7 @@ import { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
 import { AppleTools, appleToolInfo } from "./app/apple.ts";
 import { Approvals, type Decision, defaultPolicies, type ToolPolicy } from "./app/approvals.ts";
 import type { InputAttachment } from "./app/attachments.ts";
+import { CodeModeTools, codeModeToolInfo } from "./app/codemode.ts";
 import { Chat, intelligenceSettings, type OutsideInput, type WidgetAction } from "./app/chat.ts";
 import { InstructionsExtension, instructionsSettings } from "./app/instructions.ts";
 import { McpHost, type McpServerConfig } from "./app/mcp.ts";
@@ -118,6 +119,7 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 	skills.setSkills([...(options.skills ?? [])]);
 	const scheduleTools = ScheduleTools((taskId) => requireOpen().harness.abortTask(taskId as never, context));
 	registry.install(scheduleTools);
+	registry.install(CodeModeTools);
 	registry.install(approvalGate);
 
 	const storage = await SqliteStorage.open(openIOSSqliteDatabase(options.dbPath), { prefix: "pi_" });
@@ -143,7 +145,7 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 	root = await harness.root(context, {
 		agent: { model: { provider: options.provider, modelId: options.modelId }, extensions: [KillTestTools(0)] },
 	});
-	chat = new Chat(harness, approvals, [AppleTools, SurfaceTools, WebTools, SshTools, ProxmoxTools, mcp.extension, scheduleTools, InstructionsExtension, skills.extension, approvalGate], emit, (model, level) =>
+	chat = new Chat(harness, approvals, [AppleTools, SurfaceTools, WebTools, SshTools, ProxmoxTools, mcp.extension, scheduleTools, InstructionsExtension, skills.extension, CodeModeTools, approvalGate], emit, (model, level) =>
 		setup.clampThinking(model, level),
 	);
 	await chat.upgrade();
@@ -372,7 +374,7 @@ const app = {
 	answerApproval: async (id: number, decision: Decision) => requireChat().answerApproval(id, decision),
 	setPolicies: async (policies: Record<string, ToolPolicy>) => requireChat().setPolicies(policies),
 	tools: async () =>
-		[...appleToolInfo, ...webToolInfo, ...sshToolInfo, ...proxmoxToolInfo, ...surfaceToolInfo, ...scheduleToolInfo, ...mcp.toolInfo()].map((tool) => ({
+		[...appleToolInfo, ...webToolInfo, ...sshToolInfo, ...proxmoxToolInfo, ...surfaceToolInfo, ...scheduleToolInfo, ...codeModeToolInfo, ...mcp.toolInfo()].map((tool) => ({
 			...tool,
 			policy: approvals.policy(tool.name),
 		})),

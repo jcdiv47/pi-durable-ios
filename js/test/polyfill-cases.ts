@@ -164,6 +164,24 @@ export function createPolyfillCases(t: StorageConformanceAssertions): Case[] {
 			},
 		},
 		{
+			name: "WebAssembly.compile and instantiate settle on the JS queue",
+			async run() {
+				// (module (func (export "add") (param i32 i32) (result i32) local.get 0 local.get 1 i32.add))
+				const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 7, 1, 96, 2, 127, 127, 1, 127, 3, 2, 1, 0, 7, 7, 1, 3, 97, 100, 100, 0, 0, 10, 9, 1, 7, 0, 32, 0, 32, 1, 106, 11]);
+				const module = await WebAssembly.compile(bytes);
+				const instance = await WebAssembly.instantiate(module, {});
+				t.strictEqual((instance.exports.add as (a: number, b: number) => number)(2, 3), 5);
+				const both = await WebAssembly.instantiate(bytes, {});
+				t.strictEqual((both.instance.exports.add as (a: number, b: number) => number)(4, 5), 9);
+				// JSC will not pin wasm memory; the host reads and fills views into it through copies (QuickJS's strings).
+				const memory = new WebAssembly.Memory({ initial: 1 });
+				new Uint8Array(memory.buffer).set([104, 105, 33], 10);
+				t.strictEqual(new TextDecoder().decode(new Uint8Array(memory.buffer, 10, 3)), "hi!");
+				const random = crypto.getRandomValues(new Uint8Array(memory.buffer, 100, 32));
+				t.ok(random.some((b) => b !== 0), "random bytes land in wasm memory");
+			},
+		},
+		{
 			name: "atob/btoa, performance.now and Intl",
 			async run() {
 				t.strictEqual(btoa("hello"), "aGVsbG8=");

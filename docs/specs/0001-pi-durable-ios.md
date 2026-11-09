@@ -423,8 +423,8 @@ Watch app and Smart Stack widgets (Watch as a client; the iPhone owns the harnes
 - **Spec schema drift** between the TS validator and the Swift renderer: one JSON Schema is the
   source of truth, generated into both or checked against shared fixtures.
 - Open: should `$doc.*` snapshots update on every commit or only on publish/refresh tasks?
-- Open: is Code Mode (`@earendil-works/pi-durable/codemode`) worth using later, so the agent
-  can compute derived widget values in a sandbox?
+- Decided: Code Mode (`@earendil-works/pi-durable/codemode`) is in, as the `codemode` tool in every conversation,
+  over QuickJS-wasm on the JS queue ([ADR 0014](../adr/0014-code-mode.md)).
 
 ## References
 
