@@ -51,18 +51,49 @@ export function answerText(entry: EntryRecord | undefined): string {
 		.join("");
 }
 
-/** `"30m"`, `"3h"`, `"1d"` in milliseconds; undefined when it does not parse. */
+const dayMs = 86_400_000;
+
+/** `"30m"`, `"3h"`, `"1d"`, `"1w"` in milliseconds; undefined when it does not parse. */
 export function parseInterval(text: string | undefined): number | undefined {
-	const match = /^(\d+)\s*(m|min|h|d)$/.exec(text?.trim() ?? "");
+	const match = /^(\d+)\s*(m|min|h|d|w)$/.exec(text?.trim() ?? "");
 	if (match === null) return undefined;
-	const unit = match[2] === "d" ? 86_400_000 : match[2] === "h" ? 3_600_000 : 60_000;
+	const unit = match[2] === "w" ? 7 * dayMs : match[2] === "d" ? dayMs : match[2] === "h" ? 3_600_000 : 60_000;
 	return Number(match[1]) * unit;
 }
 
-/** The first slot after `now` on the grid `at + k * every`: runs a sleeping app missed are skipped, not caught up. */
-function nextSlot(at: number, everyMs: number, now: number): number {
-	return now < at + everyMs ? at + everyMs : at + Math.ceil((now - at) / everyMs) * everyMs;
+/**
+ * Run `k` of a schedule that first ran at `first`. An interval of whole days steps through the calendar in the device's
+ * time zone, so a daily 8:00 stays at 8:00 across daylight saving changes; shorter intervals step in elapsed time.
+ */
+function slot(first: number, everyMs: number, k: number): number {
+	if (everyMs % dayMs !== 0) return first + k * everyMs;
+	const date = new Date(first);
+	date.setDate(date.getDate() + k * (everyMs / dayMs));
+	return date.getTime();
 }
+
+/**
+ * The next run after the one at `after` that is not before `now`: runs a sleeping app missed are skipped, not caught
+ * up. Slots count from the first run, so a daily schedule that an earlier version let drift by an hour at a daylight
+ * saving change returns to its first run's time; at least half an interval after `after`, so it does not run twice
+ * that day.
+ */
+export function nextSlot(first: number, everyMs: number, after: number, now: number): number {
+	const from = Math.max(after + everyMs / 2, now);
+	// An estimate within one slot of the answer: a daylight saving change moves a day's slot by an hour at most.
+	let k = Math.max(1, Math.floor((from - first) / everyMs));
+	while (k > 1 && slot(first, everyMs, k - 1) >= from) k--;
+	while (slot(first, everyMs, k) < from) k++;
+	return slot(first, everyMs, k);
+}
+
+/** What a scheduled run answers when it has nothing to tell: no notification, and the transcript says so quietly. */
+export const NO_REPLY = "NO_REPLY";
+
+export const isNoReply = (text: string) => text.trim() === NO_REPLY;
+
+/** How a `NO_REPLY` answer reads to the user. */
+export const noReplyText = "Nothing to report";
 
 /** Schedules repeat at most every 15 minutes; iOS runs background refreshes no more often anyway. */
 export const minimumIntervalMs = 15 * 60_000;
@@ -81,7 +112,7 @@ export const ScheduledTask = defineTask<ScheduleInput, ScheduleState, null>({
 		},
 		run: async (task, runtime, context) => {
 			const { at, runs } = task.state.checkpoint;
-			const { name, prompt, everyMs, notify } = task.input;
+			const { name, prompt, everyMs, notify, at: first } = task.input;
 			const conversation = await runtime.conversation(runtime.conversationId, context);
 			let answer = "";
 			if (conversation !== undefined) {
@@ -100,7 +131,7 @@ export const ScheduledTask = defineTask<ScheduleInput, ScheduleState, null>({
 					answer = answerText(await runtime.entry(AssistantEntry, settled.answer, context));
 				}
 			}
-			if (notify && answer !== "") {
+			if (notify && answer.trim() !== "" && !isNoReply(answer)) {
 				// The notification identifier makes a rerun replace it rather than post a second one.
 				await hostCall(
 					"notify.post",
@@ -109,7 +140,7 @@ export const ScheduledTask = defineTask<ScheduleInput, ScheduleState, null>({
 				);
 			}
 			const now = runtime.now();
-			const next = everyMs === undefined || conversation === undefined ? undefined : nextSlot(at, everyMs, now);
+			const next = everyMs === undefined || conversation === undefined ? undefined : nextSlot(first, everyMs, at, now);
 			await runtime.commit(async (tx) => {
 				const index = await tx.doc(SchedulesDoc);
 				const position = index.items.findIndex((item) => item.taskId === task.id);
@@ -121,7 +152,7 @@ export const ScheduledTask = defineTask<ScheduleInput, ScheduleState, null>({
 				if (entry !== undefined) {
 					entry.runs = runs + 1;
 					entry.lastRunAt = now;
-					entry.lastAnswer = answer.slice(0, 400);
+					entry.lastAnswer = isNoReply(answer) ? noReplyText : answer.slice(0, 400);
 					entry.nextAt = next;
 				}
 				return { status: "sleeping", until: next, checkpoint: { phase: "run", at: next, runs: runs + 1 } };
@@ -151,7 +182,7 @@ function describe(entry: ScheduleEntry) {
 	return {
 		name: entry.name,
 		prompt: entry.prompt,
-		every: entry.everyMs === undefined ? "once" : `${Math.round(entry.everyMs / 60_000)} minutes`,
+		every: entry.everyMs === undefined ? "once" : entry.everyMs % dayMs === 0 ? `${entry.everyMs / dayMs} days` : `${Math.round(entry.everyMs / 60_000)} minutes`,
 		next: entry.nextAt === undefined ? undefined : new Date(entry.nextAt).toISOString(),
 		runs: entry.runs,
 		notify: entry.notify,
@@ -166,7 +197,8 @@ export function ScheduleTools(abortTask: (taskId: number) => Promise<unknown>) {
 	const scheduleTask = defineTool({
 		name: "schedule_task",
 		description:
-			"Run a prompt in this conversation later, once (`at`) or repeatedly (`every`: 30m, 3h, 1d; at least 15m), even while the app is closed. " +
+			"Run a prompt in this conversation later, once (`at`) or repeatedly (`every`: 30m, 3h, 1d, 1w; at least 15m), even while the app is closed. " +
+			"Days and weeks keep the local time of day of the first run, across daylight saving changes. " +
 			"Use it to refresh $doc values widgets show (the prompt says which set_value to call), or for briefings. " +
 			"iOS runs it at or after the time, not exactly on it. `notify` posts the answer as a notification. The user may be asked to approve.",
 		parameters: obj({
@@ -174,7 +206,7 @@ export function ScheduleTools(abortTask: (taskId: number) => Promise<unknown>) {
 			prompt: str({ description: "What to do on each run, written to yourself" }),
 			at: opt(isoDate("First run; omitted: one interval from now")),
 			every: opt(str({ description: "Repeat interval; omitted: run once" })),
-			notify: opt(bool({ description: "Post each answer as a notification (default false)" })),
+			notify: opt(bool({ description: `Post each answer as a notification (default false); a run that answers exactly ${NO_REPLY} posts none` })),
 		}),
 		replay: "safe",
 		execute: async (args, api, context) => {
@@ -280,6 +312,7 @@ export function ScheduleTools(abortTask: (taskId: number) => Promise<unknown>) {
 		[
 			"You can act later: schedule_task runs a prompt in this conversation once or repeatedly, even while the app is closed, and notify_schedule shows a reminder at a time.",
 			"Runs from a schedule start with [Scheduled task \"name\"]; do what the prompt says, keep the answer short, and update the $doc values it names.",
+			`When a scheduled run has nothing worth telling the user (for example, a check found no change), answer exactly ${NO_REPLY}: no notification is posted.`,
 		].join("\n"),
 	);
 

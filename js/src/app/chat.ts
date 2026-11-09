@@ -31,7 +31,7 @@ import {
 	inputContent,
 } from "./attachments.ts";
 import { type DisplaySurface, FrameBuilder, textOf } from "./display.ts";
-import { answerText, OriginInput, SchedulesDoc } from "./schedule.ts";
+import { answerText, isNoReply, noReplyText, OriginInput, SchedulesDoc } from "./schedule.ts";
 import { readSkill, skillContent } from "./skills.ts";
 import { PublishedDoc, SurfacesDoc, ValuesDoc } from "./surfaces.ts";
 import { complete, entriesOf, readView, transcriptOf } from "./view.ts";
@@ -336,11 +336,13 @@ export class Chat {
 		if (settled.status !== "done" || settled.type !== "input") return { conversationId: id, status: "unanswered" };
 		const conversation = await this.#conversation(id);
 		const answer = await conversation.commit((tx) => tx.entry(AssistantEntry, settled.answer), context);
+		const text = answerText(answer);
 		const card = (await this.surfaces(id)).find((item) => item.updatedAt >= startedAt && item.spec.surface === "card");
 		return {
 			conversationId: id,
 			status: "done",
-			text: answerText(answer),
+			// "Run now" on a schedule that found nothing to tell.
+			text: isNoReply(text) ? noReplyText : text,
 			surface: card === undefined ? undefined : { conversationId: id, id: card.id, version: card.version, spec: card.spec },
 		};
 	}

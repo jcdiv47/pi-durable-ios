@@ -27,6 +27,8 @@ public final class JSRuntime: @unchecked Sendable {
         /// Where `__native.readResource(name)` reads files by plain name, such as Code Mode's `quickjs.wasm`.
         /// `PiHarness.load` sets it to the bundle's directory when nil.
         public var resourceDirectory: URL?
+        /// Whether the device is online, for model requests that wait while it is not; nil is `NetworkPath.shared`.
+        public var network: (any NetworkStatus)?
         public init(
             keys: ProviderKeySource? = nil,
             usage: ServiceUsage? = nil,
@@ -34,7 +36,8 @@ public final class JSRuntime: @unchecked Sendable {
             onLog: (@Sendable (String, String) -> Void)? = nil,
             hostCall: HostCallHandler? = nil,
             localHosts: [String: any LocalHTTPService] = [:],
-            resourceDirectory: URL? = nil
+            resourceDirectory: URL? = nil,
+            network: (any NetworkStatus)? = nil
         ) {
             self.keys = keys
             self.usage = usage
@@ -43,6 +46,7 @@ public final class JSRuntime: @unchecked Sendable {
             self.hostCall = hostCall
             self.localHosts = localHosts
             self.resourceDirectory = resourceDirectory
+            self.network = network
         }
     }
 
@@ -285,6 +289,10 @@ public final class JSRuntime: @unchecked Sendable {
             return JSValue(object: String(decoding: data, as: UTF8.self), in: context)
         }
         set("utf8Decode", utf8Decode)
+
+        let network = options.network ?? NetworkPath.shared
+        let networkOnline: @convention(block) () -> Bool = { network.online }
+        set("networkOnline", networkOnline)
 
         // Bytes of a file in `resourceDirectory`, by plain name only (no paths), or null.
         let readResource: @convention(block) (String) -> JSValue = { [weak self] name in

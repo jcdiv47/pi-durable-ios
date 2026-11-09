@@ -77,6 +77,27 @@ struct EntryPointTests {
         try await harness.close()
     }
 
+    @Test("A scheduled run that answers NO_REPLY posts no notification and shows quietly", .timeLimit(.minutes(1)))
+    func scheduleNoReply() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let log = ChatLog()
+        let harness = try await openEntryChat(log, db: directory.appendingPathComponent("chat.sqlite").path)
+        let meta: Meta = try await harness.call("PiRuntime.createConversation", ["scripted", "assistant"])
+        try await harness.perform("PiRuntime.setPolicies", [["schedule_task": "auto"]])
+        try await harness.perform("PiRuntime.watchConversation", [meta.id])
+        try await harness.perform("PiRuntime.send", [meta.id, "quiet check", "r1"])
+        try await until { !log.busy(meta.id) && log.items(meta.id).count == 4 }
+
+        // The run three seconds later answers NO_REPLY.
+        try await until(.seconds(20)) { log.items(meta.id).contains { $0["noReply"] as? Bool == true } && !log.busy(meta.id) }
+        let answer = try #require(log.items(meta.id).last { $0["kind"] as? String == "assistant" })
+        #expect(answer["text"] as? String == "Nothing to report")
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(log.calls("notify.post") == 0)
+        try await harness.close()
+    }
+
     @Test("A schedule sleeping when the process dies runs once in the next process", .timeLimit(.minutes(1)))
     func scheduleAcrossCrash() async throws {
         let directory = try temporaryDirectory()

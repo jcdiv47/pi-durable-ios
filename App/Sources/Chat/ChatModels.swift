@@ -65,6 +65,8 @@ struct DisplayItem: Decodable, Identifiable, Hashable {
     var attachments: [DisplayAttachment]?
     /// The skill the user ran with "/" for this message; the model got its body.
     var skill: String?
+    /// A scheduled run's answer that had nothing to tell (`NO_REPLY`); `text` says so. Shown quietly, never notified.
+    var noReply: Bool?
 
     var date: Date? { timestamp.map { Date(timeIntervalSince1970: $0 / 1000) } }
 

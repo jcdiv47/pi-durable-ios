@@ -67,6 +67,9 @@ final class ChatStore {
     let skillLibrary = SkillLibrary(root: SkillLibrary.appRoot)
     /// Whether a VPN tunnel looked up when the app last came to the foreground (`VPNStatus`).
     private(set) var vpnUp = VPNStatus.tunnelUp()
+    /// Model requests held until the phone is online again (`js/src/app/network.ts`); runs show "Waiting for the network".
+    private(set) var networkWaits = 0
+    var waitingForNetwork: Bool { networkWaits > 0 }
     /// Surfaces on the Home Screen and Lock Screen.
     private(set) var published: [PublishedEntry] = []
     private(set) var schedules: [ScheduleEntry] = []
@@ -353,6 +356,15 @@ final class ChatStore {
             Task { await refreshTasks() }
         case "mcp":
             if let event = try? decoder.decode(MCPEvent.self, from: data) { mcpChanged(event.statuses) }
+        case "network":
+            guard let event = try? decoder.decode(NetworkEvent.self, from: data) else { return }
+            let started = networkWaits == 0 && event.waiting > 0
+            networkWaits = event.waiting
+            if started { diagnostics.record("info", "network", "Offline: a model request waits for the network") }
+            // No frame comes while a request waits: refresh the busy runs' Live Activities here.
+            for id in busyConversations {
+                if let state = states[id] { activities.update(state, approval: approvals.first { $0.conversationId == id }) }
+            }
         case "wake":
             guard let wake = try? decoder.decode(WakeEvent.self, from: data).wake else { return }
             // Active/idle flips with every run; only sleep deadlines are worth a line.
@@ -369,6 +381,7 @@ final class ChatStore {
     private struct ApprovalsEvent: Decodable { let pending: [ApprovalRequest] }
     private struct WakeEvent: Decodable { let wake: BackgroundWork.Wake }
     private struct MCPEvent: Decodable { let statuses: [MCPStatus] }
+    private struct NetworkEvent: Decodable { let waiting: Int }
 
     // MARK: Conversations
 
@@ -1240,13 +1253,16 @@ final class ChatStore {
         // An abort before the model responds must not badge the previous turn's answer.
         if let answerIndex = conversation.items.lastIndex(where: { $0.kind == .assistant }),
            answerIndex > (conversation.items.lastIndex(where: { $0.kind == .user }) ?? -1),
+           conversation.items[answerIndex].noReply != true,
            let stopReason = conversation.items[answerIndex].stopReason,
            !["toolUse", "aborted", "error"].contains(stopReason),
            visibleConversation != conversation.id || UIApplication.shared.applicationState != .active {
             unreadConversations.insert(conversation.id)
         }
         guard UIApplication.shared.applicationState != .active,
-              let answer = conversation.items.last(where: { $0.kind == .assistant }), answer.stopReason != "aborted"
+              let answer = conversation.items.last(where: { $0.kind == .assistant }), answer.stopReason != "aborted",
+              // A scheduled run with nothing to tell (`NO_REPLY`).
+              answer.noReply != true
         else { return }
         let title = meta(conversation.id)?.title ?? "Pi"
         let failed = answer.stopReason == "error"
