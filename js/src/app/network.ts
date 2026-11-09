@@ -3,6 +3,11 @@
 // up the run ends with an error. Instead, the request waits for the network and is sent again; the failure is never
 // committed, so the attempt is not charged. After Batty's network-recovery.ts (github.com/jeffton/batty, MIT).
 //
+// Offline is no network path (NWPathMonitor), or a path on which nothing answers: a VPN tunnel (sing-box, Tailscale)
+// keeps the path satisfied in Airplane Mode, and connections then fail inside it. So when the path looks online, the
+// model's host and Apple's connectivity check are asked; any HTTP answer means the network works and the failure was
+// something else, which goes to Pi's retry. The wait ends when one of them answers.
+//
 // Only a request that failed before showing anything waits: one cut off mid-answer has streamed text the transcript
 // already shows, so it goes to Pi's retry as before (and its next attempt, sent while offline, waits here).
 // iOS suspends the process while it waits; a process killed while waiting comes back as an interrupted attempt, which
@@ -16,19 +21,22 @@ type StreamSimple = Models["streamSimple"];
 
 /** Errors a request gets when it never reached the server: our fetch's `fetch failed: …`, the SDKs' wording. */
 const transportPattern =
-	/fetch failed|connection error|network (?:error|connection)|internet connection|offline|could not connect|timed out|socket hang up|terminated/i;
+	/fetch failed|connection error|network (?:error|connection)|internet connection|offline|could not connect|timed out|socket hang up|terminated|secure connection|tls error/i;
 
 export function isTransportFailure(message: AssistantMessage): boolean {
 	return message.stopReason === "error" && transportPattern.test(message.errorMessage ?? "");
 }
+
+/** Apple's connectivity check, reachable in every region the app is used in. */
+export const probeUrl = "https://www.apple.com/library/test/success.html";
 
 export type NetworkOptions = {
 	/** Whether the device has a network path now (`NetworkPath` in PiRuntime). */
 	online: () => boolean;
 	/** How often to look again while offline. */
 	pollMs?: number;
-	/** How long to give the path a moment when it still looks online after a failure: the monitor may lag the error. */
-	settleMs?: number;
+	/** How long a probe may take before its host counts as unreachable. */
+	probeTimeoutMs?: number;
 	/** Called with the number of requests waiting, whenever it changes. */
 	onWaiting?: (waiting: number) => void;
 };
@@ -48,14 +56,48 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 	});
 }
 
+/** Whether `url` gives any HTTP answer within `timeoutMs`. */
+async function answers(url: string, timeoutMs: number, signal?: AbortSignal): Promise<boolean> {
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(new Error("probe timed out")), timeoutMs);
+	const onAbort = () => controller.abort(signal!.reason);
+	signal?.addEventListener("abort", onAbort, { once: true });
+	try {
+		const response = await fetch(url, { method: "HEAD", signal: controller.signal });
+		await response.body?.cancel();
+		return true;
+	} catch {
+		return false;
+	} finally {
+		clearTimeout(timer);
+		signal?.removeEventListener("abort", onAbort);
+	}
+}
+
 /** `streamSimple` whose requests wait while the device is offline instead of failing. */
 export function waitWhileOffline(streamSimple: StreamSimple, options: NetworkOptions): StreamSimple {
-	const { online, pollMs = 2000, settleMs = 1000, onWaiting } = options;
+	const { online, pollMs = 2000, probeTimeoutMs = 5000, onWaiting } = options;
 	let waiting = 0;
-	const offline = async (signal?: AbortSignal) => {
-		if (!online()) return true;
-		await sleep(settleMs, signal);
-		return !online();
+	/** The model's host or Apple's answers: true as soon as one does. */
+	const reachable = (baseUrl: string, signal?: AbortSignal) =>
+		new Promise<boolean>((resolve) => {
+			let origin: string | undefined;
+			try {
+				origin = new URL(baseUrl).origin;
+			} catch {}
+			const urls = origin === undefined ? [probeUrl] : [origin, probeUrl];
+			let left = urls.length;
+			for (const url of urls) {
+				void answers(url, probeTimeoutMs, signal).then((ok) => {
+					if (ok) resolve(true);
+					else if (--left === 0) resolve(false);
+				});
+			}
+		});
+	const offline = async (baseUrl: string, signal?: AbortSignal) => {
+		const result = !online() || !(await reachable(baseUrl, signal));
+		signal?.throwIfAborted();
+		return result;
 	};
 
 	return (model, context, requestOptions) => {
@@ -83,7 +125,7 @@ export function waitWhileOffline(streamSimple: StreamSimple, options: NetworkOpt
 					output.push(event);
 				}
 				last = await source.result();
-				if (shown || !isTransportFailure(last) || !(await offline(signal))) {
+				if (shown || !isTransportFailure(last) || !(await offline(model.baseUrl, signal))) {
 					for (const early of held) output.push(early);
 					if (terminal !== undefined) output.push(terminal);
 					else output.end(last);
@@ -93,7 +135,7 @@ export function waitWhileOffline(streamSimple: StreamSimple, options: NetworkOpt
 				onWaiting?.(++waiting);
 				try {
 					do await sleep(pollMs, signal);
-					while (!online());
+					while (await offline(model.baseUrl, signal));
 				} finally {
 					onWaiting?.(--waiting);
 				}

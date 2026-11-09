@@ -3,16 +3,28 @@ import os
 import Testing
 @testable import PiRuntime
 
-/// A network path the test turns on and off.
+/// What `NWPathMonitor` says (`path`) and whether anything answers (`internet`), set by the test. A VPN tunnel in
+/// Airplane Mode is a path without internet.
 final class FakeNetwork: NetworkStatus {
-    private let state: OSAllocatedUnfairLock<Bool>
-    init(online: Bool) { state = OSAllocatedUnfairLock(initialState: online) }
-    var online: Bool { state.withLock { $0 } }
-    func set(online: Bool) { state.withLock { $0 = online } }
+    private let state: OSAllocatedUnfairLock<(path: Bool, internet: Bool)>
+    init(path: Bool, internet: Bool) { state = OSAllocatedUnfairLock(initialState: (path, internet)) }
+    var online: Bool { state.withLock { $0.path } }
+    var internet: Bool { state.withLock { $0.internet } }
+    func set(path: Bool, internet: Bool) { state.withLock { $0 = (path, internet) } }
 }
 
-/// An OpenAI-compatible endpoint on Apple Intelligence's local host that fails as URLSession does without a network
-/// while `network` is offline, or for its first `failures` requests, and otherwise echoes the last message.
+/// Apple's connectivity check (`probeUrl` in network.ts): answers while the fake has internet.
+struct FakeProbe: LocalHTTPService {
+    let network: FakeNetwork
+    func respond(to request: LocalHTTPRequest, send: @escaping @Sendable (LocalHTTPEvent) -> Void) async {
+        guard network.internet else { return send(.error("A TLS error caused the secure connection to fail.")) }
+        send(.response(status: 200, headers: [:]))
+        send(.end)
+    }
+}
+
+/// An OpenAI-compatible endpoint on Apple Intelligence's local host that fails as URLSession does without internet,
+/// or for its first `failures` requests, and otherwise echoes the last message. Probes (HEAD) get an empty 200.
 final class FlakyModelService: LocalHTTPService, @unchecked Sendable {
     private let lock = NSLock()
     private var count = 0
@@ -24,19 +36,22 @@ final class FlakyModelService: LocalHTTPService, @unchecked Sendable {
         self.failures = failures
     }
 
+    /// Model requests (POST), not probes.
     var requests: Int { lock.withLock { count } }
 
     func respond(to request: LocalHTTPRequest, send: @escaping @Sendable (LocalHTTPEvent) -> Void) async {
+        guard network.internet else { return send(.error("The Internet connection appears to be offline.")) }
+        if request.method == "HEAD" {
+            send(.response(status: 200, headers: [:]))
+            return send(.end)
+        }
         let fail = lock.withLock {
             count += 1
             guard failures > 0 else { return false }
             failures -= 1
             return true
         }
-        if fail || !network.online {
-            send(.error("The Internet connection appears to be offline."))
-            return
-        }
+        if fail { return send(.error("The network connection was lost.")) }
         let chat = try! AppleChat.Request(body: request.body ?? Data())
         send(.response(status: 200, headers: ["content-type": "text/event-stream"]))
         send(.chunk(AppleChat.sse(id: "c1", model: chat.model, created: 0, delta: "", role: true)))
@@ -58,7 +73,7 @@ struct NetworkTests {
                 log.record(name, json)
                 throw JSRuntimeError("unexpected host call \(name)")
             },
-            localHosts: [AppleIntelligence.host: service],
+            localHosts: [AppleIntelligence.host: service, "www.apple.com": FakeProbe(network: service.network)],
             network: service.network
         ))
         _ = try await harness.open(.init(
@@ -72,12 +87,13 @@ struct NetworkTests {
         log.items(id).filter { $0["kind"] as? String == "assistant" && $0["stopReason"] as? String == "error" }
     }
 
-    @Test("Offline, a request waits without failing, and is sent again once the network is back", .timeLimit(.minutes(1)))
-    func waitsForNetwork() async throws {
+    @Test("Offline, a request waits without failing, and is sent again once the network is back", .timeLimit(.minutes(1)), arguments: [false, true])
+    func waitsForNetwork(vpn: Bool) async throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let log = ChatLog()
-        let service = FlakyModelService(network: FakeNetwork(online: false))
+        // With a VPN up, Airplane Mode leaves a network path on which nothing answers.
+        let service = FlakyModelService(network: FakeNetwork(path: vpn, internet: false))
         let harness = try await open(log, service: service, db: directory.appendingPathComponent("chat.sqlite").path)
         let meta: Meta = try await harness.call("PiRuntime.createConversation", ["apple", "on-device"])
         try await harness.perform("PiRuntime.watchConversation", [meta.id])
@@ -86,13 +102,13 @@ struct NetworkTests {
         try await until { log.networkWaits.last == 1 }
         // A few polls later: still one request, still busy, nothing committed as a failed attempt.
         try await Task.sleep(for: .seconds(3))
-        #expect(service.requests == 1)
+        #expect(service.requests == 0, "no request got through")
         #expect(log.busy(meta.id))
         #expect(errors(log, meta.id).isEmpty)
 
-        service.network.set(online: true)
+        service.network.set(path: true, internet: true)
         try await until { log.last(meta.id, kind: "assistant")?["text"] as? String == "Echo: hello" && !log.busy(meta.id) }
-        #expect(service.requests == 2)
+        #expect(service.requests == 1)
         #expect(log.networkWaits == [1, 0])
         #expect(errors(log, meta.id).isEmpty)
         try await harness.close()
@@ -103,7 +119,7 @@ struct NetworkTests {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let log = ChatLog()
-        let service = FlakyModelService(network: FakeNetwork(online: true), failures: 1)
+        let service = FlakyModelService(network: FakeNetwork(path: true, internet: true), failures: 1)
         let harness = try await open(log, service: service, db: directory.appendingPathComponent("chat.sqlite").path)
         let meta: Meta = try await harness.call("PiRuntime.createConversation", ["apple", "on-device"])
         try await harness.perform("PiRuntime.watchConversation", [meta.id])
@@ -121,7 +137,7 @@ struct NetworkTests {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let log = ChatLog()
-        let service = FlakyModelService(network: FakeNetwork(online: false))
+        let service = FlakyModelService(network: FakeNetwork(path: false, internet: false))
         let harness = try await open(log, service: service, db: directory.appendingPathComponent("chat.sqlite").path)
         let meta: Meta = try await harness.call("PiRuntime.createConversation", ["apple", "on-device"])
         try await harness.perform("PiRuntime.watchConversation", [meta.id])
@@ -130,7 +146,7 @@ struct NetworkTests {
 
         try await harness.perform("PiRuntime.abort", [meta.id])
         try await until { !log.busy(meta.id) && log.networkWaits.last == 0 }
-        #expect(service.requests == 1)
+        #expect(service.requests == 0)
         try await harness.close()
     }
 }
