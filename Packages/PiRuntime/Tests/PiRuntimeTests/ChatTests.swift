@@ -13,6 +13,7 @@ final class ChatLog: @unchecked Sendable {
     private var calls: [(String, [String: Any])] = []
     private var conversationTitles: [String] = []
     private var wakeEvents: [(active: Bool, at: Double?)] = []
+    private var networkEvents: [Int] = []
 
     func handle(_ json: String) {
         guard let event = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] else { return }
@@ -33,6 +34,8 @@ final class ChatLog: @unchecked Sendable {
             case "wake":
                 let wake = event["wake"] as! [String: Any]
                 wakeEvents.append((wake["active"] as! Bool, wake["at"] as? Double))
+            case "network":
+                networkEvents.append(event["waiting"] as! Int)
             default:
                 break
             }
@@ -53,6 +56,8 @@ final class ChatLog: @unchecked Sendable {
     var approvals: [[String: Any]] { lock.withLock { pending } }
     var titles: [String] { lock.withLock { conversationTitles } }
     var wakes: [(active: Bool, at: Double?)] { lock.withLock { wakeEvents } }
+    /// Model requests waiting for the network, as each `network` event reported it.
+    var networkWaits: [Int] { lock.withLock { networkEvents } }
     func calls(_ name: String) -> Int { lock.withLock { calls.filter { $0.0 == name }.count } }
     func arguments(_ name: String) -> [[String: Any]] { lock.withLock { calls.filter { $0.0 == name }.map(\.1) } }
 

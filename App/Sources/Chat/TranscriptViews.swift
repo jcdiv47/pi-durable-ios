@@ -51,7 +51,7 @@ enum TranscriptRow: Identifiable {
     static func turnEnds(_ rows: [TranscriptRow], busy: Bool) -> Set<Int> {
         var ends: Set<Int> = []
         for (index, row) in rows.enumerated() {
-            guard case let .item(item, _) = row, item.kind == .assistant, !(item.text ?? "").isEmpty else { continue }
+            guard case let .item(item, _) = row, item.kind == .assistant, item.noReply != true, !(item.text ?? "").isEmpty else { continue }
             let next = rows.dropFirst(index + 1).first
             switch next {
             case nil: if !busy { ends.insert(item.id) }
@@ -141,6 +141,11 @@ struct TranscriptItemView: View {
                     }
                 }
             }
+        case .assistant where item.noReply == true:
+            Label(item.text ?? "Nothing to report", systemImage: "checkmark.circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
         case .assistant:
             AssistantView(text: item.text ?? "", thinking: item.thinking ?? "", streaming: false)
             if item.stopReason == "aborted" && resent {
@@ -349,7 +354,7 @@ struct LiveStatusRow: View {
 
     var body: some View {
         let approval = store.approvals.first { $0.conversationId == state.id }
-        let status = RunActivities.status(state.live, approval: approval)
+        let status = RunActivities.status(state.live, approval: approval, waitingForNetwork: store.waitingForNetwork)
         HStack(spacing: 10) {
             Image(systemName: approval != nil ? "hand.raised.fill" : status.symbol)
                 .foregroundStyle(approval != nil ? AnyShapeStyle(.orange) : AnyShapeStyle(.tint))

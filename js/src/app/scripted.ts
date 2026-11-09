@@ -8,6 +8,7 @@
 //   "card …"      → create_surface (a checklist card shown in the chat)
 //   "repair …"    → create_surface with an error (a Ring without goal), then patch_surface to fix it
 //   "schedule …"  → schedule_task "nudge" in 3 seconds, once, with a notification; its run calls set_value nudge
+//   "quiet …"     → schedule_task "quiet" in 3 seconds, once, with a notification; its run answers NO_REPLY
 //   "remind …"    → notify_schedule in a minute
 //   "todo …"      → reminders_create due today at 18:00 (asks for approval)
 //   "where …"     → location_current
@@ -186,6 +187,9 @@ export function createScriptedModel() {
 				stopReason: "toolUse",
 			});
 		}
+		if (prompt.startsWith("[Scheduled task") && prompt.includes("NO_REPLY") && results.length === 0) {
+			return fauxAssistantMessage("NO_REPLY");
+		}
 		if (results.length > 0 && results.every((r) => r.isError && text(r.content).includes(declinedMessage))) {
 			return fauxAssistantMessage("Okay, I didn't do that. Tell me if you'd like something different.");
 		}
@@ -221,6 +225,16 @@ export function createScriptedModel() {
 					fauxToolCall("schedule_task", {
 						name: "nudge",
 						prompt: "Write a new nudge with set_value nudge.",
+						at: new Date(Date.now() + 3000).toISOString(),
+						notify: true,
+					}),
+					{ stopReason: "toolUse" },
+				);
+			case "quiet":
+				return fauxAssistantMessage(
+					fauxToolCall("schedule_task", {
+						name: "quiet",
+						prompt: "Check for news; answer NO_REPLY if there is none.",
 						at: new Date(Date.now() + 3000).toISOString(),
 						notify: true,
 					}),

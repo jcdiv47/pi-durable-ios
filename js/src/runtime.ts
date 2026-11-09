@@ -21,6 +21,7 @@ import { Chat, intelligenceSettings, type OutsideInput, type WidgetAction } from
 import { InstructionsExtension, instructionsSettings } from "./app/instructions.ts";
 import { McpHost, type McpServerConfig } from "./app/mcp.ts";
 import { type AppleModel, type CustomProvider, ModelSetup } from "./app/models.ts";
+import { waitWhileOffline } from "./app/network.ts";
 import { answerText, ScheduleTools, scheduleToolInfo } from "./app/schedule.ts";
 import { type ProxmoxConfig, proxmoxDashboard, proxmoxSettings, ProxmoxTools, proxmoxToolInfo } from "./app/proxmox.ts";
 import { SkillHost, type SkillInfo } from "./app/skills.ts";
@@ -71,6 +72,11 @@ let harness: Harness | undefined;
 let root: Conversation | undefined;
 let chat: Chat | undefined;
 const setup = new ModelSetup();
+// Every model request the Harness makes waits while the phone is offline instead of failing (app/network.ts).
+setup.models.streamSimple = waitWhileOffline(setup.models.streamSimple.bind(setup.models), {
+	online: () => native.networkOnline(),
+	onWaiting: (waiting) => emit({ type: "network", waiting }),
+});
 webSettings.keyed = (service) => setup.keyed.has(service);
 const approvals = new Approvals((pending) => emit({ type: "approvals", pending }));
 const mcp = new McpHost(undefined, (statuses) => emit({ type: "mcp", statuses }));

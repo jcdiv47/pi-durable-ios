@@ -5,6 +5,7 @@
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { EntryRecord, InboxState } from "@earendil-works/pi-durable";
 import { attachmentSummary, type DisplayAttachment, type InputData } from "./attachments.ts";
+import { isNoReply, noReplyText } from "./schedule.ts";
 
 export type DisplayToolCall = { id: string; name: string; arguments: string };
 
@@ -23,6 +24,8 @@ export type DisplayItem =
 			stopReason?: string;
 			error?: string;
 			timestamp?: number;
+			/** A scheduled run answered `NO_REPLY`: `text` is what the user sees instead, quietly, and nothing notifies. */
+			noReply?: boolean;
 	  }
 	| {
 			id: number;
@@ -130,16 +133,18 @@ export function displayItem(entry: EntryRecord): DisplayItem | undefined {
 			return { id: entry.id, kind: "user", text: clip(textOf(message?.content)), timestamp: message?.timestamp as number | undefined };
 		case "pi.assistant": {
 			const parts = assistantParts(message as { content?: Block[] });
+			const noReply = parts.toolCalls.length === 0 && message?.stopReason === "stop" && isNoReply(parts.text);
 			return {
 				id: entry.id,
 				kind: "assistant",
-				text: parts.text,
+				text: noReply ? noReplyText : parts.text,
 				thinking: clip(parts.thinking),
 				toolCalls: parts.toolCalls,
 				model: message ? `${message.provider}/${message.model}` : undefined,
 				stopReason: message?.stopReason as string | undefined,
 				error: message?.errorMessage as string | undefined,
 				timestamp: message?.timestamp as number | undefined,
+				...(noReply ? { noReply } : {}),
 			};
 		}
 		case "pi.tool-result": {

@@ -32,6 +32,8 @@ export interface NativeBindings {
 	sqliteGet(handle: number, sql: string, params: NativeSqliteValue[]): Record<string, NativeSqliteValue> | undefined;
 	sqliteAll(handle: number, sql: string, params: NativeSqliteValue[]): Record<string, NativeSqliteValue>[];
 	sqliteClose(handle: number): void;
+	/** Whether the device has a network path now (NWPathMonitor); a model request waits while it has none. */
+	networkOnline(): boolean;
 	/** Bytes of a file the host ships next to the bundle (such as `quickjs.wasm`), by plain name; null when missing. */
 	readResource(name: string): Uint8Array | null;
 	/** Sends one JSON event to the Swift side (UI, test drivers). */

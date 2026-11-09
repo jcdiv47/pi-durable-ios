@@ -67,7 +67,7 @@ final class RunActivities {
             Self.end(activity, .init(state: final, staleDate: nil), dismissalPolicy: .after(.now.addingTimeInterval(15 * 60)))
             return
         }
-        var next = Self.status(state.live, approval: approval)
+        var next = Self.status(state.live, approval: approval, waitingForNetwork: store.waitingForNetwork)
         next.startedAt = previous.startedAt
         guard next != previous else { return }
         shown[state.id] = next
@@ -87,7 +87,8 @@ final class RunActivities {
     }
 
     /// What the run is doing, in a few words; changes only at steps, not with every streamed token.
-    static func status(_ live: DisplayLive, approval: ApprovalRequest?) -> PiRunAttributes.ContentState {
+    /// `waitingForNetwork`: a model request is held until the phone is online again (`js/src/app/network.ts`).
+    static func status(_ live: DisplayLive, approval: ApprovalRequest?, waitingForNetwork: Bool = false) -> PiRunAttributes.ContentState {
         if let approval {
             return .init(
                 status: "Needs your approval",
@@ -100,6 +101,9 @@ final class RunActivities {
             return .init(status: "Running \(tool.name)", symbol: "wrench.and.screwdriver")
         }
         if let generation = live.generation {
+            if waitingForNetwork, generation.text.isEmpty, generation.thinking.isEmpty, generation.toolCalls.isEmpty, generation.retry == nil {
+                return .init(status: "Waiting for the network…", symbol: "wifi.slash")
+            }
             if generation.retry != nil { return .init(status: "Retrying…", symbol: "arrow.clockwise") }
             if !generation.toolCalls.isEmpty { return .init(status: "Calling \(generation.toolCalls.last!.name)", symbol: "wrench.and.screwdriver") }
             if !generation.text.isEmpty { return .init(status: "Writing…", symbol: "text.bubble") }

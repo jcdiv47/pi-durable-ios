@@ -53,7 +53,7 @@ decisions that change the spec go in `docs/adr/`.
   buttons, which iOS performs in the app's process.
 - `Packages/PiRuntime`: JSContext host, polyfill natives, the sqlite3 facade, the URLSession fetch
   bridge (with `localHosts`: hosts answered in the process, and `PinnedCertificates`: self-signed servers trusted by
-  fingerprint), the Keychain key source, the async host-call bridge
+  fingerprint), `NetworkPath` (NWPathMonitor, read by JS as `__native.networkOnline()`), the Keychain key source, the async host-call bridge
   (`JSRuntime.Options.hostCall`), `AppleIntelligence` (Foundation Models as an OpenAI-compatible endpoint on
   `apple-intelligence.pi.local`, plus titles and summaries) and `SkillLibrary`
   (SKILL.md checks, import, and the `skills.*` host calls that read inside a skill's folder).
@@ -73,8 +73,10 @@ decisions that change the spec go in `docs/adr/`.
 - `js/`: TypeScript run inside JSC. `bun build.ts` bundles `src/runtime.ts` (the app's harness
   bootstrap) and `src/conformance.ts` (test suites) into `App/Resources/` and the PiRuntime test
   resources. `src/app/` is the chat API Swift calls (`PiRuntime.*`): conversations, display frames,
-  providers (`models.ts`, including the keyless `apple` provider), the Apple tool stubs, the UI tools (`surfaces.ts`: specs in Pi documents, JSON Patch), scheduled tasks
-  and `notify_schedule` (`schedule.ts`), the web tools (`web.ts`: `web_search` through DeepSeek or Brave,
+  providers (`models.ts`, including the keyless `apple` provider; `network.ts`: a model request that fails while the
+  phone is offline waits for the network and is sent again, instead of using up Pi's retries), the Apple tool stubs, the UI tools (`surfaces.ts`: specs in Pi documents, JSON Patch), scheduled tasks
+  and `notify_schedule` (`schedule.ts`: day and week intervals keep their local time across daylight saving changes; a
+  run that answers `NO_REPLY` posts no notification), the web tools (`web.ts`: `web_search` through DeepSeek or Brave,
   `web_fetch` through DeepSeek Fetch) over keyed HTTP services (`services.ts`), SSH tools (`ssh.ts`: `ssh_exec`, `ssh_job`), the Proxmox VE reads (`proxmox.ts`: `pve_*`), MCP servers (`mcp.ts`: a connection per
   server over `@earendil-works/pi-mcp`'s Streamable HTTP client, and the `mcp` extension, [ADR 0006](docs/adr/0006-mcp-servers.md),
   [ADR 0015](docs/adr/0015-pi-mcp-client.md)), the user's instructions and skills
