@@ -1,5 +1,5 @@
-// MCP servers the user added in Settings (docs/adr/0006-mcp-servers.md): a Streamable HTTP client and the `mcp`
-// extension, which offers every enabled server's tools as `mcp__<server>__<tool>`.
+// MCP servers the user added in Settings (docs/adr/0006-mcp-servers.md): a connection per server over pi-mcp's
+// Streamable HTTP client, and the `mcp` extension, which offers every enabled server's tools as `mcp__<server>__<tool>`.
 //
 // Swift owns the server list and caches each server's last `tools/list`, so the extension is installed from the cache
 // before the Harness opens: a tool call that a crash interrupted finds its tool even while the server is unreachable.
@@ -8,29 +8,28 @@
 // Keys never reach JS: a server with auth gets the placeholder `pi-host-key:mcp-<id>` in its auth header, and Swift's
 // fetch bridge swaps in the Keychain token for that server's host only.
 
+import {
+	type CallToolResult,
+	McpAbortError,
+	McpClient,
+	McpConnectionClosedError,
+	McpHttpError,
+	McpError as McpRpcError,
+	McpSessionExpiredError,
+	McpTimeoutError,
+	type McpFetch,
+	StreamableHttpTransport,
+	type Tool,
+	toLlmContent,
+} from "@earendil-works/pi-mcp";
 import { compile } from "@earendil-works/pi-schema";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool, type Extension, section, type ToolRegistration } from "@earendil-works/pi-durable";
 import type { ToolPolicy } from "./approvals.ts";
 import { keyPlaceholder } from "./models.ts";
 
-/** What the client asks for; servers answer with the version they speak. */
-export const MCP_PROTOCOL_VERSION = "2025-06-18";
-
-/** One tool as `tools/list` returns it. */
-export type McpToolDefinition = {
-	name: string;
-	title?: string;
-	description?: string;
-	inputSchema?: Record<string, unknown>;
-	annotations?: {
-		title?: string;
-		readOnlyHint?: boolean;
-		destructiveHint?: boolean;
-		idempotentHint?: boolean;
-		openWorldHint?: boolean;
-	};
-};
+/** One tool as `tools/list` returns it; Swift's cache may hold one without `inputSchema`. */
+export type McpToolDefinition = Omit<Tool, "inputSchema"> & { inputSchema?: Record<string, unknown> };
 
 /** A server as Swift stores it (`MCPServer`), with its cached tool list. */
 export type McpServerConfig = {
@@ -64,101 +63,110 @@ export type McpStatus = {
 	serverName?: string;
 };
 
-export class McpError extends Error {
+/** A failure in words for the model and Settings, with what it says about the server. */
+export class McpServerError extends Error {
 	constructor(
 		message: string,
 		readonly state: Exclude<McpState, "ok">,
 		readonly status?: number,
 	) {
 		super(message);
-		this.name = "McpError";
+		this.name = "McpServerError";
 	}
-}
-
-type JsonRpcMessage = {
-	jsonrpc: "2.0";
-	id?: number | string | null;
-	method?: string;
-	params?: unknown;
-	result?: unknown;
-	error?: { code: number; message: string; data?: unknown };
-};
-
-export type McpContent =
-	| { type: "text"; text: string }
-	| { type: "image"; data: string; mimeType: string }
-	| { type: "audio"; data: string; mimeType: string }
-	| { type: "resource_link"; uri: string; name?: string; description?: string; mimeType?: string }
-	| { type: "resource"; resource: { uri: string; mimeType?: string; text?: string; blob?: string } };
-
-export type McpCallResult = {
-	content?: McpContent[];
-	structuredContent?: unknown;
-	isError?: boolean;
-};
-
-type Fetch = (url: string, init: RequestInit) => Promise<Response>;
-
-/** Requests other than `tools/call` (connecting, listing) give up after this long. */
-const SETUP_TIMEOUT_MS = 15_000;
-
-/** A signal that aborts with `outer`, or with `timeout()` after `ms`. */
-function deadline(
-	outer: AbortSignal | undefined,
-	ms: number | undefined,
-	timeout: () => McpError,
-): { signal: AbortSignal | undefined; done: () => void } {
-	if (ms === undefined) return { signal: outer, done: () => {} };
-	const controller = new AbortController();
-	const timer = setTimeout(() => controller.abort(timeout()), ms);
-	const onAbort = () => controller.abort(outer?.reason);
-	if (outer?.aborted) controller.abort(outer.reason);
-	else outer?.addEventListener("abort", onAbort, { once: true });
-	return {
-		signal: controller.signal,
-		done: () => {
-			clearTimeout(timer);
-			outer?.removeEventListener("abort", onAbort);
-		},
-	};
 }
 
 /**
- * One server's Streamable HTTP session: `initialize` on first use, the `Mcp-Session-Id` it hands out, and a fresh
- * session when the server forgets it (HTTP 404). Responses may be JSON or an SSE stream; on a stream, server requests
- * are answered (`ping`) or declined (sampling, elicitation, roots), and notifications are skipped.
+ * Requests other than `tools/call` (connecting, listing) give up after this long: with the VPN off, a Tailscale address
+ * may not fail before URLSession's own timeout.
  */
-export class McpClient {
-	#session: string | undefined;
-	#protocol: string | undefined;
-	#ready: Promise<{ instructions?: string; serverName?: string }> | undefined;
-	#nextId = 1;
+const SETUP_TIMEOUT_MS = 15_000;
+
+/** `promise`, or `signal`'s reason once it aborts. The work behind `promise` goes on; others may be waiting for it. */
+function abortable<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+	if (signal === undefined) return promise;
+	if (signal.aborted) return Promise.reject(signal.reason);
+	return new Promise<T>((resolve, reject) => {
+		const onAbort = () => reject(signal.reason);
+		signal.addEventListener("abort", onAbort, { once: true });
+		promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+	});
+}
+
+/** The auth header with the key placeholder, which Swift swaps for the token. */
+function authHeaders(server: McpServerConfig): Record<string, string> {
+	const auth = server.authHeader?.trim();
+	if (!auth) return {};
+	const token = keyPlaceholder(`mcp-${server.id}`);
+	return { [auth]: auth.toLowerCase() === "authorization" ? `Bearer ${token}` : token };
+}
+
+/**
+ * One server's session: pi-mcp's client over Streamable HTTP, connected on first use and shared by concurrent calls.
+ * When the server forgets the session (HTTP 404), the request runs once more in a new one. No server-to-client GET
+ * stream: the app answers what arrives on a request's own stream (`ping`; other server requests are declined).
+ */
+export class McpConnection {
+	#client: Promise<McpClient> | undefined;
 
 	constructor(
-		readonly server: McpServerConfig,
-		private readonly fetcher: Fetch = (url, init) => fetch(url, init),
+		/** The server as it is now; `McpHost` swaps in an edited copy that keeps the URL and auth. */
+		public server: McpServerConfig,
+		private readonly fetcher?: McpFetch,
+		private readonly setupTimeoutMs = SETUP_TIMEOUT_MS,
 	) {}
 
-	/** Forgets the session; the next request initializes again. */
-	reset(): void {
-		this.#session = undefined;
-		this.#protocol = undefined;
-		this.#ready = undefined;
+	#connect(): Promise<McpClient> {
+		if (this.#client === undefined) {
+			const client = new McpClient({ name: "pi-durable-ios", title: "Pi", version: "0.1", requestTimeoutMs: this.setupTimeoutMs });
+			const transport = new StreamableHttpTransport({
+				url: this.server.url,
+				headers: authHeaders(this.server),
+				openGetStream: false,
+				...(this.fetcher === undefined ? {} : { fetch: this.fetcher }),
+			});
+			// The whole handshake has the deadline: pi-mcp times `initialize` but not `notifications/initialized` after it.
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			const deadline = new Promise<never>((_, reject) => {
+				timer = setTimeout(() => {
+					reject(new McpTimeoutError(this.setupTimeoutMs));
+					void client.close().catch(() => {});
+				}, this.setupTimeoutMs);
+			});
+			const ready = Promise.race([client.connect(transport), deadline])
+				.then(() => client)
+				.finally(() => clearTimeout(timer));
+			this.#client = ready;
+			const forget = () => {
+				if (this.#client === ready) this.#client = undefined;
+			};
+			// A failed attempt, or a session that closed, is forgotten so the next call connects again.
+			ready.catch(forget);
+			client.onClose(forget);
+		}
+		return this.#client;
 	}
 
-	#headers(): Record<string, string> {
-		const headers: Record<string, string> = {
-			"content-type": "application/json",
-			accept: "application/json, text/event-stream",
-		};
-		const auth = this.server.authHeader?.trim();
-		if (auth) {
-			const token = keyPlaceholder(`mcp-${this.server.id}`);
-			headers[auth.toLowerCase()] = auth.toLowerCase() === "authorization" ? `Bearer ${token}` : token;
+	/** Ends the session; the next request connects again. */
+	reset(): void {
+		const client = this.#client;
+		this.#client = undefined;
+		void client?.then((c) => c.close()).catch(() => {});
+	}
+
+	/** Runs `request` in the session, once more in a new one if the server forgot it, and explains failures. */
+	async #run<T>(method: string, signal: AbortSignal | undefined, request: (client: McpClient) => Promise<T>): Promise<T> {
+		for (let attempt = 0; ; attempt++) {
+			try {
+				return await request(await abortable(this.#connect(), signal));
+			} catch (error) {
+				if (error instanceof McpSessionExpiredError && attempt === 0) {
+					this.reset();
+					continue;
+				}
+				if (signal?.aborted) throw error;
+				throw this.#explain(method, error);
+			}
 		}
-		if (this.#session !== undefined) headers["mcp-session-id"] = this.#session;
-		if (this.#protocol !== undefined) headers["mcp-protocol-version"] = this.#protocol;
-		return headers;
 	}
 
 	#where(): string {
@@ -169,213 +177,48 @@ export class McpClient {
 		}
 	}
 
-	async #post(message: JsonRpcMessage, signal: AbortSignal | undefined): Promise<Response> {
-		try {
-			return await this.fetcher(this.server.url, { method: "POST", headers: this.#headers(), body: JSON.stringify(message), signal });
-		} catch (error) {
-			if (signal?.aborted) throw signal.reason instanceof McpError ? signal.reason : error;
-			const detail = error instanceof Error ? error.message.replace(/^fetch failed: /, "") : String(error);
-			// Swift's refusals (no token saved, host not allowed) are setup problems, not the network.
-			if (/API key|may not be sent/.test(detail)) throw new McpError(`${this.server.name}: ${detail}. Check the server in Settings › MCP servers.`, "unauthorized");
-			throw this.#unreachable(detail);
-		}
-	}
-
-	#unreachable(detail: string): McpError {
+	#unreachable(detail: string): McpServerError {
 		const vpn = this.server.needsVpn ? " The iPhone's VPN may be off." : "";
-		return new McpError(`${this.server.name}: couldn't reach ${this.#where()} (${detail}).${vpn}`, "unreachable");
+		return new McpServerError(`${this.server.name}: couldn't reach ${this.#where()} (${detail}).${vpn}`, "unreachable");
 	}
 
-	async #failure(response: Response): Promise<McpError> {
-		const body = (await response.text().catch(() => "")).trim().slice(0, 300);
-		const detail = body ? ` (${response.status}: ${body})` : ` (${response.status})`;
-		if (response.status === 401 || response.status === 403) {
-			return new McpError(`${this.server.name}: the token was refused. Check it in Settings › MCP servers.${detail}`, "unauthorized", response.status);
-		}
-		return new McpError(`${this.server.name}: the server answered with an error.${detail}`, "error", response.status);
-	}
-
-	/** Answers a request the server sent on a stream: `ping`, and "not supported" for everything else. */
-	#answer(message: JsonRpcMessage): void {
-		if (message.id === undefined || message.id === null || message.method === undefined) return;
-		const reply: JsonRpcMessage =
-			message.method === "ping"
-				? { jsonrpc: "2.0", id: message.id, result: {} }
-				: { jsonrpc: "2.0", id: message.id, error: { code: -32601, message: `${message.method} is not supported by this client` } };
-		void this.#post(reply, undefined)
-			.then((response) => response.body?.cancel())
-			.catch(() => {});
-	}
-
-	/** The JSON-RPC response with `id` from a JSON body or an SSE stream. */
-	async #read(response: Response, id: number): Promise<JsonRpcMessage> {
-		const type = response.headers.get("content-type") ?? "";
-		const pick = (message: JsonRpcMessage): JsonRpcMessage | undefined => {
-			if (message.id === id && (message.result !== undefined || message.error !== undefined)) return message;
-			this.#answer(message);
-			return undefined;
-		};
-		if (!type.includes("text/event-stream")) {
-			const parsed = (await response.json()) as JsonRpcMessage | JsonRpcMessage[];
-			for (const message of Array.isArray(parsed) ? parsed : [parsed]) {
-				const found = pick(message);
-				if (found) return found;
+	#explain(method: string, error: unknown): McpServerError {
+		const name = this.server.name;
+		if (error instanceof McpServerError) return error;
+		if (error instanceof McpHttpError) {
+			const body = error.body.trim().slice(0, 300);
+			const detail = body ? ` (${error.status}: ${body})` : ` (${error.status})`;
+			if (error.status === 401 || error.status === 403) {
+				return new McpServerError(`${name}: the token was refused. Check it in Settings › MCP servers.${detail}`, "unauthorized", error.status);
 			}
-			throw new McpError(`${this.server.name}: the response did not answer the request.`, "error");
+			if (error instanceof McpSessionExpiredError) return new McpServerError(`${name}: the session expired.`, "error", error.status);
+			return new McpServerError(`${name}: the server answered with an error.${detail}`, "error", error.status);
 		}
-		// A body built from bytes (the polyfill's `new Response(text)`) has no stream; read it whole.
-		const reader =
-			response.body?.getReader() ??
-			(() => {
-				const whole = response.arrayBuffer().then((buffer) => new Uint8Array(buffer));
-				let read = false;
-				return {
-					read: async () => (read ? { value: undefined, done: true as const } : ((read = true), { value: await whole, done: false as const })),
-					cancel: async () => {},
-				};
-			})();
-		const decoder = new TextDecoder();
-		let buffer = "";
-		const event = (block: string): JsonRpcMessage | undefined => {
-			const data = block
-				.split(/\r?\n/)
-				.filter((line) => line.startsWith("data:"))
-				.map((line) => line.slice(5).replace(/^ /, ""))
-				.join("\n");
-			if (data === "") return undefined;
-			try {
-				const parsed = JSON.parse(data) as JsonRpcMessage | JsonRpcMessage[];
-				for (const message of Array.isArray(parsed) ? parsed : [parsed]) {
-					const found = pick(message);
-					if (found) return found;
-				}
-			} catch {}
-			return undefined;
-		};
-		try {
-			for (;;) {
-				const { value, done } = await reader.read();
-				buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
-				const blocks = buffer.split(/\r?\n\r?\n/);
-				buffer = done ? "" : blocks.pop()!;
-				for (const block of blocks) {
-					const found = event(block);
-					if (found) return found;
-				}
-				if (done) break;
-			}
-		} finally {
-			reader.cancel().catch(() => {});
+		if (error instanceof McpTimeoutError) return this.#unreachable(`no answer within ${error.timeoutMs / 1000} s`);
+		if (error instanceof McpRpcError) return new McpServerError(`${name}: ${method} failed: ${error.message} (${error.code})`, "error");
+		if (error instanceof McpAbortError || error instanceof McpConnectionClosedError) {
+			return new McpServerError(`${name}: ${method} failed: ${error.message}.`, "error");
 		}
-		throw new McpError(`${this.server.name}: the stream ended without an answer.`, "error");
-	}
-
-	async #send(method: string, params: unknown, signal: AbortSignal | undefined): Promise<{ result: unknown; response: Response }> {
-		const id = this.#nextId++;
-		const response = await this.#post({ jsonrpc: "2.0", id, method, params }, signal);
-		if (!response.ok) {
-			if (response.status === 404 && this.#session !== undefined) {
-				await response.body?.cancel();
-				throw new SessionExpired();
-			}
-			throw await this.#failure(response);
-		}
-		const message = await this.#read(response, id);
-		if (message.error) {
-			throw new McpError(`${this.server.name}: ${method} failed: ${message.error.message} (${message.error.code})`, "error");
-		}
-		return { result: message.result, response };
-	}
-
-	async #initialize(signal: AbortSignal | undefined): Promise<{ instructions?: string; serverName?: string }> {
-		this.#session = undefined;
-		this.#protocol = undefined;
-		const { result, response } = await this.#send(
-			"initialize",
-			{
-				protocolVersion: MCP_PROTOCOL_VERSION,
-				capabilities: {},
-				clientInfo: { name: "pi-durable-ios", title: "Pi", version: "0.1" },
-			},
-			signal,
-		);
-		const info = result as { protocolVersion?: string; instructions?: string; serverInfo?: { name?: string; title?: string } };
-		this.#session = response.headers.get("mcp-session-id") ?? undefined;
-		this.#protocol = info.protocolVersion ?? MCP_PROTOCOL_VERSION;
-		const initialized = await this.#post({ jsonrpc: "2.0", method: "notifications/initialized" }, signal);
-		await initialized.body?.cancel();
-		return { instructions: info.instructions, serverName: info.serverInfo?.title ?? info.serverInfo?.name };
-	}
-
-	/** Initializes once; a failed attempt is forgotten so the next call tries again. */
-	connect(signal?: AbortSignal): Promise<{ instructions?: string; serverName?: string }> {
-		if (this.#ready === undefined) {
-			const ready = this.#initialize(signal);
-			this.#ready = ready;
-			ready.catch(() => {
-				if (this.#ready === ready) this.#ready = undefined;
-			});
-		}
-		return this.#ready;
-	}
-
-	/**
-	 * A request in the current session; once more in a new one when the server forgot the session. Connecting gives up
-	 * after `SETUP_TIMEOUT_MS` (with the VPN off, a Tailscale address may not fail before URLSession's own timeout); the
-	 * request itself after `timeoutMs`, or never.
-	 */
-	async request(method: string, params: unknown, signal?: AbortSignal, timeoutMs?: number): Promise<unknown> {
-		const timedOut = (ms: number) => () => this.#unreachable(`no answer within ${ms / 1000} s`);
-		const { signal: bounded, done } = deadline(signal, timeoutMs, timedOut(timeoutMs ?? 0));
-		try {
-			for (let attempt = 0; ; attempt++) {
-				const setup = deadline(bounded, SETUP_TIMEOUT_MS, timedOut(SETUP_TIMEOUT_MS));
-				try {
-					await this.connect(setup.signal);
-				} catch (error) {
-					if (setup.signal?.aborted && setup.signal.reason instanceof McpError) throw setup.signal.reason;
-					throw error;
-				} finally {
-					setup.done();
-				}
-				try {
-					return (await this.#send(method, params, bounded)).result;
-				} catch (error) {
-					if (!(error instanceof SessionExpired) || attempt > 0) throw error instanceof SessionExpired ? new McpError(`${this.server.name}: the session expired.`, "error") : error;
-					this.reset();
-				}
-			}
-		} catch (error) {
-			if (bounded?.aborted && bounded.reason instanceof McpError) throw bounded.reason;
-			throw error;
-		} finally {
-			done();
-		}
+		const detail = error instanceof Error ? error.message.replace(/^fetch failed: /, "") : String(error);
+		// Swift's refusals (no token saved, host not allowed) are setup problems, not the network.
+		if (/API key|may not be sent/.test(detail)) return new McpServerError(`${name}: ${detail}. Check the server in Settings › MCP servers.`, "unauthorized");
+		return this.#unreachable(detail);
 	}
 
 	/** Every tool, following `nextCursor`, with the server's instructions and name. */
-	async listTools(signal?: AbortSignal): Promise<{ tools: McpToolDefinition[]; instructions?: string; serverName?: string }> {
-		const tools: McpToolDefinition[] = [];
-		let cursor: string | undefined;
-		for (let page = 0; page < 20; page++) {
-			const result = (await this.request("tools/list", cursor === undefined ? {} : { cursor }, signal, SETUP_TIMEOUT_MS)) as {
-				tools?: McpToolDefinition[];
-				nextCursor?: string;
-			};
-			tools.push(...(result.tools ?? []));
-			cursor = result.nextCursor;
-			if (!cursor) break;
-		}
-		const info = await this.connect(signal);
-		return { tools, ...info };
+	listTools(signal?: AbortSignal): Promise<{ tools: McpToolDefinition[]; instructions?: string; serverName?: string }> {
+		return this.#run("tools/list", signal, async (client) => {
+			const tools = await client.listTools({ ...(signal === undefined ? {} : { signal }) });
+			const info = client.serverInfo;
+			return { tools, instructions: client.instructions, serverName: info?.title ?? info?.name };
+		});
 	}
 
-	callTool(name: string, args: unknown, signal?: AbortSignal): Promise<McpCallResult> {
-		return this.request("tools/call", { name, arguments: args ?? {} }, signal) as Promise<McpCallResult>;
+	/** A tool call; it may take as long as it takes. Aborting it tells the server to cancel. */
+	callTool(name: string, args: Record<string, unknown> | undefined, signal?: AbortSignal): Promise<CallToolResult> {
+		return this.#run("tools/call", signal, (client) => client.callTool(name, args ?? {}, { timeoutMs: 0, ...(signal === undefined ? {} : { signal }) }));
 	}
 }
-
-class SessionExpired extends Error {}
 
 // ---- the extension ---------------------------------------------------------
 
@@ -422,41 +265,24 @@ function fit(text: string): string {
 		: text;
 }
 
-/** An MCP result as the model's tool output: text and images; other content as a line of text. */
-export function outputOf(result: McpCallResult): (TextContent | ImageContent)[] {
-	const output: (TextContent | ImageContent)[] = [];
-	let text = "";
-	const line = (value: string) => {
-		text += text === "" ? value : `\n${value}`;
-	};
-	for (const item of result.content ?? []) {
-		switch (item.type) {
-			case "text":
-				line(item.text);
-				break;
-			case "image":
-				output.push({ type: "image", data: item.data, mimeType: item.mimeType });
-				break;
-			case "audio":
-				line(`[Audio, ${item.mimeType}, not shown]`);
-				break;
-			case "resource_link":
-				line(`Resource: ${item.name ? `${item.name} ` : ""}${item.uri}${item.description ? ` (${item.description})` : ""}`);
-				break;
-			case "resource":
-				line(item.resource.text !== undefined ? `Resource ${item.resource.uri}:\n${item.resource.text}` : `[Resource ${item.resource.uri}, ${item.resource.mimeType ?? "binary"}, not shown]`);
-				break;
-		}
+/**
+ * An MCP result as the model's tool output (pi-mcp's `toLlmContent`): its text joined and cut to size, then its images.
+ */
+export function outputOf(result: Pick<CallToolResult, "content" | "structuredContent">): (TextContent | ImageContent)[] {
+	const images: ImageContent[] = [];
+	const lines: string[] = [];
+	for (const item of toLlmContent(result)) {
+		if (item.type === "text") lines.push(item.text);
+		else images.push(item);
 	}
-	if (text === "" && result.structuredContent !== undefined) text = JSON.stringify(result.structuredContent, null, 1);
-	if (text === "" && output.length === 0) text = "(no output)";
-	return text === "" ? output : [{ type: "text", text: fit(text) }, ...output];
+	const text = lines.length === 0 && images.length === 0 ? "(no output)" : lines.join("\n");
+	return text === "" ? images : [{ type: "text", text: fit(text) }, ...images];
 }
 
 /** The servers, their clients and statuses, and the `mcp` extension built from them. */
 export class McpHost {
 	#servers: McpServerConfig[] = [];
-	readonly #clients = new Map<string, McpClient>();
+	readonly #clients = new Map<string, McpConnection>();
 	readonly #statuses = new Map<string, McpStatus>();
 	/** Tool name → its server and MCP name, for Settings. */
 	#tools = new Map<string, { server: McpServerConfig; tool: McpToolDefinition }>();
@@ -467,7 +293,7 @@ export class McpHost {
 		public install: (extension: Extension) => void = () => {},
 		/** Statuses changed: `{ type: "mcp", statuses }` for Swift. */
 		private readonly changed: (statuses: McpStatus[]) => void = () => {},
-		private readonly fetcher?: Fetch,
+		private readonly fetcher?: McpFetch,
 	) {}
 
 	get extension(): Extension {
@@ -488,6 +314,7 @@ export class McpHost {
 		for (const [id, client] of this.#clients) {
 			const server = next.get(id);
 			if (server === undefined || server.url !== client.server.url || server.authHeader !== client.server.authHeader || !server.enabled) {
+				client.reset();
 				this.#clients.delete(id);
 				this.#statuses.delete(id);
 			}
@@ -496,12 +323,14 @@ export class McpHost {
 		this.rebuild();
 	}
 
-	#client(server: McpServerConfig): McpClient {
+	/** The server's connection; `setServers` already dropped it if the URL or auth changed. */
+	#client(server: McpServerConfig): McpConnection {
 		let client = this.#clients.get(server.id);
-		if (client === undefined || client.server !== server) {
-			client = new McpClient(server, this.fetcher);
+		if (client === undefined) {
+			client = new McpConnection(server, this.fetcher);
 			this.#clients.set(server.id, client);
 		}
+		client.server = server;
 		return client;
 	}
 
@@ -513,7 +342,7 @@ export class McpHost {
 	}
 
 	#failed(server: McpServerConfig, error: unknown): void {
-		const state = error instanceof McpError ? error.state : "error";
+		const state = error instanceof McpServerError ? error.state : "error";
 		const message = error instanceof Error ? error.message : String(error);
 		this.#report({ id: server.id, state, error: message, checkedAt: Date.now() });
 	}
@@ -606,12 +435,12 @@ export class McpHost {
 				// The current server object: a refresh may have replaced its session or URL since this tool was built.
 				const current = this.#servers.find((s) => s.id === server.id && s.enabled);
 				if (current === undefined) throw new Error(`${server.name} was removed or turned off in Settings.`);
-				let result: McpCallResult;
+				let result: CallToolResult;
 				try {
-					result = await this.#client(current).callTool(tool.name, args, context.abortSignal);
+					result = await this.#client(current).callTool(tool.name, args as Record<string, unknown>, context.abortSignal);
 				} catch (error) {
 					// Only connection trouble says something about the server; a JSON-RPC error is this call's.
-					if (!context.abortSignal?.aborted && error instanceof McpError && error.state !== "error") this.#failed(current, error);
+					if (!context.abortSignal?.aborted && error instanceof McpServerError && error.state !== "error") this.#failed(current, error);
 					throw error;
 				}
 				this.#report({ id: current.id, state: "ok", checkedAt: Date.now() });

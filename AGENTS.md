@@ -75,15 +75,18 @@ decisions that change the spec go in `docs/adr/`.
   resources. `src/app/` is the chat API Swift calls (`PiRuntime.*`): conversations, display frames,
   providers (`models.ts`, including the keyless `apple` provider), the Apple tool stubs, the UI tools (`surfaces.ts`: specs in Pi documents, JSON Patch), scheduled tasks
   and `notify_schedule` (`schedule.ts`), the web tools (`web.ts`: `web_search` through DeepSeek or Brave,
-  `web_fetch` through DeepSeek Fetch) over keyed HTTP services (`services.ts`), SSH tools (`ssh.ts`: `ssh_exec`, `ssh_job`), the Proxmox VE reads (`proxmox.ts`: `pve_*`), MCP servers (`mcp.ts`: a Streamable
-  HTTP client and the `mcp` extension, [ADR 0006](docs/adr/0006-mcp-servers.md)), the user's instructions and skills
+  `web_fetch` through DeepSeek Fetch) over keyed HTTP services (`services.ts`), SSH tools (`ssh.ts`: `ssh_exec`, `ssh_job`), the Proxmox VE reads (`proxmox.ts`: `pve_*`), MCP servers (`mcp.ts`: a connection per
+  server over `@earendil-works/pi-mcp`'s Streamable HTTP client, and the `mcp` extension, [ADR 0006](docs/adr/0006-mcp-servers.md),
+  [ADR 0015](docs/adr/0015-pi-mcp-client.md)), the user's instructions and skills
   (`instructions.ts`, `skills.ts`: prompt sections, `skill_read`, `skill_file`), Code Mode (`codemode.ts`: the
   `codemode` tool, scripts that call the other tools in QuickJS-wasm, read from the bundle resource `quickjs.wasm` on
   the first script; [ADR 0014](docs/adr/0014-code-mode.md)), the approval gate and the offline
   `scripted/assistant` model. `chat.ts`
   also has the entry points outside the chat (`ask` from intents and notification replies, `widgetAction`,
   `runSchedule`).
-  pi-durable, pi-ai, pi-schema (tool schemas) and chord stay pinned to the **same exact version** (1.5.0).
+  pi-durable, pi-ai, pi-schema (tool schemas), pi-mcp and chord stay pinned to the **same exact version** (1.5.0).
+  `build.ts` stubs pi-mcp's stdio transport and gives its SSE reader a local `Buffer.byteLength`; never add a global
+  `Buffer` (the provider SDKs would take their Node paths).
 - `scripts/`: simulator and device drivers.
 
 ## Build and test

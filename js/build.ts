@@ -20,6 +20,29 @@ const targets = [
 	{ entry: "src/runtime.ts", out: join(root, "Packages/PiRuntime/Tests/PiRuntimeTests/JS/pi-runtime.js") },
 ];
 
+// pi-mcp in JSC. Its index exports the stdio transport, which needs Node's child_process; the app can't start processes
+// (ADR 0006), so that module is a stub. And its SSE reader counts bytes with Node's `Buffer.byteLength`: a global
+// `Buffer` would send the provider SDKs down their Node paths (they test `typeof Buffer` and then call `Buffer.from`), so
+// that one module gets its own.
+const piMcp: esbuild.Plugin = {
+	name: "pi-mcp",
+	setup(build) {
+		build.onResolve({ filter: /^\.\/transports\/stdio\.js$/ }, (args) =>
+			/[\\/]@earendil-works[\\/]pi-mcp[\\/]dist[\\/]index\.js$/.test(args.importer) ? { path: "pi-mcp-stdio", namespace: "pi-mcp-stub" } : undefined,
+		);
+		build.onLoad({ filter: /.*/, namespace: "pi-mcp-stub" }, () => ({
+			contents: 'export class StdioTransport { constructor() { throw new Error("stdio MCP servers need a process; the app has none"); } }',
+			loader: "js",
+		}));
+		build.onLoad({ filter: /[\\/]@earendil-works[\\/]pi-mcp[\\/]dist[\\/]transports[\\/]streamable-http\.js$/ }, async (args) => {
+			const source = await Bun.file(args.path).text();
+			if (!source.includes("Buffer.byteLength")) throw new Error("pi-mcp no longer uses Buffer.byteLength; drop the pi-mcp-buffer plugin");
+			const shim = "const Buffer = { byteLength: (text) => new TextEncoder().encode(text).byteLength };\n";
+			return { contents: shim + source, loader: "js", resolveDir: dirname(args.path) };
+		});
+	},
+};
+
 for (const target of targets) {
 	mkdirSync(dirname(target.out), { recursive: true });
 	const result = await esbuild.build({
@@ -38,6 +61,7 @@ for (const target of targets) {
 		metafile: true,
 		logLevel: "warning",
 		define: { "process.env.NODE_ENV": '"production"' },
+		plugins: [piMcp],
 	});
 	mkdirSync(join(import.meta.dir, "dist"), { recursive: true });
 	writeFileSync(join(import.meta.dir, "dist", `${target.out.split("/").slice(-2).join("_")}.meta.json`), JSON.stringify(result.metafile));
