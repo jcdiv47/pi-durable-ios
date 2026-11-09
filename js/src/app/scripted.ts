@@ -24,6 +24,7 @@
 //   "ssh <host> <command…>" → ssh_exec (asks unless the host runs without asking); "sshjob <host> <job>" → ssh_job
 //   "skillfile <name> <path>" → skill_file a file of the skill
 //   "pve <tool> [json]" → the Proxmox tool pve_<tool> with the JSON arguments, such as "pve guest {"vmid":117}"
+//   "code <script…>" → codemode with the rest of the prompt as the script, such as "code return 6 * 7"
 //   "section <key>" → answers with the system prompt section `key` as it stands (or "(none)")
 //   anything else → "You said: …"
 
@@ -266,6 +267,10 @@ export function createScriptedModel() {
 				const args = json.length > 0 ? (JSON.parse(json.join(" ")) as never) : {};
 				return fauxAssistantMessage(fauxToolCall(`pve_${tool}`, args), { stopReason: "toolUse" });
 			}
+			case "code":
+				return fauxAssistantMessage(fauxToolCall("codemode", { code: prompt.slice(5) || 'text("hello from a script")' }), {
+					stopReason: "toolUse",
+				});
 			case "slow":
 				return fauxAssistantMessage(longAnswer);
 			case "skill":

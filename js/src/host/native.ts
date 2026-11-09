@@ -32,6 +32,8 @@ export interface NativeBindings {
 	sqliteGet(handle: number, sql: string, params: NativeSqliteValue[]): Record<string, NativeSqliteValue> | undefined;
 	sqliteAll(handle: number, sql: string, params: NativeSqliteValue[]): Record<string, NativeSqliteValue>[];
 	sqliteClose(handle: number): void;
+	/** Bytes of a file the host ships next to the bundle (such as `quickjs.wasm`), by plain name; null when missing. */
+	readResource(name: string): Uint8Array | null;
 	/** Sends one JSON event to the Swift side (UI, test drivers). */
 	emit(json: string): void;
 	/** Calls the Swift handler `name` with JSON arguments; the answer arrives through `__piHost.hostResult(id, ...)`. */

@@ -2,9 +2,10 @@
 //   src/runtime.ts      → App/Resources/pi-runtime.js      (the app's harness bootstrap)
 //   src/conformance.ts  → App/Resources/pi-conformance.js  (conformance suites, run by `-PiMode conformance`)
 //   both                → Packages/PiRuntime/Tests/PiRuntimeTests/JS/ (for `swift test`)
+//   quickjs.wasm        → next to each bundle: Code Mode's sandbox, read on its first script (src/app/codemode.ts)
 // Usage: bun build.ts [--minify=false] [--sourcemap]
 
-import { mkdirSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import * as esbuild from "esbuild";
 
@@ -42,4 +43,11 @@ for (const target of targets) {
 	writeFileSync(join(import.meta.dir, "dist", `${target.out.split("/").slice(-2).join("_")}.meta.json`), JSON.stringify(result.metafile));
 	const kb = (statSync(target.out).size / 1024).toFixed(0);
 	console.log(`${relative(root, target.out)}  ${kb} KB`);
+}
+
+// Code Mode's QuickJS: a resource, not part of the bundle, so a launch that runs no script never parses it.
+const wasm = join(import.meta.dir, "node_modules/quickjs-wasi/quickjs.wasm");
+for (const dir of new Set(targets.map((target) => dirname(target.out)))) {
+	copyFileSync(wasm, join(dir, "quickjs.wasm"));
+	console.log(`${relative(root, join(dir, "quickjs.wasm"))}  ${(statSync(wasm).size / 1024).toFixed(0)} KB`);
 }

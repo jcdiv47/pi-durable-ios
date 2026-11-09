@@ -574,6 +574,22 @@ installFetch(define);
 
 // ---- host callbacks ------------------------------------------------------
 
+// ---- WebAssembly ----------------------------------------------------------
+// JSC settles `WebAssembly.compile` and `instantiate` from the thread's run loop, and the JS queue is a dispatch queue
+// with none: their promises never settle. The synchronous constructors work, so the async forms wrap them (Code Mode's
+// QuickJS, src/app/codemode.ts, instantiates once per script and compiles once per process).
+
+const wasm = g.WebAssembly as typeof WebAssembly | undefined;
+if (wasm !== undefined) {
+	const { Module, Instance } = wasm;
+	wasm.compile = async (bytes: BufferSource) => new Module(bytes);
+	wasm.instantiate = (async (source: BufferSource | WebAssembly.Module, imports?: WebAssembly.Imports) => {
+		if (source instanceof Module) return new Instance(source, imports);
+		const module = new Module(source);
+		return { module, instance: new Instance(module, imports) };
+	}) as typeof WebAssembly.instantiate;
+}
+
 const host: HostCallbacks = {
 	fireTimer(id) {
 		const entry = timers.get(id);

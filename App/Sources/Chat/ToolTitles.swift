@@ -22,6 +22,7 @@ enum ToolTitles {
         case "schedule_task": Title(action: "Schedule a task", symbol: "clock.arrow.circlepath", tint: .pink)
         case "web_fetch": Title(action: "Read a web page", symbol: "globe", tint: .blue)
         case "ssh_exec": Title(action: "Run a command on your machine", symbol: "terminal.fill", tint: .mint)
+        case "codemode": Title(action: "Run a script that uses Pi's tools", symbol: "curlybraces", tint: .indigo)
         default: Title(action: "Run \(tool)", symbol: "wrench.and.screwdriver.fill", tint: .gray)
         }
     }

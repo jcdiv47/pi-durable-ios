@@ -15,7 +15,9 @@ node_modules/
 
 # Bundled JS (built by `bun js/build.ts`)
 App/Resources/*.js
+App/Resources/*.wasm
 Packages/PiRuntime/Tests/PiRuntimeTests/JS/*.js
+Packages/PiRuntime/Tests/PiRuntimeTests/JS/*.wasm
 
 # Local secrets and config — never commit
 LocalConfig.xcconfig

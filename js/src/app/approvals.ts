@@ -14,7 +14,10 @@ export type ApprovalRequest = {
 	/** The tool task's ID; unique per call and stable across restarts. */
 	readonly id: number;
 	readonly conversationId: number;
-	/** The model's tool call ID, which the transcript shows the call under. */
+	/**
+	 * The model's tool call ID, which the transcript shows the call under. For a call a Code Mode script made, the
+	 * `codemode` call's: the script's call is `<codemode call ID>/c<n>`, which the transcript never shows.
+	 */
 	readonly callId: string;
 	readonly tool: string;
 	readonly arguments: JsonObject;
@@ -42,6 +45,12 @@ export const defaultPolicies: Record<string, ToolPolicy> = {
 
 /** A call of an "ask" tool that may run without asking. */
 export type TrustCheck = (args: JsonObject, conversationId: number, context: Context) => Promise<boolean>;
+
+/** The model's call a nested call belongs to: Pi names nested calls `<parent call ID>/<child key>`. */
+export function modelCallId(callId: string): string {
+	const slash = callId.indexOf("/");
+	return slash < 0 ? callId : callId.slice(0, slash);
+}
 
 export class Approvals {
 	policies: Record<string, ToolPolicy> = { ...defaultPolicies };
@@ -114,7 +123,8 @@ export class Approvals {
 						const policy = this.policy(call.name);
 						if (policy === "auto") return undefined;
 						if (policy === "deny") return { block: `The user has turned off ${call.name}.` };
-						const trusted = this.trusted[call.name];
+						// A Code Mode script's call always asks: what the script read never reaches the transcript the checks read.
+						const trusted = call.id.includes("/") ? undefined : this.trusted[call.name];
 						if (trusted !== undefined && (await trusted(call.arguments, api.conversationId, context))) return undefined;
 						let decision = await api.memo<Decision>("approval", context);
 						if (decision === undefined) {
@@ -124,7 +134,7 @@ export class Approvals {
 								{
 									id: api.taskId,
 									conversationId: api.conversationId,
-									callId: call.id,
+									callId: modelCallId(call.id),
 									tool: call.name,
 									arguments: call.arguments,
 									requestedAt: Date.now(),
