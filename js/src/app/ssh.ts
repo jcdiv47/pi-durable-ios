@@ -172,7 +172,8 @@ export function untrustedText(entries: readonly EntryRecord[]): boolean {
 	return entries.some((entry) => {
 		if (entry.kind !== "pi.tool-result") return false;
 		const name = (entry.model?.[0] as { toolName?: string } | undefined)?.toolName ?? "";
-		return name === "web_search" || name === "web_fetch" || name.startsWith("mcp__");
+		// A Code Mode script may have read any of those; only its output is in the transcript.
+		return name === "web_search" || name === "web_fetch" || name === "codemode" || name.startsWith("mcp__");
 	});
 }
 

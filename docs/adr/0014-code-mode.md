@@ -58,8 +58,8 @@ What had to be checked here:
 - Cards (Apple tools, `pve_*`, photos) come from top-level results. A script's nested calls draw none; the model gets
   the script's output only.
 - `web_fetch` and `ssh_exec` skip approval only for calls the conversation already "trusts", judged from the
-  transcript. A URL or host a script found in a nested result isn't in the transcript, so the call asks. That errs
-  toward asking.
+  transcript. What a script read never reaches the transcript, so a script's call of either always asks. A
+  `codemode` result counts as outside text too, so later direct `ssh_exec` calls ask as well (`untrustedText`).
 - The VM's fingerprint includes the heap limit and the interrupt budget. Changing either, or upgrading pi-codemode or
   quickjs-wasi, makes a script that a restart finds running end with an error instead of replaying.
 - With no execution environment, a result cut to its token budget can't spill to a file. The model sees the cut text

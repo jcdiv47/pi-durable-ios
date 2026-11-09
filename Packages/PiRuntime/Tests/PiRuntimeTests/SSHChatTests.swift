@@ -72,6 +72,31 @@ struct SSHChatTests {
         try await harness.close()
     }
 
+    @Test("A script's ssh_exec asks even on a host that runs without asking, and so does any after a script", .timeLimit(.minutes(1)))
+    func codeModeAsks() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let log = ChatLog()
+        let harness = try await openChat(log, db: directory.appendingPathComponent("chat.sqlite").path)
+        try await harness.perform("PiRuntime.setSshHosts", [Self.hosts(runWithoutAsking: true)])
+        let meta: Meta = try await harness.call("PiRuntime.createConversation", ["scripted", "assistant"])
+        try await harness.perform("PiRuntime.watchConversation", [meta.id])
+
+        try await harness.perform("PiRuntime.send", [meta.id, #"code await tools.ssh_exec({host: "nas", command: "uptime"})"#, "r1"])
+        try await until(.seconds(30)) { log.approvals.count == 1 }
+        #expect(log.approvals[0]["tool"] as? String == "ssh_exec", "what the script read is not in the transcript: ask")
+        let _: Bool = try await harness.call("PiRuntime.answerApproval", [log.approvals[0]["id"] as! Int, "deny"])
+        try await until(.seconds(30)) { !log.busy(meta.id) && log.items(meta.id).count == 4 }
+
+        try await harness.perform("PiRuntime.send", [meta.id, "ssh nas uptime", "r2"])
+        try await until { log.approvals.count == 1 }
+        #expect(log.approvals[0]["tool"] as? String == "ssh_exec", "a script's output in the conversation: ask")
+        let _: Bool = try await harness.call("PiRuntime.answerApproval", [log.approvals[0]["id"] as! Int, "deny"])
+        try await until { !log.busy(meta.id) }
+        #expect(log.calls("ssh.exec") == 0)
+        try await harness.close()
+    }
+
     @Test("Unknown and unready hosts fail without reaching Swift; the prompt lists ready hosts", .timeLimit(.minutes(1)))
     func hosts() async throws {
         let directory = try temporaryDirectory()

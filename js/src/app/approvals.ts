@@ -123,7 +123,8 @@ export class Approvals {
 						const policy = this.policy(call.name);
 						if (policy === "auto") return undefined;
 						if (policy === "deny") return { block: `The user has turned off ${call.name}.` };
-						const trusted = this.trusted[call.name];
+						// A Code Mode script's call always asks: what the script read never reaches the transcript the checks read.
+						const trusted = call.id.includes("/") ? undefined : this.trusted[call.name];
 						if (trusted !== undefined && (await trusted(call.arguments, api.conversationId, context))) return undefined;
 						let decision = await api.memo<Decision>("approval", context);
 						if (decision === undefined) {
