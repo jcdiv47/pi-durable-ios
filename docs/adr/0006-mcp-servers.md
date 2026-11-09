@@ -20,6 +20,9 @@ Harness runs, and deferred tools with `tool_search` exist for large tool sets.
 
 ### Transport and client
 
+> Replaced by [ADR 0015](0015-pi-mcp-client.md): the client is now `@earendil-works/pi-mcp`. What follows is the
+> client this ADR first built.
+
 - **Streamable HTTP only**, as `js/src/app/mcp.ts` (`McpClient`): `initialize` and `notifications/initialized` on
   first use, `tools/list` with paging, `tools/call`. It asks for protocol version 2025-06-18 and sends the version the
   server answers with in `MCP-Protocol-Version`. It keeps `Mcp-Session-Id` and, when the server answers 404 (it

@@ -1,7 +1,8 @@
-// The MCP client and the `mcp` extension against an in-memory Streamable HTTP server, run inside JSC (and under Bun).
+// The MCP connection (pi-mcp's client) and the `mcp` extension against an in-memory Streamable HTTP server, run inside
+// JSC (and under Bun).
 
 import type { StorageConformanceAssertions } from "@earendil-works/pi-durable/testing";
-import { McpClient, McpError, McpHost, type McpServerConfig, type McpStatus, type McpToolDefinition, outputOf } from "../src/app/mcp.ts";
+import { McpConnection, McpHost, type McpServerConfig, McpServerError, type McpStatus, type McpToolDefinition, outputOf } from "../src/app/mcp.ts";
 
 type Case = { name: string; run(): Promise<void> };
 
@@ -33,18 +34,29 @@ class FakeServer {
 	forget = false;
 	status: number | undefined;
 	down = false;
+	/** `notifications/initialized` gets no answer until the request is aborted. */
+	stallInitialized = false;
+	/** Requests other than POST: GET (a server-to-client stream) and DELETE (a session ended), with the session. */
+	readonly other: string[] = [];
 
-	fetch = async (url: string, init: RequestInit): Promise<Response> => {
+	fetch = async (url: string | URL, init: RequestInit = {}): Promise<Response> => {
 		if (this.down) throw new TypeError("fetch failed: The network connection was lost.");
+		if (init.method !== "POST") {
+			this.other.push(`${init.method} ${new Headers(init.headers).get("mcp-session-id")}`);
+			return new Response(null, { status: init.method === "GET" ? 405 : 204 });
+		}
 		const headers: Record<string, string> = {};
-		for (const [k, v] of Object.entries(init.headers as Record<string, string>)) headers[k.toLowerCase()] = v;
+		new Headers(init.headers).forEach((v, k) => (headers[k] = v));
 		const message = JSON.parse(String(init.body)) as Message;
 		this.received.push({ method: message.method, headers, message });
-		if (url !== "http://100.64.0.2:8123/api/mcp") return new Response("no", { status: 404 });
+		if (this.stallInitialized && message.method === "notifications/initialized") {
+			return new Promise((_, reject) => init.signal?.addEventListener("abort", () => reject(new TypeError("aborted")), { once: true }));
+		}
+		if (String(url) !== "http://100.64.0.2:8123/api/mcp") return new Response("no", { status: 404 });
 		if (this.status !== undefined) return new Response("Unauthorized", { status: this.status });
 		if (message.method === "initialize") {
 			this.session = `s${++this.sessions}`;
-			return json({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "fake-ha" }, instructions: "Use entity IDs." } }, { "mcp-session-id": this.session });
+			return json({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "fake-ha", version: "1.0" }, instructions: "Use entity IDs." } }, { "mcp-session-id": this.session });
 		}
 		if (headers["mcp-session-id"] !== this.session) return new Response("bad session", { status: 400 });
 		if (this.forget) {
@@ -122,7 +134,7 @@ export function createMcpCases(t: StorageConformanceAssertions): Case[] {
 			name: "connects, pages tools/list, reads SSE, answers a ping, and sends session, version and key placeholder",
 			async run() {
 				const fake = new FakeServer();
-				const client = new McpClient(server(), fake.fetch);
+				const client = new McpConnection(server(), fake.fetch);
 				const listed = await client.listTools();
 				t.deepEqual(listed.tools.map((tool) => tool.name), ["get_state", "turn.on", "send"]);
 				t.strictEqual(listed.instructions, "Use entity IDs.");
@@ -138,13 +150,15 @@ export function createMcpCases(t: StorageConformanceAssertions): Case[] {
 				t.strictEqual(fake.received[2]!.headers["mcp-session-id"], "s1");
 				t.strictEqual(fake.received[2]!.headers["mcp-protocol-version"], "2025-06-18");
 				t.deepEqual(fake.received[4]!.message, { jsonrpc: "2.0", id: "srv-1", result: {} });
+				// No server-to-client GET stream: it would hold a connection open for notifications the app ignores.
+				t.deepEqual(fake.other, []);
 			},
 		},
 		{
 			name: "a forgotten session initializes again once; a custom auth header gets the bare placeholder",
 			async run() {
 				const fake = new FakeServer();
-				const client = new McpClient(server({ authHeader: "X-API-Key" }), fake.fetch);
+				const client = new McpConnection(server({ authHeader: "X-API-Key" }), fake.fetch);
 				await client.callTool("get_state", { entity: "light.desk" });
 				fake.forget = true;
 				const result = await client.callTool("get_state", { entity: "light.desk" });
@@ -152,6 +166,9 @@ export function createMcpCases(t: StorageConformanceAssertions): Case[] {
 				t.deepEqual(result.content, [{ type: "text", text: 'on: {"entity":"light.desk"}' }]);
 				t.strictEqual(fake.received[0]!.headers["x-api-key"], "pi-host-key:mcp-ha");
 				t.strictEqual(fake.received[0]!.headers.authorization, undefined);
+				// The forgotten session is ended, as a courtesy.
+				await new Promise((resolve) => setTimeout(resolve, 10));
+				t.deepEqual(fake.other, ["DELETE s1"]);
 			},
 		},
 		{
@@ -159,19 +176,33 @@ export function createMcpCases(t: StorageConformanceAssertions): Case[] {
 			async run() {
 				const fake = new FakeServer();
 				fake.status = 401;
-				const refused = await rejects(t, new McpClient(server(), fake.fetch).listTools());
-				t.ok(refused instanceof McpError && refused.state === "unauthorized", String(refused));
+				const refused = await rejects(t, new McpConnection(server(), fake.fetch).listTools());
+				t.ok(refused instanceof McpServerError && refused.state === "unauthorized", String(refused));
 				fake.status = undefined;
 				fake.down = true;
-				const down = (await rejects(t, new McpClient(server(), fake.fetch).listTools())) as McpError;
+				const down = (await rejects(t, new McpConnection(server(), fake.fetch).listTools())) as McpServerError;
 				t.strictEqual(down.state, "unreachable");
 				t.ok(down.message.includes("100.64.0.2:8123") && down.message.includes("VPN"), down.message);
-				const noVpn = (await rejects(t, new McpClient(server({ needsVpn: false }), fake.fetch).listTools())) as McpError;
+				const noVpn = (await rejects(t, new McpConnection(server({ needsVpn: false }), fake.fetch).listTools())) as McpServerError;
 				t.ok(!noVpn.message.includes("VPN"), noVpn.message);
 				fake.down = false;
-				const rpc = (await rejects(t, new McpClient(server(), fake.fetch).callTool("nope", {}))) as McpError;
+				const rpc = (await rejects(t, new McpConnection(server(), fake.fetch).callTool("nope", {}))) as McpServerError;
 				t.strictEqual(rpc.state, "error");
 				t.ok(rpc.message.includes("unknown tool nope"), rpc.message);
+			},
+		},
+		{
+			name: "a handshake that stalls after initialize times out as unreachable, and the next call connects again",
+			async run() {
+				const fake = new FakeServer();
+				fake.stallInitialized = true;
+				const client = new McpConnection(server(), fake.fetch, 50);
+				const stalled = (await rejects(t, client.listTools())) as McpServerError;
+				t.strictEqual(stalled.state, "unreachable");
+				t.ok(stalled.message.includes("no answer within") && stalled.message.includes("VPN"), stalled.message);
+				fake.stallInitialized = false;
+				t.strictEqual((await client.listTools()).tools.length, 3);
+				t.strictEqual(fake.sessions, 2);
 			},
 		},
 		{
@@ -238,11 +269,12 @@ export function createMcpCases(t: StorageConformanceAssertions): Case[] {
 						],
 					}),
 					[
-						{ type: "text", text: "a\nResource: x file:///x\nResource mem://y:\ny" },
+						{ type: "text", text: "a\nx: file:///x\ny" },
 						{ type: "image", data: "AAAA", mimeType: "image/png" },
 					],
 				);
-				t.deepEqual(outputOf({ content: [], structuredContent: { n: 1 } }), [{ type: "text", text: '{\n "n": 1\n}' }]);
+				t.deepEqual(outputOf({ content: [], structuredContent: { n: 1 } }), [{ type: "text", text: '{\n  "n": 1\n}' }]);
+				t.deepEqual(outputOf({ content: [] }), [{ type: "text", text: "(no output)" }]);
 				const long = outputOf({ content: [{ type: "text", text: "x".repeat(30_000) }] })[0] as { text: string };
 				t.ok(long.text.length < 24_100 && long.text.endsWith("characters]"), String(long.text.length));
 			},
