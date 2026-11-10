@@ -76,10 +76,12 @@ struct MCPServerView: View {
     @State private var loaded = false
     @State private var signingIn = false
     @State private var signInError: String?
+    /// A new server whose sign-in failed: the view stays as its edit view, with the error.
+    @State private var addedID: String?
     @Environment(\.dismiss) private var dismiss
     @Environment(\.webAuthenticationSession) private var webAuthenticationSession
 
-    private var current: MCPServer? { server.flatMap { s in store.mcpServers.first { $0.id == s.id } } }
+    private var current: MCPServer? { (server?.id ?? addedID).flatMap { id in store.mcpServers.first { $0.id == id } } }
     private var status: MCPStatus? { current.flatMap { store.mcpStatuses[$0.id] } }
     private var hasToken: Bool { current.map { store.hasKey($0.keyName) } ?? false }
     private var parsed: URL? {
@@ -137,7 +139,7 @@ struct MCPServerView: View {
 
             Section {
                 Toggle("Needs VPN", isOn: Binding(get: { needsVpn }, set: { needsVpn = $0; vpnTouched = true }))
-                if server != nil { Toggle("On", isOn: $enabled) }
+                if current != nil { Toggle("On", isOn: $enabled) }
             } footer: {
                 Text("A server only reachable over Tailscale or sing-box. When it can't be reached and the VPN looks off, Pi warns you in the chat, or with a notification when a scheduled task needed it.")
             }
@@ -215,10 +217,10 @@ struct MCPServerView: View {
                 }
             }
         }
-        .navigationTitle(server?.name ?? "Add MCP server")
-        .confirmationDialog("Remove \(server?.name ?? "this server")?", isPresented: $confirmingRemove, titleVisibility: .visible) {
+        .navigationTitle(current?.name ?? "Add MCP server")
+        .confirmationDialog("Remove \(current?.name ?? "this server")?", isPresented: $confirmingRemove, titleVisibility: .visible) {
             Button("Remove", role: .destructive) {
-                guard let id = server?.id else { return }
+                guard let id = current?.id else { return }
                 Task {
                     await store.removeMCPServer(id)
                     dismiss()
@@ -280,27 +282,35 @@ struct MCPServerView: View {
         token = ""
         await store.saveMCPServer(updated, token: newToken.isEmpty ? nil : newToken)
         // An OAuth server that isn't signed in signs in at once, or it has no tools to offer.
-        if updated.usesOAuth, updated.enabled, !store.mcpSignedIn.contains(updated.id) { await signIn(updated.id) }
+        if updated.usesOAuth, updated.enabled, !store.mcpSignedIn.contains(updated.id), !(await signIn(updated.id)) {
+            // Stay, as the new server's edit view, so the error shows and Sign in can be tried again.
+            addedID = updated.id
+            return
+        }
         // A new server's view becomes its edit view: go back to the list, where it now shows.
         if server == nil { dismiss() }
     }
 
     private var saveTitle: String {
-        if server == nil { return auth == .oauth ? "Add and sign in" : "Add and connect" }
+        if current == nil { return auth == .oauth ? "Add and sign in" : "Add and connect" }
         return "Save and connect"
     }
 
-    private func signIn(_ id: String) async {
+    /// Whether the user is signed in afterwards; false also when they closed the page.
+    @discardableResult
+    private func signIn(_ id: String) async -> Bool {
         signingIn = true
         signInError = nil
         defer { signingIn = false }
         do {
             try await store.signInMCP(id, session: webAuthenticationSession)
+            return true
         } catch ASWebAuthenticationSessionError.canceledLogin {
             // The user closed the page.
         } catch {
             signInError = String(describing: error)
         }
+        return false
     }
 }
 
