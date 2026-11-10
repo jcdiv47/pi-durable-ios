@@ -313,35 +313,3 @@ struct MCPServerView: View {
         return false
     }
 }
-
-/// Over the transcript while VPN-only MCP servers can't be reached; a tap checks them again.
-struct MCPWarningBanner: View {
-    let store: ChatStore
-    let text: String
-    @State private var checking = false
-
-    var body: some View {
-        Button {
-            checking = true
-            Task {
-                await store.refreshMCP()
-                checking = false
-            }
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: store.vpnUp ? "exclamationmark.triangle.fill" : "network.slash")
-                Text(text).font(.footnote).multilineTextAlignment(.leading)
-                Spacer(minLength: 0)
-                if checking { ProgressView().controlSize(.small) } else { Image(systemName: "arrow.clockwise").font(.footnote) }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(.orange.opacity(0.15), in: .rect(cornerRadius: 10))
-        }
-        .buttonStyle(.plain)
-        .padding(.horizontal)
-        .padding(.top, 4)
-        .accessibilityIdentifier("mcp.warning")
-        .accessibilityHint("Checks the servers again")
-    }
-}

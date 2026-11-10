@@ -17,7 +17,7 @@ JavaScriptCore runtime.
   Links go through the root's `openURL` action: with Settings › Links on Pi, web links push `Route.browser`
   (`BrowserView`, a SwiftUI `WebPage`), so the stack's edge swipe returns to the chat.
   Settings › MCP servers (`MCPSettingsView`, `MCPServers`): the user's MCP servers, kept in Swift with their cached
-  tool lists (Application Support `mcp-servers.json`), the VPN hint (`VPNStatus`) and the chat's warning banner. Auth is
+  tool lists (Application Support `mcp-servers.json`) and the VPN hint (`VPNStatus`). Auth is
   none, a token, or OAuth sign-in: pi-mcp's OAuth client runs in JS, its state lives in the Keychain service
   `dev.jcdiv47.pidurable.mcp-oauth` (`MCPOAuth`, through the `mcp.oauth*` host calls), and the sign-in page is an
   `ASWebAuthenticationSession` redirecting to `dev.jcdiv47.pidurable:/oauth/mcp`.

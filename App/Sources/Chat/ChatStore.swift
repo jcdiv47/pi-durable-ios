@@ -762,14 +762,6 @@ final class ChatStore {
         do { try await harness.perform("PiRuntime.setSkills", [try skills.map { try harness.jsonArgument($0) }]) } catch { report("skills", error) }
     }
 
-    /// A warning for the chat when VPN-only servers can't be reached, or nil.
-    var mcpWarning: String? {
-        let unreachable = mcpServers.filter { $0.enabled && $0.needsVpn && mcpStatuses[$0.id]?.state == "unreachable" }
-        guard !unreachable.isEmpty else { return nil }
-        let names = ListFormatter.localizedString(byJoining: unreachable.map(\.name))
-        return vpnUp ? "Can't reach \(names). Check that the VPN is connected." : "Can't reach \(names): the VPN looks off."
-    }
-
     /// Adds or replaces a server. `token`: a new token for the Keychain; nil keeps the saved one. Returns the server's
     /// status once Pi has talked to it.
     @discardableResult

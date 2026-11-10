@@ -104,31 +104,43 @@ enum M0Runner {
         model.status = "Capabilities written to Documents/m0/capabilities.json"
     }
 
-    /// Whether a bare JSContext (no JIT on a device) has WebAssembly: Code Mode's QuickJS sandbox needs it.
-    private static func webAssemblyCheck() -> [String: Any] {
-        guard let context = JSContext() else { return ["ok": false, "error": "no JSContext"] }
-        // (module (func (export "add") (param i32 i32) (result i32) local.get 0 local.get 1 i32.add))
-        let result = context.evaluateScript("""
-        (() => {
-          if (typeof WebAssembly !== "object") return { ok: false, typeof: typeof WebAssembly };
-          try {
-            const bytes = new Uint8Array([0,97,115,109,1,0,0,0,1,7,1,96,2,127,127,1,127,3,2,1,0,7,7,1,3,97,100,100,0,0,10,9,1,7,0,32,0,32,1,106,11]);
-            const instance = new WebAssembly.Instance(new WebAssembly.Module(bytes), {});
-            return { ok: instance.exports.add(2, 3) === 5, typeof: "object", async: typeof WebAssembly.instantiate };
-          } catch (error) {
-            return { ok: false, typeof: "object", error: String(error) };
-          }
-        })()
-        """)
-        return (result?.toDictionary() as? [String: Any]) ?? ["ok": false, "error": String(describing: context.exception)]
-    }
-
     private static var isSimulator: Bool {
         #if targetEnvironment(simulator)
         true
         #else
         false
         #endif
+    }
+
+    /// Whether a bare JSContext has WebAssembly without the JIT: Code Mode's QuickJS sandbox is a wasm module.
+    /// Compiles and runs `add(i32, i32)`, then a loop of 10 million iterations for the interpreter's speed.
+    private static func webAssemblyCheck() -> [String: Any] {
+        guard let context = JSContext() else { return ["available": false, "error": "no JSContext"] }
+        let result = context.evaluateScript("""
+        (() => {
+          if (typeof WebAssembly !== "object") return { available: false };
+          const add = new Uint8Array([0,97,115,109,1,0,0,0, 1,7,1,96,2,127,127,1,127, 3,2,1,0,
+            7,7,1,3,97,100,100,0,0, 10,9,1,7,0,32,0,32,1,106,11]);
+          const out = { available: true, validate: WebAssembly.validate(add) };
+          try {
+            const { exports } = new WebAssembly.Instance(new WebAssembly.Module(add));
+            out.add = exports.add(2, 3);
+          } catch (e) { out.addError = String(e); }
+          // loop(n): sum of i % 7 for 0 < i <= n, the shape of the M0 JS benchmark.
+          const loop = new Uint8Array([0,97,115,109,1,0,0,0, 1,6,1,96,1,127,1,127, 3,2,1,0,
+            7,8,1,4,108,111,111,112,0,0,
+            10,38,1,36,1,1,127, 2,64,3,64, 32,0,69,13,1, 32,1,32,0,65,7,112,106,33,1, 32,0,65,1,107,33,0, 12,0, 11,11, 32,1,11]);
+          try {
+            const { exports } = new WebAssembly.Instance(new WebAssembly.Module(loop));
+            const start = Date.now();
+            out.loop = exports.loop(10000000);
+            out.loopMs = Date.now() - start;
+          } catch (e) { out.loopError = String(e); }
+          return out;
+        })()
+        """)
+        if let exception = context.exception { return ["available": false, "error": exception.toString() ?? "?"] }
+        return result?.toDictionary() as? [String: Any] ?? ["available": false, "error": "no result"]
     }
 
     /// Writes a snapshot the widget displays, which proves the container is shared across processes.
