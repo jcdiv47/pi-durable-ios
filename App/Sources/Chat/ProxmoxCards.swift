@@ -1,6 +1,6 @@
 import SwiftUI
 
-// The Proxmox VE cards (docs/adr/0013-proxmox.md): the node, its guests and its backups. The chat draws them under
+// The Proxmox VE cards: the node, its guests and its backups. The chat draws them under
 // pve_overview, pve_guests and pve_backups (their `details.card`, see display.ts); the Proxmox page draws all three from
 // `PiRuntime.proxmoxDashboard`. Times are UNIX seconds, sizes bytes.
 

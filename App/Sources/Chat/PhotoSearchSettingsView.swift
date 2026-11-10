@@ -3,7 +3,7 @@ import PiAppleTools
 import SwiftUI
 import UIKit
 
-/// Settings › Photo Search (docs/adr/0010-photo-search.md): how much of the library the on-device index covers, and
+/// Settings › Photo Search: how much of the library the on-device index covers, and
 /// indexing now, stopping, or deleting the index. Builds without the model in the app download it here
 /// (`ClipModelDownload`).
 struct PhotoSearchSettingsView: View {

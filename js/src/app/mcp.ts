@@ -1,4 +1,4 @@
-// MCP servers the user added in Settings (docs/adr/0006-mcp-servers.md): a connection per server over pi-mcp's
+// MCP servers the user added in Settings: a connection per server over pi-mcp's
 // Streamable HTTP client, and the `mcp` extension, which offers every enabled server's tools as `mcp__<server>__<tool>`.
 //
 // Swift owns the server list and caches each server's last `tools/list`, so the extension is installed from the cache

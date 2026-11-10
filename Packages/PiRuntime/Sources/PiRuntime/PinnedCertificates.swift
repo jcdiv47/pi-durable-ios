@@ -4,7 +4,7 @@ import os
 import Security
 
 /// Servers with their own certificates (Proxmox's, from its cluster CA) that the user trusted by the certificate's
-/// SHA-256 fingerprint in Settings (docs/adr/0013-proxmox.md). For a pinned host only the leaf certificate's fingerprint
+/// SHA-256 fingerprint in Settings. For a pinned host only the leaf certificate's fingerprint
 /// counts: not its names, not its chain. Every other host keeps the system's checks.
 public enum PinnedCertificates {
     private static let pins = OSAllocatedUnfairLock<[String: String]>(initialState: [:])

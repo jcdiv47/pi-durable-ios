@@ -4,7 +4,7 @@ import Foundation
 /// under `root` (Application Support `skills/` in the app). Swift owns the files: JS gets the parsed list and reads a
 /// skill's text through host calls (`skills.read`, `skills.file`), and every path stays inside the skill's folder.
 ///
-/// What is enforced (docs/adr/0007-instructions-and-skills.md): a SKILL.md with frontmatter, a `name` that is safe as a
+/// What is enforced: a SKILL.md with frontmatter, a `name` that is safe as a
 /// folder name and a tool argument, and a `description` short enough for every prompt; no symlinks, no paths out of the
 /// folder, and caps on size and file count. Everything else is a warning or ignored: other tools' frontmatter fields
 /// are kept but unused, and scripts are kept but never run.

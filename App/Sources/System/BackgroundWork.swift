@@ -15,7 +15,7 @@ import PiAppleTools
 final class BackgroundWork {
     nonisolated static let refresh = "dev.jcdiv47.pidurable.refresh"
     nonisolated static let processing = "dev.jcdiv47.pidurable.processing"
-    /// Photo indexing while charging (docs/adr/0010-photo-search.md). Never opens Pi.
+    /// Photo indexing while charging. Never opens Pi.
     nonisolated static let photos = "dev.jcdiv47.pidurable.photos"
     /// Continued processing tasks use a fresh identifier under this wildcard each time.
     nonisolated static let runPrefix = "dev.jcdiv47.pidurable.run."

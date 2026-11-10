@@ -2,7 +2,7 @@ import PiRuntime
 import SwiftUI
 import UIKit
 
-/// Settings › Proxmox (docs/adr/0013-proxmox.md): the node's address, the token Pi uses, and the node's certificate,
+/// Settings › Proxmox: the node's address, the token Pi uses, and the node's certificate,
 /// which the user trusts by its fingerprint before any token is sent.
 struct ProxmoxSettingsView: View {
     let store: ChatStore

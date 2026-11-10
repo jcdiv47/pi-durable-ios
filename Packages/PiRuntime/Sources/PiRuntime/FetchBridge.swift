@@ -8,7 +8,7 @@ public protocol ProviderKeySource: Sendable {
     func apiKey(for provider: String) -> String?
 }
 
-/// The keyed services: model providers and the HTTP APIs behind tools (docs/adr/0004-http-api-services.md).
+/// The keyed services: model providers and the HTTP APIs behind tools.
 public enum ProviderKeys {
     static let prefix = "pi-host-key:"
 
@@ -41,13 +41,13 @@ public enum ProviderKeys {
         customHost.withLock { $0 = host?.lowercased() }
     }
 
-    /// The host of the user's Proxmox VE node (docs/adr/0013-proxmox.md), the only host the `proxmox` token may be
+    /// The host of the user's Proxmox VE node, the only host the `proxmox` token may be
     /// sent to. Set from Swift only, with the node's certificate pinned (`PinnedCertificates`).
     public static func setProxmoxHost(_ host: String?) {
         proxmoxHost.withLock { $0 = host?.lowercased() }
     }
 
-    /// The host of each MCP server the user added in Settings, by server ID (docs/adr/0006-mcp-servers.md). A
+    /// The host of each MCP server the user added in Settings, by server ID. A
     /// server's token (`mcp-<id>`) may be sent only to its own host. Set from Swift only; JS cannot add a host.
     public static func setMCPHosts(_ hosts: [String: String]) {
         mcpHosts.withLock { $0 = hosts.mapValues { $0.lowercased() } }

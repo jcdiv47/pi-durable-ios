@@ -1,6 +1,6 @@
 import Foundation
 
-/// The POSIX sh scripts behind `ssh_exec` and `ssh_job` (docs/adr/0012-ssh-hosts.md).
+/// The POSIX sh scripts behind `ssh_exec` and `ssh_job`.
 ///
 /// Every command runs as a detached job in `~/.cache/pi-durable/ssh/<job>/` on the remote machine: `cmd` (the command),
 /// `out`, `err`, `pid`, and `exit` once it finished. The job ID comes from the tool task, so a tool call that reruns

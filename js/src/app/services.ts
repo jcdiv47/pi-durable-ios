@@ -1,4 +1,4 @@
-// Keyed HTTP APIs behind tools (docs/adr/0004-http-api-services.md). A tool calls `serviceFetch` with the service's
+// Keyed HTTP APIs behind tools. A tool calls `serviceFetch` with the service's
 // key placeholder wherever the API wants the key; Swift's fetch bridge swaps in the Keychain key on the service's
 // hosts only, and counts and caps its monthly requests. Here: spacing for per-second limits, one retry after a 429,
 // and errors the model can act on.
@@ -16,7 +16,7 @@ export const services = {
 	deepseek: { id: "deepseek", name: "DeepSeek" },
 	// Brave's free plan: 1 request per second (and 2,000 a month, capped in Swift).
 	brave: { id: "brave", name: "Brave Search", minIntervalMs: 1100 },
-	// The user's own node (docs/adr/0013-proxmox.md); its host is set from Swift, as `custom`'s is.
+	// The user's own node; its host is set from Swift, as `custom`'s is.
 	proxmox: { id: "proxmox", name: "Proxmox VE" },
 } satisfies Record<string, Service>;
 

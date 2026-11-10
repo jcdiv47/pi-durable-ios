@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import PiRuntime
 
-/// Code Mode (docs/adr/0014-code-mode.md): the scripted model's "code <script>" cue calls `codemode` with the script.
+/// Code Mode: the scripted model's "code <script>" cue calls `codemode` with the script.
 @Suite("Code Mode inside JavaScriptCore", .serialized)
 struct CodeModeTests {
     private static let due = #"{dueBefore: "2030-01-01T00:00:00Z"}"#

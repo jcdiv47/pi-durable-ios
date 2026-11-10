@@ -9,7 +9,7 @@ options:
 
 settings:
   base:
-    DEVELOPMENT_TEAM: P8FR4R7GEN # personal team; see docs/notes/m0-capabilities.md
+    DEVELOPMENT_TEAM: P8FR4R7GEN # free Personal Team
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "6.0"
     TARGETED_DEVICE_FAMILY: "1"
@@ -25,7 +25,7 @@ packages:
     path: Packages/PiUI
   PiAppleTools:
     path: Packages/PiAppleTools
-  # SSH hosts (docs/adr/0012-ssh-hosts.md), over Citadel: the app's only third-party package.
+  # SSH hosts, over Citadel: the app's only third-party package.
   PiSSH:
     path: Packages/PiSSH
 
@@ -53,8 +53,8 @@ targets:
         optional: true
         buildPhase: resources
       # Photo search's MobileCLIP encoders and CLIP tokenizer, from scripts/fetch-mobileclip.sh (not checked in: too
-      # big, and under Apple's sample code license; docs/adr/0010-photo-search.md). Without them the app downloads them
-      # in Settings › Photo Search (docs/adr/0011-download-mobileclip.md).
+      # big, and under Apple's sample code license). Without them the app downloads them
+      # in Settings › Photo Search.
       - path: App/Models
         optional: true
     dependencies:
@@ -113,7 +113,7 @@ targets:
         NSPhotoLibraryUsageDescription: Pi searches your photos on this iPhone when you ask it to find one. The photos never leave your iPhone.
         NSCameraUsageDescription: Pi uses the camera only when you take a photo to attach to a message.
         NSMicrophoneUsageDescription: Pi records you only while you dictate a message, and sends the recording to OpenAI to turn it into text.
-        # MCP servers in the homelab (docs/adr/0006-mcp-servers.md): plain HTTP to local names and to Tailscale's
+        # MCP servers in the homelab: plain HTTP to local names and to Tailscale's
         # MagicDNS names, which the tunnel already encrypts. Everything else still needs HTTPS.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true

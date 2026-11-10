@@ -117,7 +117,7 @@ function titleFrom(text: string): string {
 	return line.length > 60 ? `${line.slice(0, 57)}…` : line || untitled;
 }
 
-/** Settings › Apple Intelligence (docs/adr/0008-apple-intelligence.md). */
+/** Settings › Apple Intelligence. */
 export const intelligenceSettings = { titles: false };
 
 export class Chat {

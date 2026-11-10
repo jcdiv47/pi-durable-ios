@@ -1,6 +1,6 @@
 import Foundation
 
-/// A machine the user added in Settings › SSH Hosts (docs/adr/0012-ssh-hosts.md). The app keeps the list in Application
+/// A machine the user added in Settings › SSH Hosts. The app keeps the list in Application
 /// Support (`ssh-hosts.json`); the password or private key is the Keychain item `ssh-<id>` (`SSHSecret`), which only
 /// Swift reads. JS gets the list without secrets (`SshHostConfig` in `js/src/app/ssh.ts`).
 public struct SSHHost: Codable, Identifiable, Hashable, Sendable {

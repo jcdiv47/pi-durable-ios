@@ -1,7 +1,7 @@
 import Photos
 import SwiftUI
 
-/// `photos_search` (docs/adr/0010-photo-search.md): the matches' IDs and dates. The thumbnails are read from the
+/// `photos_search`: the matches' IDs and dates. The thumbnails are read from the
 /// library here, on the device; the model only ever saw the IDs.
 struct PhotosResult: Decodable {
     struct Match: Decodable, Hashable, Identifiable {

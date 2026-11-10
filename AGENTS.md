@@ -1,9 +1,7 @@
 # pi-durable-ios
 
 A personal, sideloaded iPhone app that runs `@earendil-works/pi-durable` in an embedded
-JavaScriptCore runtime. **Read [`docs/specs/0001-pi-durable-ios.md`](docs/specs/0001-pi-durable-ios.md)
-first**; it is the source of truth. M0 findings and measurements are in [`docs/notes/`](docs/notes/);
-decisions that change the spec go in `docs/adr/`.
+JavaScriptCore runtime.
 
 ## Layout
 
@@ -21,21 +19,18 @@ decisions that change the spec go in `docs/adr/`.
   Settings › MCP servers (`MCPSettingsView`, `MCPServers`): the user's MCP servers, kept in Swift with their cached
   tool lists (Application Support `mcp-servers.json`), the VPN hint (`VPNStatus`) and the chat's warning banner.
   Settings › SSH Hosts (`SSHSettingsView`, `SSHHosts`): the user's machines (Application Support `ssh-hosts.json`), their
-  passwords or keys in the Keychain service `dev.jcdiv47.pidurable.ssh` (`SSHSecrets`), host keys pinned in Settings
-  ([ADR 0012](docs/adr/0012-ssh-hosts.md)).
+  passwords or keys in the Keychain service `dev.jcdiv47.pidurable.ssh` (`SSHSecrets`), host keys pinned in Settings.
   Settings › Proxmox (`ProxmoxSettingsView`, `Proxmox`): the user's Proxmox VE node (UserDefaults `proxmoxServer`), its
-  API token in the Keychain as `proxmox`, its own certificate pinned by fingerprint
-  ([ADR 0013](docs/adr/0013-proxmox.md)). The Proxmox page (`ProxmoxView`, More menu, `pidurable://proxmox`) and the
+  API token in the Keychain as `proxmox`, its own certificate pinned by fingerprint. The Proxmox page (`ProxmoxView`, More menu, `pidurable://proxmox`) and the
   chat's `pve_*` cards (`ProxmoxCards`, from the tools' `details.card`) draw the node, its guests and its backups.
   Settings › Instructions and Skills (`SkillsViews`, `Skills`): the user's AGENTS.md (Application Support `AGENTS.md`)
   and the skills imported from Files or written in the editor (`SkillEditorView`, `skills/<name>/`); the composer's "/"
-  menu and chip run a skill
-  ([ADR 0007](docs/adr/0007-instructions-and-skills.md)).
+  menu and chip run a skill.
   Settings › Alarms & Timers (`AlarmsView`, `pidurable://alarms`): the alarms Pi set (`PiAlarms` in PiAppleTools), counting
   down; the Clock app never shows them. A timer's Lock Screen countdown is the widget's `PiAlarmLiveActivity`, over
   PiUI's `PiAlarmMetadata`.
   Settings › Apple Intelligence (`IntelligenceSettingsView`): the on-device model's status, on-device titles and
-  notification summaries ([ADR 0008](docs/adr/0008-apple-intelligence.md)).
+  notification summaries.
   `App/Sources/M0/`: the headless check modes.
 - `App/Sources/System/`: M3's system integration: App Intents, entities, Siri phrases and snippets
   (`PiAppIntents`), BackgroundTasks from `onWake` (`BackgroundWork`), notifications with actions (`Notifications`),
@@ -59,15 +54,14 @@ decisions that change the spec go in `docs/adr/`.
   (SKILL.md checks, import, and the `skills.*` host calls that read inside a skill's folder).
 - `Packages/PiAppleTools`: EventKit, HealthKit, CoreLocation and AlarmKit (`AlarmTools`) handlers behind the JS Apple tools
   (`AppleToolHost`), and photo search (`Photos/`: `CLIPTokenizer`, `ClipEncoder` over MobileCLIP's Core ML encoders,
-  `PhotoVectors`, `PhotoIndex`, `ClipModelDownload`; [ADR 0010](docs/adr/0010-photo-search.md),
-  [ADR 0011](docs/adr/0011-download-mobileclip.md)). The app's `PhotosCard` draws the
+  `PhotoVectors`, `PhotoIndex`, `ClipModelDownload`). The app's `PhotosCard` draws the
   matches and Settings › Photo Search (`PhotoSearchSettingsView`) shows the index.
-- `Packages/PiSSH`: SSH over Citadel, the app's only third-party package ([ADR 0012](docs/adr/0012-ssh-hosts.md)):
+- `Packages/PiSSH`: SSH over Citadel, the app's only third-party package:
   hosts and secrets (`SSHHost`, `SSHSecret`), Ed25519 keys and fingerprints (`SSHKeys`), the job scripts
   (`SSHJobScript`), connections with pinned host keys (`SSHConnections`) and the `ssh.*` host calls (`SSHToolHost`).
 - `Packages/PiUI`: generated UI (M2). The component catalog, validator, renderer (`SurfaceView`), previews,
   native data sources (`NativeData`), the App Group files (`SurfaceStore`), `SurfaceHost`, which answers the
-  JS UI tools, the components' sample slots (`Gallery/`) and the dial's tuning log (`Tuning/`). Shared by the app and the widget. The catalog lives only here ([ADR 0001](docs/adr/0001-surface-validation-in-swift.md)).
+  JS UI tools, the components' sample slots (`Gallery/`) and the dial's tuning log (`Tuning/`). Shared by the app and the widget. The catalog lives only here.
 - `Widgets/`: the configurable Pi Widget (`PiWidget.swift`): shows a published surface, resolves native data on
   its timeline, runs its buttons through `RunWidgetActionIntent`. The run Live Activity (`PiRunLiveActivity.swift`).
 - `js/`: TypeScript run inside JSC. `bun build.ts` bundles `src/runtime.ts` (the app's harness
@@ -78,11 +72,10 @@ decisions that change the spec go in `docs/adr/`.
   and `notify_schedule` (`schedule.ts`: day and week intervals keep their local time across daylight saving changes; a
   run that answers `NO_REPLY` posts no notification), the web tools (`web.ts`: `web_search` through DeepSeek or Brave,
   `web_fetch` through DeepSeek Fetch) over keyed HTTP services (`services.ts`), SSH tools (`ssh.ts`: `ssh_exec`, `ssh_job`), the Proxmox VE reads (`proxmox.ts`: `pve_*`), MCP servers (`mcp.ts`: a connection per
-  server over `@earendil-works/pi-mcp`'s Streamable HTTP client, and the `mcp` extension, [ADR 0006](docs/adr/0006-mcp-servers.md),
-  [ADR 0015](docs/adr/0015-pi-mcp-client.md)), the user's instructions and skills
+  server over `@earendil-works/pi-mcp`'s Streamable HTTP client, and the `mcp` extension), the user's instructions and skills
   (`instructions.ts`, `skills.ts`: prompt sections, `skill_read`, `skill_file`), Code Mode (`codemode.ts`: the
   `codemode` tool, scripts that call the other tools in QuickJS-wasm, read from the bundle resource `quickjs.wasm` on
-  the first script; [ADR 0014](docs/adr/0014-code-mode.md)), the approval gate and the offline
+  the first script), the approval gate and the offline
   `scripted/assistant` model. `chat.ts`
   also has the entry points outside the chat (`ask` from intents and notification replies, `widgetAction`,
   `runSchedule`).
@@ -121,7 +114,7 @@ build and install. `PI_CONFIGURATION=Release` builds Release.
   default launch is the chat app.)
 - `scripts/fetch-mobileclip.sh`: downloads MobileCLIP-S2's encoders and the CLIP tokenizer into `App/Models/` (not
   checked in: about 200 MB, Apple's sample code license). Optional: without them the app downloads the model in
-  Settings › Photo Search (`ClipModelDownload`, [ADR 0011](docs/adr/0011-download-mobileclip.md)); with them the app
+  Settings › Photo Search (`ClipModelDownload`); with them the app
   uses its own. `PI_MOBILECLIP=s0` for the smaller model. PiAppleTools' tests use them when present.
 - `scripts/push-key.sh <provider> <file>`: moves an API key into the app's Keychain (debug builds). `brave` works
   too.
@@ -158,7 +151,7 @@ intended rendering change, re-record with `PI_RECORD_SNAPSHOTS=1 swift test` and
   Notification identifiers are idempotency keys too.
 - Entry points that may run while the app is away call `ChatStore.ready()` (Pi may not be open yet) and wait for
   idle before returning, or iOS suspends the app mid-run.
-- A new HTTP API is a service ([ADR 0004](docs/adr/0004-http-api-services.md)): its hosts (and a monthly cap, if its
+- A new HTTP API is a service: its hosts (and a monthly cap, if its
   plan has one) in `ProviderKeys`, a key entry in `ChatStore.services`, and tools that call `serviceFetch` with the
   key placeholder in a header or a URL query. Never a generic HTTP tool: a page could use it to send data out.
 - The `apple` provider is text only and has no tools; its endpoint writes its own short instructions. One-shot jobs
@@ -168,23 +161,21 @@ intended rendering change, re-record with `PI_RECORD_SNAPSHOTS=1 swift test` and
   scores, and the chat draws the photos on the device. The index lives in Application Support, not the App Group.
 - MCP servers are added only by the user, in Settings; no tool may add, change or remove one. A server's host gets
   its token (`mcp-<id>`) only through `ProviderKeys.setMCPHosts`, from Swift. The `mcp` extension is installed from
-  the cached tool lists before the Harness opens, so interrupted calls resume without the network
-  ([ADR 0006](docs/adr/0006-mcp-servers.md)).
+  the cached tool lists before the Harness opens, so interrupted calls resume without the network.
 - SSH hosts are added, changed and removed only by the user, in Settings; no tool may change one. Passwords, keys and
   host keys never reach JS: JS names a host by its ID. Nothing logs in before the user trusted the host key. Every
   command is a detached job named after its tool task (`SSHJobScript`), which is what makes `ssh_exec` replay-safe;
-  keep it so ([ADR 0012](docs/adr/0012-ssh-hosts.md)).
+  keep it so.
 - The Proxmox node, its token and its certificate are set only by the user, in Settings. The token goes only to the
   node's host and only once its certificate is pinned (`ProviderKeys.setProxmoxHost`, `PinnedCertificates`); what it
   may do is the role the user gave it on the node. No `pve_*` tool reaches a path other than its own: there is no
-  generic API tool ([ADR 0013](docs/adr/0013-proxmox.md)).
+  generic API tool.
 - Instructions and skills are written, edited, imported and removed only by the user, in Settings; no tool may change them, and
   a skill's scripts never run. Skill files are read only through `SkillLibrary`, which keeps paths inside the skill.
 - Code Mode scripts reach only the conversation's tools; every nested call goes through the approval gate, and its
   request carries the `codemode` call's ID. QuickJS runs on the JS queue, so keep its interrupt budget: a script that
   computes holds the queue. JSC's async WebAssembly API never settles there (`polyfills.ts` wraps the synchronous
-  one), and bytes in wasm memory reach Swift only through copies (`JSBytes`)
-  ([ADR 0014](docs/adr/0014-code-mode.md)).
+  one), and bytes in wasm memory reach Swift only through copies (`JSBytes`).
 - The `SqliteDatabase` facade must keep passing both Pi's storage conformance suite and
   `js/test/facade-cases.ts` (Pi's suite does not exercise rollback).
 - A new component, prop, family rule or data source goes in PiUI's catalog (`Schema/`), with a sample slot in

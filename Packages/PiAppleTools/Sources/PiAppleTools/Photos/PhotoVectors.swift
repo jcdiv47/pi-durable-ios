@@ -1,6 +1,6 @@
 import Foundation
 
-/// The photo index's data (docs/adr/0010-photo-search.md): one entry and one unit vector per indexed asset, kept in
+/// The photo index's data: one entry and one unit vector per indexed asset, kept in
 /// Application Support as `entries.json` and `vectors.bin` (Float16, in entry order).
 public struct PhotoVectors: Sendable {
     public struct Entry: Codable, Sendable, Equatable {

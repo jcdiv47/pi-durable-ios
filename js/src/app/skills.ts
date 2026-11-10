@@ -3,7 +3,7 @@
 // on every change (`PiRuntime.setSkills`), and reads the files (`skills.read`, `skills.file` host calls), keeping every
 // path inside the skill's folder. The prompt lists each skill's name and description; the model reads a skill when it
 // needs it, or the user runs one with "/" in the composer and its body goes into the message. No tool can add, change
-// or remove a skill, and a skill's scripts never run (docs/adr/0007-instructions-and-skills.md).
+// or remove a skill, and a skill's scripts never run.
 
 import { obj, str } from "@earendil-works/pi-schema";
 import type { TextContent } from "@earendil-works/pi-ai";

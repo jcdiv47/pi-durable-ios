@@ -3,7 +3,7 @@ import PiRuntime
 import PiSSH
 import Synchronization
 
-/// Settings › SSH Hosts' list, in a JSON file in Application Support (docs/adr/0012-ssh-hosts.md). Passwords and keys
+/// Settings › SSH Hosts' list, in a JSON file in Application Support. Passwords and keys
 /// are in the Keychain (`SSHSecrets`), never in this file.
 enum SSHHostFile {
     static var url: URL {

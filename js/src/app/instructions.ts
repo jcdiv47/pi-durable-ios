@@ -1,7 +1,7 @@
 // The user's standing instructions: the app's AGENTS.md, written by hand in Settings › Instructions. Swift keeps
 // the text (Application Support `AGENTS.md`) and passes it in `open` and on every edit (`PiRuntime.setInstructions`);
 // the `instructions` extension renders it as a prompt section, so an edit applies from the next model request. No
-// tool reads or writes it (docs/adr/0007-instructions-and-skills.md).
+// tool reads or writes it.
 
 import { defineExtension, section } from "@earendil-works/pi-durable";
 

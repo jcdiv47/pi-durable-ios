@@ -47,7 +47,7 @@ export interface OpenOptions {
 	/** Providers whose keys Swift holds; only these get a placeholder key. */
 	readonly keyedProviders?: readonly string[];
 	readonly customProvider?: CustomProvider;
-	/** Apple Intelligence models that can run now (docs/adr/0008-apple-intelligence.md). */
+	/** Apple Intelligence models that can run now. */
 	readonly appleModels?: readonly AppleModel[];
 	/** Settings › Apple Intelligence › Titles: on-device conversation titles. */
 	readonly intelligenceTitles?: boolean;
