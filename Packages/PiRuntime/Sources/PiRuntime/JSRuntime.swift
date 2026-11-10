@@ -22,7 +22,7 @@ public final class JSRuntime: @unchecked Sendable {
         /// Answers `hostCall(name, json)` from JS (Apple tools and the like) with JSON text, off the JS queue.
         public var hostCall: HostCallHandler?
         /// Hosts served in this process instead of the network (lowercased), such as Apple Intelligence's
-        /// OpenAI-compatible endpoint (docs/adr/0008-apple-intelligence.md). `fetch` to one never leaves the device.
+        /// OpenAI-compatible endpoint. `fetch` to one never leaves the device.
         public var localHosts: [String: any LocalHTTPService]
         /// Where `__native.readResource(name)` reads files by plain name, such as Code Mode's `quickjs.wasm`.
         /// `PiHarness.load` sets it to the bundle's directory when nil.

@@ -4,7 +4,7 @@ import Foundation
 import Network
 import os
 
-/// MobileCLIP's compiled encoders and the CLIP tokenizer's files, wherever they are (docs/adr/0010-photo-search.md):
+/// MobileCLIP's compiled encoders and the CLIP tokenizer's files, wherever they are:
 /// built into the app by `scripts/fetch-mobileclip.sh`, or downloaded in Settings › Photo Search.
 public struct ClipModelFiles: Sendable, Equatable {
     /// The name the photo index records, so vectors from another model are never mixed in (`PhotoVectors`).
@@ -34,8 +34,8 @@ public struct ClipModelFiles: Sendable, Equatable {
     }
 }
 
-/// Downloads MobileCLIP-S2 and the CLIP tokenizer into Application Support, so the app doesn't have to carry them
-/// (docs/adr/0011-download-mobileclip.md). A background `URLSession` does the transfers: they go on while Pi is
+/// Downloads MobileCLIP-S2 and the CLIP tokenizer into Application Support, so the app doesn't have to carry them.
+/// A background `URLSession` does the transfers: they go on while Pi is
 /// suspended or not running, Wi-Fi only, and iOS relaunches Pi in the background when they finish. The files are
 /// pinned to Hugging Face commits and checked against their SHA-256; Core ML then compiles the encoders, which needs
 /// Pi running (the next time it opens, if the transfers finished while it was away). Files already checked are kept

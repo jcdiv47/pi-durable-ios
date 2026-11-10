@@ -1,4 +1,4 @@
-// Web tools (docs/adr/0004-http-api-services.md): `web_search` through the provider chosen in Settings (DeepSeek
+// Web tools: `web_search` through the provider chosen in Settings (DeepSeek
 // Search or Brave Web Search) and `web_fetch`, which reads a page as Markdown through DeepSeek Fetch. Both are reads, so
 // replay-safe; a rerun after a crash costs one more request.
 //

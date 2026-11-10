@@ -3,7 +3,7 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-/// Settings › SSH Hosts: the machines Pi may run commands on (docs/adr/0012-ssh-hosts.md).
+/// Settings › SSH Hosts: the machines Pi may run commands on.
 struct SSHHostsSettingsView: View {
     @Bindable var store: ChatStore
 

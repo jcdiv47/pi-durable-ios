@@ -20,8 +20,8 @@ const targets = [
 	{ entry: "src/runtime.ts", out: join(root, "Packages/PiRuntime/Tests/PiRuntimeTests/JS/pi-runtime.js") },
 ];
 
-// pi-mcp in JSC. Its index exports the stdio transport, which needs Node's child_process; the app can't start processes
-// (ADR 0006), so that module is a stub. And its SSE reader counts bytes with Node's `Buffer.byteLength`: a global
+// pi-mcp in JSC. Its index exports the stdio transport, which needs Node's child_process; the app can't start processes,
+// so that module is a stub. And its SSE reader counts bytes with Node's `Buffer.byteLength`: a global
 // `Buffer` would send the provider SDKs down their Node paths (they test `typeof Buffer` and then call `Buffer.from`), so
 // that one module gets its own.
 const piMcp: esbuild.Plugin = {

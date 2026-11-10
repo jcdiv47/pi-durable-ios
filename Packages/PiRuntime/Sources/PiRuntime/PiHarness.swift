@@ -65,7 +65,7 @@ public final class PiHarness: Sendable {
         }
     }
 
-    /// The Proxmox VE node as JS sees it (docs/adr/0013-proxmox.md): its address and whether it's ready, never the
+    /// The Proxmox VE node as JS sees it: its address and whether it's ready, never the
     /// token or the certificate.
     public struct ProxmoxInfo: Codable, Sendable, Equatable {
         /// `https://host:8006`.
@@ -81,7 +81,7 @@ public final class PiHarness: Sendable {
         }
     }
 
-    /// An SSH host as JS sees it (docs/adr/0012-ssh-hosts.md): what the model may know, never a secret or a host key.
+    /// An SSH host as JS sees it: what the model may know, never a secret or a host key.
     public struct SSHHostInfo: Codable, Sendable, Equatable {
         public var id: String
         public var name: String

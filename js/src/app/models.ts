@@ -75,7 +75,7 @@ const appleFallback: AppleModel = { id: "on-device", name: "Apple Intelligence (
 export const appleBaseUrl = "https://apple-intelligence.pi.local/v1";
 
 /**
- * Apple Intelligence (docs/adr/0008-apple-intelligence.md): Swift serves the on-device model as an OpenAI-compatible
+ * Apple Intelligence: Swift serves the on-device model as an OpenAI-compatible
  * endpoint on a host that never reaches the network, so it needs no key. Text only; the endpoint ignores tools.
  */
 export function appleProvider(models: readonly AppleModel[]) {

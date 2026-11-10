@@ -3,7 +3,7 @@ import CoreML
 import Foundation
 import Vision
 
-/// MobileCLIP's two Core ML encoders (docs/adr/0010-photo-search.md): an image or a text query to a unit-length
+/// MobileCLIP's two Core ML encoders: an image or a text query to a unit-length
 /// 512-dimensional vector in the same space, so a dot product is their cosine similarity.
 public final class ClipEncoder: @unchecked Sendable {
     public static let dimensions = 512

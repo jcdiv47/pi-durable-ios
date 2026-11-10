@@ -1,4 +1,4 @@
-// Code Mode (docs/adr/0014-code-mode.md): the `codemode` tool, where the model writes JavaScript that calls the
+// Code Mode: the `codemode` tool, where the model writes JavaScript that calls the
 // conversation's other tools as `await tools.<name>(args)`, and only the script's output reaches the model. Pi's
 // extension (`@earendil-works/pi-durable/codemode`) journals every result the script gets, so a script a kill
 // interrupts resumes where it was; each nested call is a tool call of its own, with its own replay policy and the

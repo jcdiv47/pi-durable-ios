@@ -4,7 +4,7 @@ import os
 import Photos
 import UIKit
 
-/// The on-device photo index behind `photos_search` (docs/adr/0010-photo-search.md). It embeds each image asset once
+/// The on-device photo index behind `photos_search`. It embeds each image asset once
 /// with MobileCLIP, keeps the vectors in Application Support, and ranks them against a text query. Nothing leaves the
 /// device; the tool returns asset IDs and dates only.
 public actor PhotoIndex {

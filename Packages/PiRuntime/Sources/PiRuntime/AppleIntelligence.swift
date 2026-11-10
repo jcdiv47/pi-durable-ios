@@ -3,7 +3,7 @@ import Foundation
 import FoundationModels
 #endif
 
-/// Apple Intelligence (docs/adr/0008-apple-intelligence.md): the on-device model as an OpenAI-compatible chat
+/// Apple Intelligence: the on-device model as an OpenAI-compatible chat
 /// endpoint served in the process (`JSRuntime.Options.localHosts`), so pi-ai streams from it like from any provider,
 /// and one-shot jobs (titles, summaries) Swift and JS ask for directly.
 public final class AppleIntelligence: LocalHTTPService, @unchecked Sendable {

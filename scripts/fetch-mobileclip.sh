@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Downloads MobileCLIP's Core ML encoders and the CLIP tokenizer into App/Models/ (git-ignored), for photo search
-# (docs/adr/0010-photo-search.md). Optional: without them the app downloads S2 in Settings › Photo Search
-# (docs/adr/0011-download-mobileclip.md). Keep the file list in step with ClipModelDownload.files.
+# Downloads MobileCLIP's Core ML encoders and the CLIP tokenizer into App/Models/ (git-ignored), for photo search.
+# Optional: without them the app downloads S2 in Settings › Photo Search.
+# Keep the file list in step with ClipModelDownload.files.
 #
 #   scripts/fetch-mobileclip.sh            # MobileCLIP-S2 (default)
 #   PI_MOBILECLIP=s0 scripts/fetch-mobileclip.sh

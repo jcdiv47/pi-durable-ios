@@ -5,8 +5,8 @@ import Security
 import Testing
 @testable import PiRuntime
 
-/// An HTTPS server on the loopback with a self-signed certificate made for the test, like Proxmox's own
-/// (docs/adr/0013-proxmox.md). It records every request it reads.
+/// An HTTPS server on the loopback with a self-signed certificate made for the test, like Proxmox's own.
+/// It records every request it reads.
 final class SelfSignedServer: @unchecked Sendable {
     let fingerprint: String
     let port: UInt16

@@ -32,7 +32,7 @@ final class ChatStore {
     static let providers: [(id: String, name: String)] = [
         ("anthropic", "Anthropic"), ("openai", "OpenAI"), ("openrouter", "OpenRouter"), ("deepseek", "DeepSeek"), ("custom", "Custom endpoint"),
     ]
-    /// Keyed HTTP APIs behind tools, which are not model providers (docs/adr/0004-http-api-services.md).
+    /// Keyed HTTP APIs behind tools, which are not model providers.
     static let services: [(id: String, name: String)] = [("brave", "Brave Search")]
     static let offlineModel = ModelRef(provider: "scripted", modelId: "assistant")
 
@@ -50,19 +50,19 @@ final class ChatStore {
     private(set) var tools: [ToolInfo] = []
     private(set) var tasks: [TaskInfo] = []
     private(set) var keyedProviders: Set<String> = []
-    /// Settings › MCP servers, with each server's cached tool list (docs/adr/0006-mcp-servers.md).
+    /// Settings › MCP servers, with each server's cached tool list.
     private(set) var mcpServers: [MCPServer] = MCPServerFile.load()
     /// Each server's state since this process last talked to it, by server ID.
     private(set) var mcpStatuses: [String: MCPStatus] = [:]
-    /// Settings › SSH Hosts (docs/adr/0012-ssh-hosts.md). Added and changed by hand only; secrets in `SSHSecrets`.
+    /// Settings › SSH Hosts. Added and changed by hand only; secrets in `SSHSecrets`.
     private(set) var sshHosts: [SSHHost] = SSHHostFile.load()
     /// Hosts whose password or key is in the Keychain.
     private(set) var sshSecretIDs: Set<String> = []
-    /// Settings › Proxmox (docs/adr/0013-proxmox.md): the user's node. Its token is the Keychain item `proxmox`.
+    /// Settings › Proxmox: the user's node. Its token is the Keychain item `proxmox`.
     private(set) var proxmox: ProxmoxServer? = ProxmoxServerFile.load()
     /// Settings › Instructions: the user's AGENTS.md, a prompt section in every conversation. Written by hand only.
     private(set) var instructions = InstructionsFile.load()
-    /// Settings › Skills: the imported and written skills (docs/adr/0007-instructions-and-skills.md). Changed by hand only.
+    /// Settings › Skills: the imported and written skills. Changed by hand only.
     private(set) var skills: [SkillLibrary.Skill] = []
     let skillLibrary = SkillLibrary(root: SkillLibrary.appRoot)
     /// Whether a VPN tunnel looked up when the app last came to the foreground (`VPNStatus`).
@@ -124,7 +124,7 @@ final class ChatStore {
         didSet { settings.set(openLinksInApp, forKey: "openLinksInApp") }
     }
 
-    /// Settings › Apple Intelligence (docs/adr/0008-apple-intelligence.md): whether the on-device model can run now.
+    /// Settings › Apple Intelligence: whether the on-device model can run now.
     private(set) var intelligenceStatus = AppleIntelligence.status
     /// On-device conversation titles.
     var intelligenceTitles: Bool {
@@ -300,7 +300,7 @@ final class ChatStore {
             publishRecent()
             await receiveShares()
             await sweepAttachments()
-            // New photos since last time, once Photos access was granted (docs/adr/0010-photo-search.md).
+            // New photos since last time, once Photos access was granted.
             if PhotoIndex.authorized { await PhotoIndex.shared.startIndexing() }
             // A model download started in Settings that finished, or was cut off, while Pi was away.
             Task {
@@ -1267,7 +1267,7 @@ final class ChatStore {
         let title = meta(conversation.id)?.title ?? "Pi"
         let failed = answer.stopReason == "error"
         let text = failed ? "The run failed: \(answer.error ?? "model error")" : answer.text ?? ""
-        // A long answer gets an on-device summary (docs/adr/0008-apple-intelligence.md); the first 400 characters otherwise.
+        // A long answer gets an on-device summary; the first 400 characters otherwise.
         let summarize = intelligenceSummaries && !failed && text.count > 280
         let intelligence = intelligence
         Task {

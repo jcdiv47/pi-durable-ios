@@ -427,7 +427,7 @@ struct ApprovalSheet: View {
                     }
                 }
                 if request.tool == "ssh_exec", let command = request.arguments["command"]?.string {
-                    // The whole command, as it will run (docs/adr/0012-ssh-hosts.md).
+                    // The whole command, as it will run.
                     Section {
                         LabeledContent("Host", value: sshHostLabel)
                         Text(command)

@@ -1,7 +1,7 @@
 import PiRuntime
 import SwiftUI
 
-/// Settings › Apple Intelligence (docs/adr/0008-apple-intelligence.md): whether the on-device model can run, the
+/// Settings › Apple Intelligence: whether the on-device model can run, the
 /// `apple/on-device` model in the picker, and the cheap jobs it does for the app.
 struct IntelligenceSettingsView: View {
     @Bindable var store: ChatStore

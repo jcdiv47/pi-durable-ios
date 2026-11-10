@@ -1,9 +1,9 @@
-// Proxmox VE tools (docs/adr/0013-proxmox.md): the user's node through its HTTP API, with an API token the user made for
+// Proxmox VE tools: the user's node through its HTTP API, with an API token the user made for
 // Pi. The token is the Keychain item `proxmox`; Swift sends it only to the host saved in Settings › Proxmox, and only
 // over TLS with the certificate the user trusted there. JS sends `PVEAPIToken=pi-host-key:proxmox`.
 //
-// These are the reads, all replay-safe. Each tool reaches a fixed set of API paths: there is no generic API tool
-// (docs/adr/0004-http-api-services.md). The token's rights are enforced by Proxmox; a 403 comes back as "the token
+// These are the reads, all replay-safe. Each tool reaches a fixed set of API paths: there is no generic API tool.
+// The token's rights are enforced by Proxmox; a 403 comes back as "the token
 // may not do this".
 
 import type { JsonValue } from "@earendil-works/chord";

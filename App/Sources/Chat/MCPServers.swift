@@ -2,7 +2,7 @@ import Darwin
 import Foundation
 import PiUI
 
-/// An MCP server the user added in Settings › MCP servers (docs/adr/0006-mcp-servers.md). Swift owns the list and the
+/// An MCP server the user added in Settings › MCP servers. Swift owns the list and the
 /// last tool list each server returned; JS gets both (`McpServerConfig` in `js/src/app/mcp.ts`) when Pi opens and on
 /// every change. The token is the Keychain item `mcp-<id>`, sent only to `url`'s host.
 struct MCPServer: Codable, Identifiable, Hashable {

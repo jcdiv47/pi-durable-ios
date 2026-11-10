@@ -1,4 +1,4 @@
-// SSH tools (docs/adr/0012-ssh-hosts.md): `ssh_exec` runs a shell command on one of the machines the user added in
+// SSH tools: `ssh_exec` runs a shell command on one of the machines the user added in
 // Settings › SSH Hosts, and `ssh_job` checks on a command that outlived its wait. The connection, the password or key
 // and the host key check all live in Swift (Packages/PiSSH); JS names a host by its ID and gets the output back.
 //

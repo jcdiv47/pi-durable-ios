@@ -3,8 +3,8 @@ import os
 import Testing
 @testable import PiRuntime
 
-/// A Proxmox VE API with one node, answered in the process (`localHosts`), shaped like `pve`'s answers
-/// (docs/adr/0013-proxmox.md). It records the Authorization header of every request.
+/// A Proxmox VE API with one node, answered in the process (`localHosts`), shaped like `pve`'s answers.
+/// It records the Authorization header of every request.
 final class FakeProxmox: LocalHTTPService, @unchecked Sendable {
     static let host = "pve.test"
     private let lock = OSAllocatedUnfairLock(initialState: [String]())

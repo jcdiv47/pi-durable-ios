@@ -1,7 +1,7 @@
 import Foundation
 import PiRuntime
 
-/// Settings › Proxmox (docs/adr/0013-proxmox.md): the user's Proxmox VE node. The token is the Keychain item `proxmox`;
+/// Settings › Proxmox: the user's Proxmox VE node. The token is the Keychain item `proxmox`;
 /// the node's certificate is pinned by its SHA-256 fingerprint, and the token goes only to its host.
 struct ProxmoxServer: Codable, Equatable {
     /// `https://host:port`, without a path.
