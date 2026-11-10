@@ -403,6 +403,10 @@ const app = {
 	/** Lists the tools of every enabled server (or those in `ids`) again; returns their statuses. */
 	refreshMcp: (ids?: string[]) => mcp.refresh(ids),
 	mcpStatuses: async () => mcp.statuses(),
+	// Settings › MCP servers › Sign in, for OAuth servers: the page to show, then the URL it redirected to.
+	mcpBeginSignIn: (id: string) => mcp.beginSignIn(id),
+	mcpFinishSignIn: (id: string, callbackUrl: string) => mcp.finishSignIn(id, callbackUrl),
+	mcpSignOut: (id: string) => mcp.signOut(id),
 	// Settings › SSH Hosts changed; applies from the next tool call and model request.
 	setSshHosts: async (hosts: SshHostConfig[]) => {
 		sshSettings.hosts = [...hosts];

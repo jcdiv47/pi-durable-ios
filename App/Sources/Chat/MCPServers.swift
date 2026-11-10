@@ -1,10 +1,12 @@
 import Darwin
 import Foundation
+import PiRuntime
 import PiUI
 
 /// An MCP server the user added in Settings › MCP servers. Swift owns the list and the
 /// last tool list each server returned; JS gets both (`McpServerConfig` in `js/src/app/mcp.ts`) when Pi opens and on
-/// every change. The token is the Keychain item `mcp-<id>`, sent only to `url`'s host.
+/// every change. The token is the Keychain item `mcp-<id>`, sent only to `url`'s host. An OAuth server has no token:
+/// pi-mcp's OAuth client signs in from JS, and its state is kept by `MCPOAuth`.
 struct MCPServer: Codable, Identifiable, Hashable {
     /// Lowercase letters and digits, unique; prefixes the server's tools (`mcp__<id>__…`).
     var id: String
@@ -14,6 +16,9 @@ struct MCPServer: Codable, Identifiable, Hashable {
     /// The header the token goes in: `Authorization` gets `Bearer <token>`, any other header the bare token. Nil: no
     /// auth.
     var authHeader: String?
+    /// Signs in with OAuth (Settings › Sign in) instead of a token; `authHeader` is then nil. Nil in lists saved before
+    /// OAuth.
+    var oauth: Bool?
     var enabled = true
     /// Reached through the VPN (Tailscale, sing-box): Pi warns when the VPN looks off and the server can't be reached.
     var needsVpn: Bool
@@ -24,6 +29,7 @@ struct MCPServer: Codable, Identifiable, Hashable {
 
     var host: String? { URL(string: url)?.host()?.lowercased() }
     var keyName: String { MCPServer.keyPrefix + id }
+    var usesOAuth: Bool { oauth == true }
     var toolCount: Int {
         if case let .array(tools) = tools { return tools.count }
         return 0
@@ -70,6 +76,7 @@ struct MCPServer: Codable, Identifiable, Hashable {
             "id": .string(id), "name": .string(name), "url": .string(url), "enabled": .bool(enabled), "needsVpn": .bool(needsVpn),
         ]
         if let authHeader { object["authHeader"] = .string(authHeader) }
+        if usesOAuth { object["oauth"] = .bool(true) }
         if let tools { object["tools"] = tools }
         if let instructions { object["instructions"] = .string(instructions) }
         if let serverName { object["serverName"] = .string(serverName) }
@@ -89,6 +96,42 @@ struct MCPStatus: Decodable, Hashable {
     let serverName: String?
 
     var date: Date { Date(timeIntervalSince1970: checkedAt / 1000) }
+}
+
+/// OAuth servers' sign-ins: pi-mcp's `McpOAuthState` (client registration, tokens, a pending sign-in's state and PKCE
+/// verifier) as JSON, one Keychain item per server in a service of its own, so the fetch bridge never substitutes it.
+/// JS reads and writes it through the `mcp.oauth*` host calls; the user signs in and out in Settings.
+enum MCPOAuth {
+    static let keychain = KeychainKeys(service: "dev.jcdiv47.pidurable.mcp-oauth")
+    static let handlers: Set<String> = ["mcp.oauthLoad", "mcp.oauthSave"]
+
+    private struct Arguments: Decodable {
+        let id: String
+        let state: JSONValue?
+    }
+
+    /// `mcp.oauthLoad {id}` → the state or null; `mcp.oauthSave {id, state}` stores it, or forgets it when null.
+    static func handle(_ name: String, _ json: String) throws -> String {
+        let arguments = try JSONDecoder().decode(Arguments.self, from: Data(json.utf8))
+        guard !arguments.id.isEmpty, arguments.id.allSatisfy({ $0.isLetter || $0.isNumber }) else { throw JSRuntimeError("bad server ID") }
+        if name == "mcp.oauthLoad" { return keychain.apiKey(for: arguments.id) ?? "null" }
+        switch arguments.state {
+        case nil, .null?: try keychain.removeKey(for: arguments.id)
+        case let state?: try keychain.setKey(state.jsonText, for: arguments.id)
+        }
+        return "null"
+    }
+
+    /// Whether Pi holds tokens for the server at its current URL (a grant for an old URL is not used).
+    static func isSignedIn(_ server: MCPServer) -> Bool {
+        guard server.usesOAuth, let text = keychain.apiKey(for: server.id),
+              case let .object(state)? = try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8)),
+              case let .string(url)? = state["serverUrl"], url == server.url,
+              case .object? = state["tokens"] else { return false }
+        return true
+    }
+
+    static func remove(_ id: String) { try? keychain.removeKey(for: id) }
 }
 
 /// The server list, in a JSON file in Application Support (tool schemas make it too big for UserDefaults).

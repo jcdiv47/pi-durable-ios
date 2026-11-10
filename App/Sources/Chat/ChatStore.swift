@@ -1,3 +1,4 @@
+import AuthenticationServices
 import Foundation
 import Observation
 import os
@@ -54,6 +55,8 @@ final class ChatStore {
     private(set) var mcpServers: [MCPServer] = MCPServerFile.load()
     /// Each server's state since this process last talked to it, by server ID.
     private(set) var mcpStatuses: [String: MCPStatus] = [:]
+    /// OAuth servers Pi holds tokens for (`MCPOAuth`), by ID.
+    private(set) var mcpSignedIn: Set<String> = []
     /// Settings › SSH Hosts. Added and changed by hand only; secrets in `SSHSecrets`.
     private(set) var sshHosts: [SSHHost] = SSHHostFile.load()
     /// Hosts whose password or key is in the Keychain.
@@ -177,6 +180,7 @@ final class ChatStore {
         custom = settings.data(forKey: "customProvider").flatMap { try? JSONDecoder().decode(PiHarness.CustomProvider.self, from: $0) }
         ProviderKeys.setCustomHost(custom.flatMap { URL(string: $0.baseUrl)?.host() })
         ProviderKeys.setMCPHosts(Self.mcpHosts(mcpServers))
+        mcpSignedIn = Set(mcpServers.filter(MCPOAuth.isSignedIn).map(\.id))
         SSHHostList.shared.set(sshHosts)
         sshSecretIDs = Set(sshHosts.filter(SSHSecrets.has).map(\.id))
         Self.pinProxmox(proxmox)
@@ -254,6 +258,12 @@ final class ChatStore {
                     if SurfaceHost.handlers.contains(name) { return try await surfaces.handle(name, json) }
                     if SkillLibrary.handlers.contains(name) { return try skillLibrary.handle(name, json) }
                     if SSHToolHost.handlers.contains(name) { return try await ssh.handle(name, json) }
+                    if MCPOAuth.handlers.contains(name) {
+                        let result = try MCPOAuth.handle(name, json)
+                        // A refresh that failed for good forgets the tokens: Settings then offers to sign in.
+                        if name == "mcp.oauthSave" { Task { @MainActor [weak self] in self?.updateMCPSignIns() } }
+                        return result
+                    }
                     if name == "notify.post" || name == "notify.schedule" {
                         let args = try JSONDecoder().decode(Notifications.NotifyArguments.self, from: Data(json.utf8))
                         return try await notifications.post(args)
@@ -661,6 +671,54 @@ final class ChatStore {
 
     private var mcpServersJSON: String { JSONValue.array(mcpServers.map(\.config)).jsonText }
 
+    private func updateMCPSignIns() {
+        let signedIn = Set(mcpServers.filter(MCPOAuth.isSignedIn).map(\.id))
+        if signedIn != mcpSignedIn { mcpSignedIn = signedIn }
+    }
+
+    private struct SignInPage: Decodable {
+        let url: String
+        let callbackScheme: String
+    }
+
+    /// Signs in to an OAuth server: pi-mcp finds its authorization server and registers Pi there, `session` shows the
+    /// sign-in page, and the page's redirect finishes it. Throws what went wrong, for the server's page; a sign-in the
+    /// user cancels throws `ASWebAuthenticationSessionError.canceledLogin`.
+    func signInMCP(_ id: String, session: WebAuthenticationSession) async throws {
+        guard let harness else { throw JSRuntimeError("Pi isn't open yet.") }
+        let status: MCPStatus?
+        do {
+            let page: SignInPage = try await harness.call("PiRuntime.mcpBeginSignIn", [id])
+            guard let url = URL(string: page.url) else { throw JSRuntimeError("The server's sign-in page has a bad address.") }
+            let callback = try await session.authenticate(using: url, callback: .customScheme(page.callbackScheme), additionalHeaderFields: [:])
+            status = try await harness.call("PiRuntime.mcpFinishSignIn", [id, callback.absoluteString])
+        } catch {
+            if (error as? ASWebAuthenticationSessionError)?.code != .canceledLogin { report("MCP sign-in", error) }
+            updateMCPSignIns()
+            throw error
+        }
+        updateMCPSignIns()
+        if let status { mcpChanged([status]) }
+        await refreshTools()
+        diagnostics.record("info", "mcp", "Signed in to \(mcpServers.first { $0.id == id }?.name ?? id)")
+    }
+
+    /// Forgets an OAuth server's tokens and registration.
+    func signOutMCP(_ id: String) async {
+        if let harness {
+            do {
+                let status: MCPStatus? = try await harness.call("PiRuntime.mcpSignOut", [id])
+                if let status { mcpChanged([status]) }
+            } catch {
+                report("MCP sign-out", error)
+            }
+        } else {
+            MCPOAuth.remove(id)
+        }
+        updateMCPSignIns()
+        await refreshTools()
+    }
+
     // MARK: Instructions and skills
 
     /// Saves Settings › Instructions; applies from each conversation's next request.
@@ -729,6 +787,8 @@ final class ChatStore {
             keyedProviders.remove(server.keyName)
         }
         let previous = mcpServers.first { $0.id == server.id }
+        // A server that stops signing in with OAuth, or moves, drops its grant (pi-mcp ignores one for another URL).
+        if previous?.usesOAuth == true, !server.usesOAuth || previous?.url != server.url { MCPOAuth.remove(server.id) }
         var server = server
         // A new address may serve other tools; keep the old list only while it is the same server.
         if previous?.url != server.url { server.tools = nil; server.instructions = nil; server.serverName = nil }
@@ -744,6 +804,7 @@ final class ChatStore {
         guard let server = mcpServers.first(where: { $0.id == id }) else { return }
         try? keys.removeKey(for: server.keyName)
         keyedProviders.remove(server.keyName)
+        MCPOAuth.remove(id)
         mcpServers.removeAll { $0.id == id }
         mcpStatuses[id] = nil
         // A later server given the same id must not inherit these choices.
@@ -758,6 +819,7 @@ final class ChatStore {
     /// Saves the list, opens the hosts' tokens to them, and hands the list to JS, which rebuilds the `mcp` tools.
     private func applyMCPServers() async {
         do { try MCPServerFile.save(mcpServers) } catch { report("save MCP servers", error) }
+        updateMCPSignIns()
         ProviderKeys.setMCPHosts(Self.mcpHosts(mcpServers))
         guard let harness else { return }
         do {

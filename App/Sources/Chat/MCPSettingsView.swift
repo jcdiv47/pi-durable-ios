@@ -1,3 +1,4 @@
+import AuthenticationServices
 import PiRuntime
 import SwiftUI
 
@@ -34,28 +35,31 @@ struct MCPServerRow: View {
         let tools = server.toolCount == 1 ? "1 tool" : "\(server.toolCount) tools"
         switch status?.state {
         case "unreachable": return "Unreachable · \(tools)"
-        case "unauthorized": return "Token refused"
+        case "unauthorized": return server.usesOAuth ? "Sign-in needed" : "Token refused"
         case "error": return "Error · \(tools)"
         default: return "\(server.host ?? server.url) · \(tools)"
         }
     }
 }
 
-/// Adds a server (`server` nil) or edits one: address, auth, VPN, and its tools' approvals.
+/// Adds a server (`server` nil) or edits one: address, auth (a token, or signing in with OAuth), VPN, and its tools'
+/// approvals.
 struct MCPServerView: View {
     @Bindable var store: ChatStore
     let server: MCPServer?
 
     enum Auth: String, CaseIterable, Identifiable {
-        case none, bearer, header
+        case none, oauth, bearer, header
         var id: String { rawValue }
         var title: String {
             switch self {
             case .none: "None"
+            case .oauth: "OAuth sign-in"
             case .bearer: "Bearer token"
             case .header: "Custom header"
             }
         }
+        var usesToken: Bool { self == .bearer || self == .header }
     }
 
     @State private var name = ""
@@ -70,9 +74,14 @@ struct MCPServerView: View {
     @State private var saving = false
     @State private var confirmingRemove = false
     @State private var loaded = false
+    @State private var signingIn = false
+    @State private var signInError: String?
+    /// A new server whose sign-in failed: the view stays as its edit view, with the error.
+    @State private var addedID: String?
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.webAuthenticationSession) private var webAuthenticationSession
 
-    private var current: MCPServer? { server.flatMap { s in store.mcpServers.first { $0.id == s.id } } }
+    private var current: MCPServer? { (server?.id ?? addedID).flatMap { id in store.mcpServers.first { $0.id == id } } }
     private var status: MCPStatus? { current.flatMap { store.mcpStatuses[$0.id] } }
     private var hasToken: Bool { current.map { store.hasKey($0.keyName) } ?? false }
     private var parsed: URL? {
@@ -83,8 +92,8 @@ struct MCPServerView: View {
     private var canSave: Bool {
         guard !saving, parsed != nil, !name.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
         if auth == .header, header.trimmingCharacters(in: .whitespaces).isEmpty { return false }
-        // A new server with auth needs its token; an edited one keeps the saved one.
-        return auth == .none || !token.isEmpty || hasToken
+        // A new server with a token needs it; an edited one keeps the saved one. OAuth signs in after saving.
+        return !auth.usesToken || !token.isEmpty || hasToken
     }
 
     var body: some View {
@@ -112,7 +121,7 @@ struct MCPServerView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                 }
-                if auth != .none {
+                if auth.usesToken {
                     SecureField(hasToken ? "Saved; type to replace" : "Token", text: $token)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -123,12 +132,14 @@ struct MCPServerView: View {
                     Text("Sent as “Authorization: Bearer <token>”, only to this URL's host. For Home Assistant, a long-lived access token from your profile.")
                 } else if auth == .header {
                     Text("Sent as “\(header): <token>”, only to this URL's host.")
+                } else if auth == .oauth {
+                    Text("For servers that ask you to sign in, such as hosted ones. Pi registers itself with the server's sign-in service, you sign in on its page, and Pi keeps the sign-in fresh. The server must use HTTPS.")
                 }
             }
 
             Section {
                 Toggle("Needs VPN", isOn: Binding(get: { needsVpn }, set: { needsVpn = $0; vpnTouched = true }))
-                if server != nil { Toggle("On", isOn: $enabled) }
+                if current != nil { Toggle("On", isOn: $enabled) }
             } footer: {
                 Text("A server only reachable over Tailscale or sing-box. When it can't be reached and the VPN looks off, Pi warns you in the chat, or with a notification when a scheduled task needed it.")
             }
@@ -137,7 +148,7 @@ struct MCPServerView: View {
                 Button {
                     Task { await save() }
                 } label: {
-                    if saving { ProgressView() } else { Text(server == nil ? "Add and connect" : "Save and connect") }
+                    if saving { ProgressView() } else { Text(saveTitle) }
                 }
                 .disabled(!canSave)
                 .accessibilityIdentifier("mcp.save")
@@ -163,6 +174,31 @@ struct MCPServerView: View {
                     if !store.vpnUp && current.needsVpn { Text("No VPN tunnel is up on this iPhone.") }
                 }
 
+                if current.usesOAuth {
+                    let signedIn = store.mcpSignedIn.contains(current.id)
+                    Section {
+                        LabeledContent("Account", value: signedIn ? "Signed in" : "Not signed in")
+                        Button {
+                            Task { await signIn(current.id) }
+                        } label: {
+                            if signingIn { ProgressView() } else { Text(signedIn ? "Sign in again" : "Sign in") }
+                        }
+                        .disabled(signingIn || !current.enabled)
+                        .accessibilityIdentifier("mcp.signIn")
+                        if signedIn {
+                            Button("Sign out", role: .destructive) { Task { await store.signOutMCP(current.id) } }
+                                .disabled(signingIn)
+                        }
+                        if let signInError {
+                            Text(signInError).font(.caption).foregroundStyle(.red).textSelection(.enabled)
+                        }
+                    } header: {
+                        Text("Sign-in")
+                    } footer: {
+                        Text("Signing out forgets Pi's tokens and its registration with the server. To revoke Pi's access everywhere, remove it in your account on the server's site too.")
+                    }
+                }
+
                 let tools = store.tools.filter { $0.server == current.id }
                 if !tools.isEmpty {
                     Section {
@@ -181,17 +217,17 @@ struct MCPServerView: View {
                 }
             }
         }
-        .navigationTitle(server?.name ?? "Add MCP server")
-        .confirmationDialog("Remove \(server?.name ?? "this server")?", isPresented: $confirmingRemove, titleVisibility: .visible) {
+        .navigationTitle(current?.name ?? "Add MCP server")
+        .confirmationDialog("Remove \(current?.name ?? "this server")?", isPresented: $confirmingRemove, titleVisibility: .visible) {
             Button("Remove", role: .destructive) {
-                guard let id = server?.id else { return }
+                guard let id = current?.id else { return }
                 Task {
                     await store.removeMCPServer(id)
                     dismiss()
                 }
             }
         } message: {
-            Text("Its tools and saved token are removed. Conversations keep what the tools returned.")
+            Text("Its tools and saved token or sign-in are removed. Conversations keep what the tools returned.")
         }
         .onAppear(perform: load)
     }
@@ -201,7 +237,7 @@ struct MCPServerView: View {
         switch status?.state {
         case "ok": return "Connected"
         case "unreachable": return "Unreachable"
-        case "unauthorized": return "Token refused"
+        case "unauthorized": return current?.usesOAuth == true ? (current.map { store.mcpSignedIn.contains($0.id) } == true ? "Sign-in refused" : "Not signed in") : "Token refused"
         case "error": return "Error"
         default: return "Not checked yet"
         }
@@ -214,7 +250,7 @@ struct MCPServerView: View {
         name = server.name
         url = server.url
         switch server.authHeader?.lowercased() {
-        case nil: auth = .none
+        case nil: auth = server.usesOAuth ? .oauth : .none
         case "authorization": auth = .bearer
         default:
             auth = .header
@@ -235,17 +271,46 @@ struct MCPServerView: View {
         updated.name = trimmedName
         updated.url = parsed.absoluteString
         updated.authHeader = switch auth {
-        case .none: nil
+        case .none, .oauth: nil
         case .bearer: "Authorization"
         case .header: header.trimmingCharacters(in: .whitespaces)
         }
+        updated.oauth = auth == .oauth ? true : nil
         updated.needsVpn = needsVpn
         updated.enabled = enabled
         let newToken = token
         token = ""
         await store.saveMCPServer(updated, token: newToken.isEmpty ? nil : newToken)
+        // An OAuth server that isn't signed in signs in at once, or it has no tools to offer.
+        if updated.usesOAuth, updated.enabled, !store.mcpSignedIn.contains(updated.id), !(await signIn(updated.id)) {
+            // Stay, as the new server's edit view, so the error shows and Sign in can be tried again.
+            addedID = updated.id
+            return
+        }
         // A new server's view becomes its edit view: go back to the list, where it now shows.
         if server == nil { dismiss() }
+    }
+
+    private var saveTitle: String {
+        if current == nil { return auth == .oauth ? "Add and sign in" : "Add and connect" }
+        return "Save and connect"
+    }
+
+    /// Whether the user is signed in afterwards; false also when they closed the page.
+    @discardableResult
+    private func signIn(_ id: String) async -> Bool {
+        signingIn = true
+        signInError = nil
+        defer { signingIn = false }
+        do {
+            try await store.signInMCP(id, session: webAuthenticationSession)
+            return true
+        } catch ASWebAuthenticationSessionError.canceledLogin {
+            // The user closed the page.
+        } catch {
+            signInError = String(describing: error)
+        }
+        return false
     }
 }
 

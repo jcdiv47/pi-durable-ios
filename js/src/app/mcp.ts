@@ -5,8 +5,14 @@
 // before the Harness opens: a tool call that a crash interrupted finds its tool even while the server is unreachable.
 // `refresh()` then talks to the servers and replaces the extension (`registry.install` with the same name).
 //
-// Keys never reach JS: a server with auth gets the placeholder `pi-host-key:mcp-<id>` in its auth header, and Swift's
-// fetch bridge swaps in the Keychain token for that server's host only.
+// Keys the user typed never reach JS: a server with a token gets the placeholder `pi-host-key:mcp-<id>` in its auth
+// header, and Swift's fetch bridge swaps in the Keychain token for that server's host only.
+//
+// OAuth servers are the exception: pi-mcp's OAuth client (`@earendil-works/pi-mcp/oauth`) discovers the authorization
+// server, registers the app, exchanges the code and refreshes tokens here, so their tokens are in JS. Its state is kept
+// in the Keychain through Swift (`mcp.oauthLoad`, `mcp.oauthSave`); no tool reads it. Signing in is the user's, from
+// Settings: `beginSignIn` gives Swift the authorization URL, Swift shows it (ASWebAuthenticationSession) and hands the
+// redirect back to `finishSignIn`.
 
 import {
 	type CallToolResult,
@@ -22,9 +28,22 @@ import {
 	type Tool,
 	toLlmContent,
 } from "@earendil-works/pi-mcp";
+import {
+	adaptOAuthProvider,
+	authorizeMcp,
+	McpOAuthAuthorizationRequiredError,
+	McpOAuthProvider,
+	type McpOAuthState,
+	type McpOAuthStateStore,
+	OAuthError,
+	OAuthInsecureEndpointError,
+	OAuthIssuerMismatchError,
+	OAuthRegistrationError,
+} from "@earendil-works/pi-mcp/oauth";
 import { compile } from "@earendil-works/pi-schema";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool, type Extension, section, type ToolRegistration } from "@earendil-works/pi-durable";
+import { hostCall } from "../host/hostcall.ts";
 import type { ToolPolicy } from "./approvals.ts";
 import { keyPlaceholder } from "./models.ts";
 
@@ -38,8 +57,10 @@ export type McpServerConfig = {
 	readonly name: string;
 	/** The Streamable HTTP endpoint, such as `http://100.64.0.2:8123/api/mcp`. */
 	readonly url: string;
-	/** The header the token goes in; `Authorization` gets `Bearer <token>`. Omitted: no auth. */
+	/** The header the token goes in; `Authorization` gets `Bearer <token>`. Omitted: no token. */
 	readonly authHeader?: string;
+	/** Signs in with OAuth instead of a token (`authHeader` is then unset). */
+	readonly oauth?: boolean;
 	readonly enabled: boolean;
 	/** Reached over the VPN: a failed connection says the VPN may be off. */
 	readonly needsVpn?: boolean;
@@ -92,8 +113,70 @@ function abortable<T>(promise: Promise<T>, signal: AbortSignal | undefined): Pro
 	});
 }
 
+// ---- OAuth -------------------------------------------------------------------
+
+/**
+ * Where the sign-in page sends the browser back: the app's bundle ID as a private-use scheme (RFC 8252 §7.1), which
+ * ASWebAuthenticationSession catches. Registered with each authorization server, so changing it signs everyone out.
+ */
+export const OAUTH_REDIRECT_URL = "dev.jcdiv47.pidurable:/oauth/mcp";
+
+/** A server's OAuth state store, and a way to forget it (sign out). */
+export type McpOAuthStore = McpOAuthStateStore & { clear(): Promise<void> };
+
+/** The Keychain, through Swift (`MCPOAuth`), read once and then kept here. */
+export function keychainOAuthStore(serverId: string): McpOAuthStore {
+	let cached: { state: McpOAuthState | undefined } | undefined;
+	return {
+		async load() {
+			cached ??= { state: (await hostCall<McpOAuthState | null>("mcp.oauthLoad", { id: serverId })) ?? undefined };
+			return cached.state;
+		},
+		async save(state) {
+			await hostCall("mcp.oauthSave", { id: serverId, state });
+			cached = { state };
+		},
+		async clear() {
+			await hostCall("mcp.oauthSave", { id: serverId, state: null });
+			cached = { state: undefined };
+		},
+	};
+}
+
+/** One server's OAuth client (pi-mcp's provider) over its store, and the authorization URL it last made. */
+class McpOAuth {
+	readonly provider: McpOAuthProvider;
+	/** Set by the flow when the user has to sign in; only `beginSignIn` shows it. */
+	authorizationUrl: URL | undefined;
+
+	constructor(
+		readonly server: McpServerConfig,
+		readonly store: McpOAuthStore,
+	) {
+		this.provider = new McpOAuthProvider({
+			serverUrl: server.url,
+			redirectUrl: OAUTH_REDIRECT_URL,
+			clientMetadata: {
+				client_name: "Pi",
+				grant_types: ["authorization_code", "refresh_token"],
+				response_types: ["code"],
+				token_endpoint_auth_method: "none",
+			},
+			store,
+			onRedirect: (url) => {
+				this.authorizationUrl = url;
+			},
+		});
+	}
+
+	async signedIn(): Promise<boolean> {
+		return (await this.provider.tokens()) !== undefined;
+	}
+}
+
 /** The auth header with the key placeholder, which Swift swaps for the token. */
 function authHeaders(server: McpServerConfig): Record<string, string> {
+	if (server.oauth) return {};
 	const auth = server.authHeader?.trim();
 	if (!auth) return {};
 	const token = keyPlaceholder(`mcp-${server.id}`);
@@ -113,6 +196,8 @@ export class McpConnection {
 		public server: McpServerConfig,
 		private readonly fetcher?: McpFetch,
 		private readonly setupTimeoutMs = SETUP_TIMEOUT_MS,
+		/** The server's OAuth client when it signs in with OAuth. */
+		private readonly oauth?: McpOAuth,
 	) {}
 
 	#connect(): Promise<McpClient> {
@@ -123,6 +208,7 @@ export class McpConnection {
 				headers: authHeaders(this.server),
 				openGetStream: false,
 				...(this.fetcher === undefined ? {} : { fetch: this.fetcher }),
+				...(this.oauth === undefined ? {} : { authProvider: adaptOAuthProvider(this.oauth.provider) }),
 			});
 			// The whole handshake has the deadline: pi-mcp times `initialize` but not `notifications/initialized` after it.
 			let timer: ReturnType<typeof setTimeout> | undefined;
@@ -132,7 +218,12 @@ export class McpConnection {
 					void client.close().catch(() => {});
 				}, this.setupTimeoutMs);
 			});
-			const ready = Promise.race([client.connect(transport), deadline])
+			// Signed out: nothing to send. Without this check the server's 401 would start a sign-in nobody sees.
+			const signedIn = this.oauth === undefined ? Promise.resolve() : this.oauth.signedIn().then((yes) => {
+				if (!yes) throw new McpOAuthAuthorizationRequiredError();
+			});
+			const ready = signedIn
+				.then(() => Promise.race([client.connect(transport), deadline]))
 				.then(() => client)
 				.finally(() => clearTimeout(timer));
 			this.#client = ready;
@@ -185,11 +276,21 @@ export class McpConnection {
 	#explain(method: string, error: unknown): McpServerError {
 		const name = this.server.name;
 		if (error instanceof McpServerError) return error;
+		if (error instanceof McpOAuthAuthorizationRequiredError) {
+			return new McpServerError(`${name}: Pi isn't signed in. Sign in in Settings › MCP servers.`, "unauthorized");
+		}
+		if (error instanceof OAuthError) {
+			return new McpServerError(`${name}: the sign-in was refused: ${error.message} (${error.code}). Sign in again in Settings › MCP servers.`, "unauthorized");
+		}
+		if (error instanceof OAuthIssuerMismatchError || error instanceof OAuthInsecureEndpointError || error instanceof OAuthRegistrationError) {
+			return new McpServerError(`${name}: can't sign in: ${error.message}`, "error");
+		}
 		if (error instanceof McpHttpError) {
 			const body = error.body.trim().slice(0, 300);
 			const detail = body ? ` (${error.status}: ${body})` : ` (${error.status})`;
 			if (error.status === 401 || error.status === 403) {
-				return new McpServerError(`${name}: the token was refused. Check it in Settings › MCP servers.${detail}`, "unauthorized", error.status);
+				const what = this.server.oauth ? "Pi's sign-in was refused. Sign in again" : "the token was refused. Check it";
+				return new McpServerError(`${name}: ${what} in Settings › MCP servers.${detail}`, "unauthorized", error.status);
 			}
 			if (error instanceof McpSessionExpiredError) return new McpServerError(`${name}: the session expired.`, "error", error.status);
 			return new McpServerError(`${name}: the server answered with an error.${detail}`, "error", error.status);
@@ -279,10 +380,17 @@ export function outputOf(result: Pick<CallToolResult, "content" | "structuredCon
 	return text === "" ? images : [{ type: "text", text: fit(text) }, ...images];
 }
 
+/** Whether a session made for `a` may serve `b`: same address and the same way of signing in. */
+function sameAuth(a: McpServerConfig, b: McpServerConfig): boolean {
+	return a.url === b.url && a.authHeader === b.authHeader && (a.oauth ?? false) === (b.oauth ?? false);
+}
+
 /** The servers, their clients and statuses, and the `mcp` extension built from them. */
 export class McpHost {
 	#servers: McpServerConfig[] = [];
 	readonly #clients = new Map<string, McpConnection>();
+	/** OAuth servers' clients, by server ID; dropped when the server's URL changes. */
+	readonly #oauth = new Map<string, McpOAuth>();
 	readonly #statuses = new Map<string, McpStatus>();
 	/** Tool name → its server and MCP name, for Settings. */
 	#tools = new Map<string, { server: McpServerConfig; tool: McpToolDefinition }>();
@@ -294,6 +402,8 @@ export class McpHost {
 		/** Statuses changed: `{ type: "mcp", statuses }` for Swift. */
 		private readonly changed: (statuses: McpStatus[]) => void = () => {},
 		private readonly fetcher?: McpFetch,
+		/** Where an OAuth server's state is kept: the Keychain in the app, memory in tests. */
+		private readonly oauthStore: (serverId: string) => McpOAuthStore = keychainOAuthStore,
 	) {}
 
 	get extension(): Extension {
@@ -313,11 +423,15 @@ export class McpHost {
 		const next = new Map(servers.map((server) => [server.id, server]));
 		for (const [id, client] of this.#clients) {
 			const server = next.get(id);
-			if (server === undefined || server.url !== client.server.url || server.authHeader !== client.server.authHeader || !server.enabled) {
+			if (server === undefined || !sameAuth(server, client.server) || !server.enabled) {
 				client.reset();
 				this.#clients.delete(id);
 				this.#statuses.delete(id);
 			}
+		}
+		for (const [id, oauth] of this.#oauth) {
+			const server = next.get(id);
+			if (server?.oauth !== true || server.url !== oauth.server.url) this.#oauth.delete(id);
 		}
 		this.#servers = servers.map((server) => ({ ...server }));
 		this.rebuild();
@@ -327,7 +441,7 @@ export class McpHost {
 	#client(server: McpServerConfig): McpConnection {
 		let client = this.#clients.get(server.id);
 		if (client === undefined) {
-			client = new McpConnection(server, this.fetcher);
+			client = new McpConnection(server, this.fetcher, undefined, server.oauth ? this.#oauthOf(server) : undefined);
 			this.#clients.set(server.id, client);
 		}
 		client.server = server;
@@ -354,7 +468,7 @@ export class McpHost {
 			targets.map(async (server) => {
 				// The server as it is now; an answer from before an edit, a removal or turning it off is dropped.
 				const current = () =>
-					this.#servers.find((s) => s.id === server.id && s.enabled && s.url === server.url && s.authHeader === server.authHeader);
+					this.#servers.find((s) => s.id === server.id && s.enabled && sameAuth(s, server));
 				try {
 					const listed = await this.#client(server).listTools(signal);
 					const now = current();
@@ -372,6 +486,93 @@ export class McpHost {
 		);
 		this.rebuild();
 		return this.statuses().filter((status) => targets.some((server) => server.id === status.id));
+	}
+
+	// ---- signing in (Settings) ----
+
+	#oauthOf(server: McpServerConfig): McpOAuth {
+		let oauth = this.#oauth.get(server.id);
+		if (oauth === undefined || oauth.server.url !== server.url) {
+			oauth = new McpOAuth(server, this.oauthStore(server.id));
+			this.#oauth.set(server.id, oauth);
+		}
+		return oauth;
+	}
+
+	#oauthServer(id: string): McpServerConfig {
+		const server = this.#servers.find((s) => s.id === id);
+		if (server === undefined) throw new Error("That MCP server was removed.");
+		if (!server.oauth) throw new Error(`${server.name} doesn't sign in with OAuth.`);
+		return server;
+	}
+
+	/** Forgets a sign-in that was started (state and PKCE verifier), so the next one starts afresh. */
+	async #clearPending(oauth: McpOAuth): Promise<void> {
+		const state = await oauth.store.load();
+		if (state === undefined || (state.oauthState === undefined && state.codeVerifier === undefined)) return;
+		const { oauthState: _state, codeVerifier: _verifier, ...rest } = state;
+		await oauth.store.save(rest);
+	}
+
+	/**
+	 * Starts signing in to an OAuth server: discovers its authorization server, registers the app there if it hasn't
+	 * yet, and returns the page the user signs in on. Swift shows it and passes where it redirected to `finishSignIn`.
+	 */
+	async beginSignIn(id: string): Promise<{ url: string; callbackScheme: string }> {
+		const server = this.#oauthServer(id);
+		const oauth = this.#oauthOf(server);
+		try {
+			await this.#clearPending(oauth);
+			oauth.authorizationUrl = undefined;
+			const result = await authorizeMcp(oauth.provider, {
+				serverUrl: server.url,
+				skipRefresh: true,
+				...(this.fetcher === undefined ? {} : { fetch: this.fetcher }),
+			});
+			// Set by the provider's `onRedirect` during the flow, which TypeScript can't see.
+			const page = oauth.authorizationUrl as URL | undefined;
+			if (result !== "REDIRECT" || page === undefined) throw new Error("the server gave no sign-in page");
+			return { url: page.href, callbackScheme: new URL(OAUTH_REDIRECT_URL).protocol.slice(0, -1) };
+		} catch (error) {
+			throw new Error(`${server.name}: can't start signing in: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+
+	/** Finishes signing in from the redirect `beginSignIn`'s page ended on, then lists the server's tools. */
+	async finishSignIn(id: string, callbackUrl: string): Promise<McpStatus | null> {
+		const server = this.#oauthServer(id);
+		const oauth = this.#oauthOf(server);
+		try {
+			const params = new URL(callbackUrl).searchParams;
+			const refused = params.get("error");
+			if (refused !== null) throw new Error(params.get("error_description") ?? refused);
+			const code = params.get("code");
+			const expected = (await oauth.store.load())?.oauthState;
+			if (code === null || expected === undefined || params.get("state") !== expected) {
+				throw new Error("the answer doesn't match the sign-in Pi started; sign in again");
+			}
+			const iss = params.get("iss");
+			await authorizeMcp(oauth.provider, {
+				serverUrl: server.url,
+				authorizationCode: code,
+				...(iss === null ? {} : { iss }),
+				...(this.fetcher === undefined ? {} : { fetch: this.fetcher }),
+			});
+		} catch (error) {
+			throw new Error(`${server.name}: couldn't sign in: ${error instanceof Error ? error.message : String(error)}`);
+		} finally {
+			await this.#clearPending(oauth).catch(() => {});
+		}
+		this.#clients.get(id)?.reset();
+		return (await this.refresh([id]))[0] ?? null;
+	}
+
+	/** Forgets the server's tokens and registration; its tools fail until the user signs in again. */
+	async signOut(id: string): Promise<McpStatus | null> {
+		const server = this.#oauthServer(id);
+		await this.#oauthOf(server).store.clear();
+		this.#clients.get(id)?.reset();
+		return (await this.refresh([id]))[0] ?? null;
 	}
 
 	/** Default approval policies of the current tools, by tool name. */
