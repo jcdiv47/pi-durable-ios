@@ -17,7 +17,10 @@ JavaScriptCore runtime.
   Links go through the root's `openURL` action: with Settings › Links on Pi, web links push `Route.browser`
   (`BrowserView`, a SwiftUI `WebPage`), so the stack's edge swipe returns to the chat.
   Settings › MCP servers (`MCPSettingsView`, `MCPServers`): the user's MCP servers, kept in Swift with their cached
-  tool lists (Application Support `mcp-servers.json`), the VPN hint (`VPNStatus`) and the chat's warning banner.
+  tool lists (Application Support `mcp-servers.json`), the VPN hint (`VPNStatus`) and the chat's warning banner. Auth is
+  none, a token, or OAuth sign-in: pi-mcp's OAuth client runs in JS, its state lives in the Keychain service
+  `dev.jcdiv47.pidurable.mcp-oauth` (`MCPOAuth`, through the `mcp.oauth*` host calls), and the sign-in page is an
+  `ASWebAuthenticationSession` redirecting to `dev.jcdiv47.pidurable:/oauth/mcp`.
   Settings › SSH Hosts (`SSHSettingsView`, `SSHHosts`): the user's machines (Application Support `ssh-hosts.json`), their
   passwords or keys in the Keychain service `dev.jcdiv47.pidurable.ssh` (`SSHSecrets`), host keys pinned in Settings.
   Settings › Proxmox (`ProxmoxSettingsView`, `Proxmox`): the user's Proxmox VE node (UserDefaults `proxmoxServer`), its
@@ -80,8 +83,9 @@ JavaScriptCore runtime.
   also has the entry points outside the chat (`ask` from intents and notification replies, `widgetAction`,
   `runSchedule`).
   pi-durable, pi-ai, pi-schema (tool schemas), pi-mcp and chord stay pinned to the **same exact version** (1.5.0).
-  `build.ts` stubs pi-mcp's stdio transport and gives its SSE reader a local `Buffer.byteLength`; never add a global
-  `Buffer` (the provider SDKs would take their Node paths).
+  `build.ts` stubs pi-mcp's stdio transport and OAuth callback server, gives its SSE reader a local `Buffer.byteLength`,
+  and gives its OAuth flow and provider a local `Buffer` and SHA-256 `crypto.subtle.digest` (`src/host/pi-mcp-shims.ts`);
+  never add a global `Buffer` (the provider SDKs would take their Node paths).
 - `scripts/`: simulator and device drivers.
 
 ## Build and test
@@ -119,7 +123,8 @@ build and install. `PI_CONFIGURATION=Release` builds Release.
 - `scripts/push-key.sh <provider> <file>`: moves an API key into the app's Keychain (debug builds). `brave` works
   too.
   Never put keys in the repo, in launch arguments or in JS. JS only sees `pi-host-key:<provider>`,
-  and Swift substitutes the real key for that provider's allowlisted hosts.
+  and Swift substitutes the real key for that provider's allowlisted hosts. The one exception is OAuth MCP servers:
+  pi-mcp's OAuth client refreshes their tokens in JS, so those tokens are in JS memory (never in a tool's output).
 
 The app's modes are launch arguments (`-PiMode <mode>`); see `LaunchMode` in `App/Sources/PiApp.swift`.
 
@@ -160,7 +165,8 @@ intended rendering change, re-record with `PI_RECORD_SNAPSHOTS=1 swift test` and
 - Photo search never sends pixels, captions or locations to the model: `photos_search` returns asset IDs, dates and
   scores, and the chat draws the photos on the device. The index lives in Application Support, not the App Group.
 - MCP servers are added only by the user, in Settings; no tool may add, change or remove one. A server's host gets
-  its token (`mcp-<id>`) only through `ProviderKeys.setMCPHosts`, from Swift. The `mcp` extension is installed from
+  its token (`mcp-<id>`) only through `ProviderKeys.setMCPHosts`, from Swift. Only the user signs in to an OAuth server,
+  from Settings; a connection without tokens fails without starting a sign-in. The `mcp` extension is installed from
   the cached tool lists before the Harness opens, so interrupted calls resume without the network.
 - SSH hosts are added, changed and removed only by the user, in Settings; no tool may change one. Passwords, keys and
   host keys never reach JS: JS names a host by its ID. Nothing logs in before the user trusted the host key. Every

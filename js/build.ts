@@ -24,16 +24,34 @@ const targets = [
 // so that module is a stub. And its SSE reader counts bytes with Node's `Buffer.byteLength`: a global
 // `Buffer` would send the provider SDKs down their Node paths (they test `typeof Buffer` and then call `Buffer.from`), so
 // that one module gets its own.
+// Its OAuth: the loopback callback server needs Node's http (the app's sign-in page redirects to the app instead), so it
+// is a stub too; the flow and provider modules use `Buffer` and `crypto.subtle.digest`, and get them from
+// `src/host/pi-mcp-shims.ts`, not as globals.
+const piMcpShims = join(import.meta.dir, "src/host/pi-mcp-shims.ts");
+const piMcpStubs: Record<string, string> = {
+	"pi-mcp-stdio":
+		'export class StdioTransport { constructor() { throw new Error("stdio MCP servers need a process; the app has none"); } }',
+	"pi-mcp-oauth-callback":
+		'export class OAuthCallbackServer { static listen() { throw new Error("the OAuth callback server needs Node; the app signs in with ASWebAuthenticationSession"); } }',
+};
 const piMcp: esbuild.Plugin = {
 	name: "pi-mcp",
 	setup(build) {
 		build.onResolve({ filter: /^\.\/transports\/stdio\.js$/ }, (args) =>
 			/[\\/]@earendil-works[\\/]pi-mcp[\\/]dist[\\/]index\.js$/.test(args.importer) ? { path: "pi-mcp-stdio", namespace: "pi-mcp-stub" } : undefined,
 		);
-		build.onLoad({ filter: /.*/, namespace: "pi-mcp-stub" }, () => ({
-			contents: 'export class StdioTransport { constructor() { throw new Error("stdio MCP servers need a process; the app has none"); } }',
-			loader: "js",
-		}));
+		build.onResolve({ filter: /^\.\/callback\.js$/ }, (args) =>
+			/[\\/]@earendil-works[\\/]pi-mcp[\\/]dist[\\/]oauth[\\/]index\.js$/.test(args.importer)
+				? { path: "pi-mcp-oauth-callback", namespace: "pi-mcp-stub" }
+				: undefined,
+		);
+		build.onLoad({ filter: /.*/, namespace: "pi-mcp-stub" }, (args) => ({ contents: piMcpStubs[args.path], loader: "js" }));
+		build.onLoad({ filter: /[\\/]@earendil-works[\\/]pi-mcp[\\/]dist[\\/]oauth[\\/](flow|provider)\.js$/ }, async (args) => {
+			const source = await Bun.file(args.path).text();
+			if (!/\bBuffer\.from\b/.test(source)) throw new Error(`${args.path} no longer uses Buffer.from; check the pi-mcp OAuth shims`);
+			const shim = `import { Buffer, crypto } from ${JSON.stringify(piMcpShims)};\n`;
+			return { contents: shim + source, loader: "js", resolveDir: dirname(args.path) };
+		});
 		build.onLoad({ filter: /[\\/]@earendil-works[\\/]pi-mcp[\\/]dist[\\/]transports[\\/]streamable-http\.js$/ }, async (args) => {
 			const source = await Bun.file(args.path).text();
 			if (!source.includes("Buffer.byteLength")) throw new Error("pi-mcp no longer uses Buffer.byteLength; drop the pi-mcp-buffer plugin");

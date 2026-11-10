@@ -368,7 +368,7 @@ struct MCPServersSettingsView: View {
                 }
                 .accessibilityIdentifier("settings.mcp.add")
             } footer: {
-                Text("Tools from MCP servers that speak Streamable HTTP. Tokens stay in the Keychain and go only to their server's host. Pi asks before tools that change things; a server's tool approvals are on its page.")
+                Text("Tools from MCP servers that speak Streamable HTTP. Tokens stay in the Keychain and go only to their server's host; servers that ask you to sign in use OAuth. Pi asks before tools that change things; a server's tool approvals are on its page.")
             }
         }
         .navigationTitle("MCP Servers")

@@ -2,7 +2,19 @@
 // JSC (and under Bun).
 
 import type { StorageConformanceAssertions } from "@earendil-works/pi-durable/testing";
-import { McpConnection, McpHost, type McpServerConfig, McpServerError, type McpStatus, type McpToolDefinition, outputOf } from "../src/app/mcp.ts";
+import type { McpOAuthState } from "@earendil-works/pi-mcp/oauth";
+import {
+	McpConnection,
+	McpHost,
+	type McpOAuthStore,
+	type McpServerConfig,
+	McpServerError,
+	type McpStatus,
+	type McpToolDefinition,
+	OAUTH_REDIRECT_URL,
+	outputOf,
+} from "../src/app/mcp.ts";
+import { Buffer, sha256 } from "../src/host/pi-mcp-shims.ts";
 
 type Case = { name: string; run(): Promise<void> };
 
@@ -87,8 +99,8 @@ class FakeServer {
 	};
 }
 
-function json(body: unknown, headers: Record<string, string> = {}): Response {
-	return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json", ...headers } });
+function json(body: unknown, headers: Record<string, string> = {}, status = 200): Response {
+	return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
 }
 
 function sse(messages: unknown[]): Response {
@@ -103,6 +115,95 @@ function sse(messages: unknown[]): Response {
 		},
 	});
 	return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+}
+
+const OAUTH_MCP_URL = "https://mcp.example.com/mcp";
+const AUTH = "https://auth.example.com";
+
+/**
+ * `FakeServer` behind OAuth: protected resource and authorization server metadata, dynamic registration, a token
+ * endpoint that checks the PKCE verifier and rotates refresh tokens, and an MCP endpoint that wants a live access token.
+ */
+class FakeOAuth {
+	readonly mcp = new FakeServer();
+	readonly requests: string[] = [];
+	/** Access tokens the MCP endpoint takes. */
+	valid = new Set<string>();
+	/** The `code_challenge` of the last authorization URL the test opened. */
+	challenge: string | undefined;
+	registrations = 0;
+	issued = 0;
+	refreshToken: string | undefined;
+
+	fetch = async (input: string | URL, init: RequestInit = {}): Promise<Response> => {
+		const url = new URL(String(input));
+		const method = init.method ?? "GET";
+		this.requests.push(`${method} ${url.origin}${url.pathname}`);
+		if (url.href === OAUTH_MCP_URL) {
+			const auth = new Headers(init.headers).get("authorization");
+			if (auth === null || !this.valid.has(auth.replace(/^Bearer /, ""))) {
+				return new Response("unauthorized", {
+					status: 401,
+					headers: { "www-authenticate": `Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp"` },
+				});
+			}
+			return this.mcp.fetch("http://100.64.0.2:8123/api/mcp", init);
+		}
+		if (url.href === "https://mcp.example.com/.well-known/oauth-protected-resource/mcp") {
+			return json({ resource: OAUTH_MCP_URL, authorization_servers: [AUTH], scopes_supported: ["tools"] });
+		}
+		if (url.href === `${AUTH}/.well-known/oauth-authorization-server`) {
+			return json({
+				issuer: AUTH,
+				authorization_endpoint: `${AUTH}/authorize`,
+				token_endpoint: `${AUTH}/token`,
+				registration_endpoint: `${AUTH}/register`,
+				response_types_supported: ["code"],
+				code_challenge_methods_supported: ["S256"],
+			});
+		}
+		if (url.href === `${AUTH}/register` && method === "POST") {
+			const metadata = JSON.parse(String(init.body)) as Record<string, unknown>;
+			this.registrations++;
+			return new Response(JSON.stringify({ ...metadata, client_id: `client-${this.registrations}` }), {
+				status: 201,
+				headers: { "content-type": "application/json" },
+			});
+		}
+		if (url.href === `${AUTH}/token` && method === "POST") {
+			const form = new URLSearchParams(String(init.body));
+			if (form.get("grant_type") === "authorization_code") {
+				const verifier = form.get("code_verifier") ?? "";
+				const challenge = Buffer.from(sha256(new TextEncoder().encode(verifier))).toString("base64url");
+				if (form.get("code") !== "the-code" || challenge !== this.challenge || form.get("redirect_uri") !== OAUTH_REDIRECT_URL) {
+					return json({ error: "invalid_grant", error_description: "bad code or verifier" }, {}, 400);
+				}
+			} else if (form.get("grant_type") !== "refresh_token" || form.get("refresh_token") !== this.refreshToken) {
+				return json({ error: "invalid_grant", error_description: "bad refresh token" }, {}, 400);
+			}
+			this.issued++;
+			const access = `at${this.issued}`;
+			this.refreshToken = `rt${this.issued}`;
+			this.valid.add(access);
+			return json({ access_token: access, token_type: "Bearer", expires_in: 3600, refresh_token: this.refreshToken, scope: "tools" });
+		}
+		return new Response("not found", { status: 404 });
+	};
+}
+
+/** An OAuth store in memory, in place of the Keychain. */
+function memoryStore(): McpOAuthStore & { state: McpOAuthState | undefined } {
+	const store = {
+		state: undefined as McpOAuthState | undefined,
+		load: async () => store.state,
+		save: async (state: McpOAuthState) => {
+			store.state = structuredClone(state);
+		},
+		clear: async () => {
+			store.state = undefined;
+		},
+	};
+	return store;
 }
 
 const server = (overrides: Partial<McpServerConfig> = {}): McpServerConfig => ({
@@ -277,6 +378,92 @@ export function createMcpCases(t: StorageConformanceAssertions): Case[] {
 				t.deepEqual(outputOf({ content: [] }), [{ type: "text", text: "(no output)" }]);
 				const long = outputOf({ content: [{ type: "text", text: "x".repeat(30_000) }] })[0] as { text: string };
 				t.ok(long.text.length < 24_100 && long.text.endsWith("characters]"), String(long.text.length));
+			},
+		},
+		{
+			name: "pi-mcp's OAuth shims: SHA-256 and the Buffer encodings",
+			async run() {
+				const hex = (text: string) => Buffer.from(sha256(new TextEncoder().encode(text))).toString("hex");
+				t.strictEqual(hex(""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+				t.strictEqual(hex("abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+				t.strictEqual(
+					hex("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
+					"248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
+				);
+				t.strictEqual(hex("a".repeat(1000)), "41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3");
+				t.strictEqual(Buffer.from("client:sécret").toString("base64"), "Y2xpZW50OnPDqWNyZXQ=");
+				t.strictEqual(Buffer.from(new Uint8Array([251, 255, 191])).toString("base64url"), "-_-_");
+				t.strictEqual(Buffer.from(new Uint8Array([0, 15, 255])).toString("hex"), "000fff");
+				// RFC 7636, appendix B.
+				const challenge = Buffer.from(sha256(new TextEncoder().encode("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"))).toString("base64url");
+				t.strictEqual(challenge, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
+			},
+		},
+		{
+			name: "OAuth: signed out fails without a request; sign-in registers, checks state and PKCE; refresh; sign-out",
+			async run() {
+				const fake = new FakeOAuth();
+				const store = memoryStore();
+				const statuses: McpStatus[][] = [];
+				const host = new McpHost(undefined, (s) => statuses.push(s), fake.fetch, () => store);
+				host.setServers([server({ id: "gh", name: "GitHub", url: OAUTH_MCP_URL, authHeader: undefined, oauth: true, needsVpn: false })]);
+
+				let status: McpStatus | null | undefined = (await host.refresh())[0];
+				t.strictEqual(status?.state, "unauthorized");
+				t.ok(status?.error?.includes("isn't signed in"), status?.error);
+				t.deepEqual(fake.requests, []);
+
+				// A sign-in whose answer carries another state is refused, and the code isn't spent.
+				const first = new URL((await host.beginSignIn("gh")).url);
+				t.strictEqual(first.origin + first.pathname, `${AUTH}/authorize`);
+				t.strictEqual(first.searchParams.get("client_id"), "client-1");
+				t.strictEqual(first.searchParams.get("redirect_uri"), OAUTH_REDIRECT_URL);
+				t.strictEqual(first.searchParams.get("code_challenge_method"), "S256");
+				t.strictEqual(first.searchParams.get("resource"), OAUTH_MCP_URL);
+				fake.challenge = first.searchParams.get("code_challenge") ?? undefined;
+				const forged = await rejects(t, host.finishSignIn("gh", `${OAUTH_REDIRECT_URL}?code=the-code&state=forged`));
+				t.ok(String(forged).includes("doesn't match"), String(forged));
+				t.strictEqual(fake.issued, 0);
+				const denied = await rejects(t, host.finishSignIn("gh", `${OAUTH_REDIRECT_URL}?error=access_denied&error_description=The+user+said+no`));
+				t.ok(String(denied).includes("The user said no"), String(denied));
+
+				const begun = await host.beginSignIn("gh");
+				t.strictEqual(begun.callbackScheme, "dev.jcdiv47.pidurable");
+				const page = new URL(begun.url);
+				// Registered once; each sign-in gets a new state and verifier.
+				t.strictEqual(fake.registrations, 1);
+				t.ok(page.searchParams.get("state") !== first.searchParams.get("state"));
+				t.ok(page.searchParams.get("code_challenge") !== fake.challenge);
+				fake.challenge = page.searchParams.get("code_challenge") ?? undefined;
+				status = await host.finishSignIn("gh", `${OAUTH_REDIRECT_URL}?code=the-code&state=${page.searchParams.get("state")}`);
+				t.ok(status?.state === "ok", status?.error);
+				t.deepEqual(status?.tools?.map((tool) => tool.name), ["get_state", "turn.on", "send"]);
+				t.strictEqual(fake.mcp.received[0]!.headers.authorization, "Bearer at1");
+				t.strictEqual(store.state?.tokens?.refresh_token, "rt1");
+				t.strictEqual(store.state?.oauthState, undefined);
+				t.strictEqual(store.state?.codeVerifier, undefined);
+
+				// The access token expires: the next session refreshes it once and goes on.
+				fake.valid.clear();
+				host.setServers([server({ id: "gh", name: "GitHub", url: OAUTH_MCP_URL, authHeader: undefined, oauth: true, needsVpn: false, enabled: false })]);
+				host.setServers([server({ id: "gh", name: "GitHub", url: OAUTH_MCP_URL, authHeader: undefined, oauth: true, needsVpn: false })]);
+				status = (await host.refresh())[0];
+				t.ok(status?.state === "ok", status?.error);
+				t.strictEqual(store.state?.tokens?.access_token, "at2");
+				t.strictEqual(fake.mcp.received.at(-1)!.headers.authorization, "Bearer at2");
+
+				// A refresh token the server no longer takes: the user has to sign in again.
+				fake.valid.clear();
+				fake.refreshToken = "revoked";
+				host.setServers([server({ id: "gh", name: "GitHub", url: OAUTH_MCP_URL, authHeader: undefined, oauth: true, needsVpn: false, enabled: false })]);
+				host.setServers([server({ id: "gh", name: "GitHub", url: OAUTH_MCP_URL, authHeader: undefined, oauth: true, needsVpn: false })]);
+				status = (await host.refresh())[0];
+				t.strictEqual(status?.state, "unauthorized");
+				t.ok(status?.error?.includes("Sign in"), status?.error);
+
+				await host.signOut("gh");
+				t.strictEqual(store.state, undefined);
+				t.ok(statuses.length > 0);
 			},
 		},
 	];
