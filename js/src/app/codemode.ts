@@ -44,7 +44,6 @@ export const CodeModeTools = createCodemodeExtension({
 	sandbox,
 	namespaces: [
 		{ name: "mcp", prefix: "mcp__", description: "Tools of the user's MCP servers, named mcp__<server>__<tool>." },
-		{ name: "proxmox", prefix: "pve_", description: "Read-only views of the user's Proxmox VE node." },
 		{ name: "ssh", prefix: "ssh_", description: "Commands on the user's SSH hosts." },
 	],
 	// No `models.classify()` or `models.generateImages()`: scripts spend nothing on the user's keys but through tools.

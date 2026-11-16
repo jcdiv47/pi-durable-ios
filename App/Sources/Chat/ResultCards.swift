@@ -3,7 +3,7 @@ import MapKit
 import PiUI
 import SwiftUI
 
-// Native cards for Apple tool, web search and Proxmox results (ProxmoxCards), drawn under a run's "Worked" row. They read the result's parsed output
+// Native cards for Apple tool and web search results, drawn under a run's "Worked" row. They read the result's parsed output
 // (`cardTools` in js/src/app/display.ts); a result without one, or one that does not decode, shows no card.
 
 /// What a tool result shows as a card.
@@ -14,9 +14,6 @@ enum ResultCardContent {
     case health(HealthResult)
     case web(WebSearchResult)
     case photos(PhotosResult)
-    case pveOverview(PveOverview)
-    case pveGuests(PveGuestList)
-    case pveBackups(PveBackups)
 
     init?(call: ToolCallItem, result: DisplayItem) {
         guard result.isError != true, let data = result.data else { return nil }
@@ -54,15 +51,6 @@ enum ResultCardContent {
         case "photos_search":
             guard let value = data.decoded(PhotosResult.self) else { return nil }
             self = .photos(value)
-        case "pve_overview":
-            guard let value = data.decoded(PveOverview.self) else { return nil }
-            self = .pveOverview(value)
-        case "pve_guests":
-            guard let value = data.decoded(PveGuestList.self), !value.guests.isEmpty else { return nil }
-            self = .pveGuests(value)
-        case "pve_backups":
-            guard let value = data.decoded(PveBackups.self) else { return nil }
-            self = .pveBackups(value)
         default:
             return nil
         }
@@ -117,12 +105,6 @@ struct ResultCard: View {
             WebSearchCard(value: value)
         case let .photos(value):
             PhotosCard(value: value)
-        case let .pveOverview(value):
-            PveOverviewCard(value: value)
-        case let .pveGuests(value):
-            PveGuestsCard(value: value)
-        case let .pveBackups(value):
-            PveBackupsCard(value: value)
         }
     }
 }

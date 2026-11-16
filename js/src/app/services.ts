@@ -16,8 +16,6 @@ export const services = {
 	deepseek: { id: "deepseek", name: "DeepSeek" },
 	// Brave's free plan: 1 request per second (and 2,000 a month, capped in Swift).
 	brave: { id: "brave", name: "Brave Search", minIntervalMs: 1100 },
-	// The user's own node; its host is set from Swift, as `custom`'s is.
-	proxmox: { id: "proxmox", name: "Proxmox VE" },
 } satisfies Record<string, Service>;
 
 /** The value to put where the service's key goes; also valid inside a URL query. */
