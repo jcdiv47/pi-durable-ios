@@ -14,6 +14,10 @@ JavaScriptCore runtime.
   from `cardTools` in display.ts) and assistant text as Markdown (`MarkdownText`). Approvals lead with what a tool does in words (`ToolTitles`, `ApprovalDetails`), the tool's
   name second; the list groups conversations by date (`ConversationSections`), as Notes does. The composer's mic (`VoiceInput`)
   records, and OpenAI's transcription (`gpt-transcribe`, the `openai` provider key, sent from Swift) fills the field.
+  Talk to Pi (`RealtimeVoice`, `VoiceAudio`, `VoiceView`, `Route.voice`, `pidurable://voice`): a spoken session over
+  OpenAI's Realtime API (WebSocket from Swift, the `openai` key). The voice model's only tool is `ask_pi`, which sends
+  the request into a Pi conversation through `askFromOutside` (request ID `voice:<session>:<call_id>`), so Pi's tools,
+  approvals and transcript stay Pi's; approvals are tapped, never spoken. Nothing about the session is durable.
   Links go through the root's `openURL` action: with Settings › Links on Pi, web links push `Route.browser`
   (`BrowserView`, a SwiftUI `WebPage`), so the stack's edge swipe returns to the chat.
   Settings › MCP servers (`MCPSettingsView`, `MCPServers`): the user's MCP servers, kept in Swift with their cached
@@ -45,7 +49,9 @@ JavaScriptCore runtime.
   `ChatStore.sweepAttachments` deletes image files over a day old that nothing points at; a new place that keeps an
   image file name must be added to what it keeps.
 - `Shared/Sources/`: compiled into the app and the widget: the `LiveActivityIntent`s behind widget and Live Activity
-  buttons, which iOS performs in the app's process.
+  buttons, which iOS performs in the app's process, and `TalkToPiIntent` (an `AudioRecordingIntent`: the Action button
+  and Control Center start a voice session without opening the app, recording only while the voice Live Activity,
+  PiUI's `PiVoiceAttributes`, shows; a second press hangs up).
 - `Packages/PiRuntime`: JSContext host, polyfill natives, the sqlite3 facade, the URLSession fetch
   bridge (with `localHosts`: hosts answered in the process), `NetworkPath` (NWPathMonitor, read by JS as `__native.networkOnline()`), the Keychain key source, the async host-call bridge
   (`JSRuntime.Options.hostCall`), `AppleIntelligence` (Foundation Models as an OpenAI-compatible endpoint on
@@ -62,7 +68,8 @@ JavaScriptCore runtime.
   native data sources (`NativeData`), the App Group files (`SurfaceStore`), `SurfaceHost`, which answers the
   JS UI tools, the components' sample slots (`Gallery/`) and the dial's tuning log (`Tuning/`). Shared by the app and the widget. The catalog lives only here.
 - `Widgets/`: the configurable Pi Widget (`PiWidget.swift`): shows a published surface, resolves native data on
-  its timeline, runs its buttons through `RunWidgetActionIntent`. The run Live Activity (`PiRunLiveActivity.swift`).
+  its timeline, runs its buttons through `RunWidgetActionIntent`. The run Live Activity (`PiRunLiveActivity.swift`). The
+  Talk to Pi control and the voice Live Activity (`PiVoiceLiveActivity.swift`).
 - `js/`: TypeScript run inside JSC. `bun build.ts` bundles `src/runtime.ts` (the app's harness
   bootstrap) and `src/conformance.ts` (test suites) into `App/Resources/` and the PiRuntime test
   resources. `src/app/` is the chat API Swift calls (`PiRuntime.*`): conversations, display frames,

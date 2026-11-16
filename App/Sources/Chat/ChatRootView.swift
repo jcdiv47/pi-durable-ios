@@ -16,9 +16,11 @@ enum Route: Hashable {
     case alarms
     /// A link, when links open in Pi (`BrowserView`).
     case browser(URL)
+    /// Talk to Pi (`VoiceView`), `pidurable://voice`.
+    case voice
 
     /// `pidurable://conversation/<id>` (widget and Live Activity taps), `pidurable://widgets`, `pidurable://tasks`,
-    /// `pidurable://settings`, `pidurable://alarms`.
+    /// `pidurable://settings`, `pidurable://alarms`, `pidurable://voice`.
     /// `pidurable://share/<id>` is no route: the share extension's item goes through `ChatStore.receiveShares`.
     init?(url: URL) {
         guard url.scheme == "pidurable" else { return nil }
@@ -28,6 +30,7 @@ enum Route: Hashable {
         case "tasks": self = .schedules
         case "settings": self = .settings
         case "alarms": self = .alarms
+        case "voice": self = .voice
         default: return nil
         }
     }
@@ -57,6 +60,7 @@ struct ChatRootView: View {
                     case .tuning: TuningView(store: store)
                     case .alarms: AlarmsView()
                     case let .browser(url): BrowserView(url: url)
+                    case .voice: VoiceView(store: store, path: $path)
                     }
                 }
         }
@@ -132,6 +136,14 @@ struct ConversationListView: View {
                     Image(systemName: "ellipsis.circle")
                 }
                 .accessibilityLabel("More")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { path.append(.voice) } label: {
+                    Image(systemName: "waveform")
+                }
+                .accessibilityLabel("Talk to Pi")
+                .accessibilityIdentifier("voice.open")
+                .disabled(store.phase != .ready)
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button(action: compose) {

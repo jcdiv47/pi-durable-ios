@@ -207,7 +207,14 @@ final class ChatStore {
         background = BackgroundWork(store: self)
         notifications = Notifications(store: self)
         activities = RunActivities(store: self)
-        SharedIntents.perform = { request in await ChatStore.ready().perform(request) }
+        SharedIntents.perform = { request in
+            switch request {
+            // Listening starts at once; Pi opens when the first request needs it.
+            case .toggleVoice: try await RealtimeVoice.shared.toggle()
+            case .endVoice: await RealtimeVoice.shared.hangUp()
+            default: await ChatStore.ready().perform(request)
+            }
+        }
     }
 
     var busyConversations: [Int] { states.values.filter(\.live.busy).map(\.id) }
@@ -569,6 +576,7 @@ final class ChatStore {
         for request in Set(approvals.map(\.conversationId)).union(new.map(\.conversationId)) {
             if let state = states[request] { activities.update(state, approval: approvals.first { $0.conversationId == request }) }
         }
+        RealtimeVoice.shared.approvalsChanged(new: new)
         let away = UIApplication.shared.applicationState != .active
         let pending = Set(approvals.map(\.id))
         Task {
@@ -1130,6 +1138,9 @@ final class ChatStore {
             if UIApplication.shared.applicationState != .active { await background.waitForIdle(timeout: .seconds(25)) }
         case let .stopRun(conversationId):
             await abort(conversationId)
+        case .toggleVoice, .endVoice:
+            // Handled by `SharedIntents.perform` as they come; one left waiting in the App Group is stale.
+            break
         }
     }
 

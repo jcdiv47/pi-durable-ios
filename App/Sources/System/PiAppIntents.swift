@@ -276,9 +276,15 @@ struct PiShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
             intent: AskPiIntent(),
-            phrases: ["Ask \(.applicationName)", "Ask \(.applicationName) something", "Talk to \(.applicationName)"],
+            phrases: ["Ask \(.applicationName)", "Ask \(.applicationName) something"],
             shortTitle: "Ask Pi",
             systemImageName: "sparkle"
+        )
+        AppShortcut(
+            intent: TalkToPiIntent(),
+            phrases: ["Talk to \(.applicationName)", "Start talking to \(.applicationName)"],
+            shortTitle: "Talk to Pi",
+            systemImageName: "waveform"
         )
         AppShortcut(
             intent: RunPiTaskIntent(),
