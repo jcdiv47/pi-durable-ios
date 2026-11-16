@@ -30,7 +30,6 @@ public enum ProviderKeys {
     ]
 
     private static let customHost = OSAllocatedUnfairLock<String?>(initialState: nil)
-    private static let proxmoxHost = OSAllocatedUnfairLock<String?>(initialState: nil)
     private static let mcpHosts = OSAllocatedUnfairLock<[String: String]>(initialState: [:])
 
     /// The key prefix of MCP servers' tokens: server `ha`'s is the Keychain item and placeholder `mcp-ha`.
@@ -41,12 +40,6 @@ public enum ProviderKeys {
         customHost.withLock { $0 = host?.lowercased() }
     }
 
-    /// The host of the user's Proxmox VE node, the only host the `proxmox` token may be
-    /// sent to. Set from Swift only, with the node's certificate pinned (`PinnedCertificates`).
-    public static func setProxmoxHost(_ host: String?) {
-        proxmoxHost.withLock { $0 = host?.lowercased() }
-    }
-
     /// The host of each MCP server the user added in Settings, by server ID. A
     /// server's token (`mcp-<id>`) may be sent only to its own host. Set from Swift only; JS cannot add a host.
     public static func setMCPHosts(_ hosts: [String: String]) {
@@ -55,7 +48,6 @@ public enum ProviderKeys {
 
     static func hosts(for provider: String) -> Set<String> {
         if provider == "custom" { return customHost.withLock { $0.map { [$0] } ?? [] } }
-        if provider == "proxmox" { return proxmoxHost.withLock { $0.map { [$0] } ?? [] } }
         if provider.hasPrefix(mcpPrefix) {
             let id = String(provider.dropFirst(mcpPrefix.count))
             return mcpHosts.withLock { $0[id].map { [$0] } ?? [] }
@@ -191,8 +183,6 @@ final class FetchBridge: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         var keyed: [Int: Keyed] = [:]
         /// Requests a `LocalHTTPService` is answering, by fetch id.
         var local: [Int: Task<Void, Never>] = [:]
-        /// Requests a pin refused, by task identifier: the host and the fingerprint it sent.
-        var refused: [Int: (host: String, fingerprint: String)] = [:]
     }
 
     private struct Keyed {
@@ -339,21 +329,6 @@ final class FetchBridge: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         lock.withLock { $0.keyed[id] }
     }
 
-    /// A pinned host (`PinnedCertificates`) is trusted by its certificate's fingerprint only; for others the system
-    /// decides. A refused certificate ends the request before anything, the key included, is sent.
-    func urlSession(
-        _ session: URLSession,
-        task: URLSessionTask,
-        didReceive challenge: URLAuthenticationChallenge,
-        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
-    ) {
-        let host = challenge.protectionSpace.host
-        let (disposition, credential) = PinnedCertificates.handle(challenge) { actual in
-            self.lock.withLock { $0.refused[task.taskIdentifier] = (host, actual) }
-        }
-        completionHandler(disposition, credential)
-    }
-
     /// A request that carries a key follows redirects only to its services' hosts; elsewhere JS gets the redirect
     /// response itself. URLSession would copy the key's headers to the new request.
     func urlSession(
@@ -403,17 +378,14 @@ final class FetchBridge: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        let (id, refused) = lock.withLock { state -> (Int?, (host: String, fingerprint: String)?) in
-            let refused = state.refused.removeValue(forKey: task.taskIdentifier)
-            guard let id = state.ids.removeValue(forKey: task.taskIdentifier) else { return (nil, refused) }
+        let id = lock.withLock { state -> Int? in
+            guard let id = state.ids.removeValue(forKey: task.taskIdentifier) else { return nil }
             state.tasks.removeValue(forKey: id)
             state.keyed.removeValue(forKey: id)
-            return (id, refused)
+            return id
         }
         guard let id else { return }
-        if let refused {
-            deliver(id, .error(PinnedCertificates.mismatchMessage(host: refused.host, actual: refused.fingerprint)))
-        } else if let error {
+        if let error {
             deliver(id, .error(error.localizedDescription))
         } else {
             deliver(id, .end)

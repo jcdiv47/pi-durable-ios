@@ -23,7 +23,6 @@ import { McpHost, type McpServerConfig } from "./app/mcp.ts";
 import { type AppleModel, type CustomProvider, ModelSetup } from "./app/models.ts";
 import { waitWhileOffline } from "./app/network.ts";
 import { answerText, ScheduleTools, scheduleToolInfo } from "./app/schedule.ts";
-import { type ProxmoxConfig, proxmoxDashboard, proxmoxSettings, ProxmoxTools, proxmoxToolInfo } from "./app/proxmox.ts";
 import { SkillHost, type SkillInfo } from "./app/skills.ts";
 import { type SshHostConfig, sshSettings, SshTools, sshToolInfo, sshTrusted } from "./app/ssh.ts";
 import { SurfaceTools, surfaceToolInfo } from "./app/surfaces.ts";
@@ -58,8 +57,6 @@ export interface OpenOptions {
 	readonly mcpServers?: string;
 	/** Settings › SSH Hosts, without secrets. */
 	readonly sshHosts?: readonly SshHostConfig[];
-	/** Settings › Proxmox, without the token or the certificate. */
-	readonly proxmox?: ProxmoxConfig;
 	/** Settings › Instructions: the user's AGENTS.md text. */
 	readonly instructions?: string;
 	/** Settings › Skills: the imported skills, as Swift parsed them. */
@@ -113,8 +110,6 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 	registry.install(WebTools);
 	sshSettings.hosts = [...(options.sshHosts ?? [])];
 	registry.install(SshTools);
-	proxmoxSettings.server = options.proxmox ?? undefined;
-	registry.install(ProxmoxTools);
 	// From the cached tool lists, so a call a crash interrupted finds its tool before any server answers.
 	mcp.install = (extension) => registry.install(extension);
 	mcp.setServers(parseServers(options.mcpServers));
@@ -151,7 +146,7 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 	root = await harness.root(context, {
 		agent: { model: { provider: options.provider, modelId: options.modelId }, extensions: [KillTestTools(0)] },
 	});
-	chat = new Chat(harness, approvals, [AppleTools, SurfaceTools, WebTools, SshTools, ProxmoxTools, mcp.extension, scheduleTools, InstructionsExtension, skills.extension, CodeModeTools, approvalGate], emit, (model, level) =>
+	chat = new Chat(harness, approvals, [AppleTools, SurfaceTools, WebTools, SshTools, mcp.extension, scheduleTools, InstructionsExtension, skills.extension, CodeModeTools, approvalGate], emit, (model, level) =>
 		setup.clampThinking(model, level),
 	);
 	await chat.upgrade();
@@ -380,7 +375,7 @@ const app = {
 	answerApproval: async (id: number, decision: Decision) => requireChat().answerApproval(id, decision),
 	setPolicies: async (policies: Record<string, ToolPolicy>) => requireChat().setPolicies(policies),
 	tools: async () =>
-		[...appleToolInfo, ...webToolInfo, ...sshToolInfo, ...proxmoxToolInfo, ...surfaceToolInfo, ...scheduleToolInfo, ...codeModeToolInfo, ...mcp.toolInfo()].map((tool) => ({
+		[...appleToolInfo, ...webToolInfo, ...sshToolInfo, ...surfaceToolInfo, ...scheduleToolInfo, ...codeModeToolInfo, ...mcp.toolInfo()].map((tool) => ({
 			...tool,
 			policy: approvals.policy(tool.name),
 		})),
@@ -411,13 +406,6 @@ const app = {
 	setSshHosts: async (hosts: SshHostConfig[]) => {
 		sshSettings.hosts = [...hosts];
 	},
-	// Settings › Proxmox changed (or was removed: null); applies from the next tool call and model request.
-	setProxmox: async (config: ProxmoxConfig | null) => {
-		// Removed: null, or no address.
-		proxmoxSettings.server = config?.url ? config : undefined;
-	},
-	/** The Proxmox page: the node, its guests and its backups, read the way the pve_* tools read them. */
-	proxmoxDashboard: () => proxmoxDashboard(),
 	// Settings › Instructions and Settings › Skills changed; both apply from the next model request.
 	setInstructions: async (text: string) => {
 		instructionsSettings.text = text;

@@ -16,11 +16,9 @@ enum Route: Hashable {
     case alarms
     /// A link, when links open in Pi (`BrowserView`).
     case browser(URL)
-    /// The Proxmox VE node at a glance (`ProxmoxView`), `pidurable://proxmox`.
-    case proxmox
 
     /// `pidurable://conversation/<id>` (widget and Live Activity taps), `pidurable://widgets`, `pidurable://tasks`,
-    /// `pidurable://settings`, `pidurable://alarms`, `pidurable://proxmox`.
+    /// `pidurable://settings`, `pidurable://alarms`.
     /// `pidurable://share/<id>` is no route: the share extension's item goes through `ChatStore.receiveShares`.
     init?(url: URL) {
         guard url.scheme == "pidurable" else { return nil }
@@ -30,7 +28,6 @@ enum Route: Hashable {
         case "tasks": self = .schedules
         case "settings": self = .settings
         case "alarms": self = .alarms
-        case "proxmox": self = .proxmox
         default: return nil
         }
     }
@@ -60,7 +57,6 @@ struct ChatRootView: View {
                     case .tuning: TuningView(store: store)
                     case .alarms: AlarmsView()
                     case let .browser(url): BrowserView(url: url)
-                    case .proxmox: ProxmoxView(store: store, path: $path)
                     }
                 }
         }
@@ -130,9 +126,6 @@ struct ConversationListView: View {
                 Menu {
                     Button("Widgets", systemImage: "square.grid.2x2") { path.append(.surfaces) }
                     Button("Scheduled Tasks", systemImage: "clock.arrow.circlepath") { path.append(.schedules) }
-                    if store.proxmox != nil {
-                        Button("Proxmox", systemImage: "server.rack") { path.append(.proxmox) }
-                    }
                     Divider()
                     Button("Settings", systemImage: "gearshape") { path.append(.settings) }
                 } label: {

@@ -91,14 +91,10 @@ const cardTools = new Set([
 	"web_search",
 ]);
 
-/** Tools whose structured result is in `details.card` (their text is written for the model). */
-const detailCardTools = new Set(["pve_overview", "pve_guests", "pve_backups"]);
-
 /** Larger outputs keep only their text. */
 const MAX_DATA = 64_000;
 
-function cardData(toolName: string, isError: boolean, text: string, details: unknown): unknown {
-	if (!isError && detailCardTools.has(toolName)) return (details as { card?: unknown } | undefined)?.card;
+function cardData(toolName: string, isError: boolean, text: string): unknown {
 	if (isError || !cardTools.has(toolName) || text.length > MAX_DATA) return undefined;
 	try {
 		return JSON.parse(text);
@@ -160,7 +156,7 @@ export function displayItem(entry: EntryRecord): DisplayItem | undefined {
 				isError,
 				timestamp: message?.timestamp as number | undefined,
 				surface: (message?.details as { surface?: DisplaySurface } | undefined)?.surface,
-				data: cardData(toolName, isError, text, message?.details),
+				data: cardData(toolName, isError, text),
 			};
 		}
 		case "app.input": {
