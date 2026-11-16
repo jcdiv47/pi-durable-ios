@@ -211,7 +211,8 @@ final class VoiceAudio: @unchecked Sendable {
         writePi(finished)
         guard !dropped else { return }
         let generation = playback.withLock { state in
-            if state.item != item { state = Playback(item: item, generation: state.generation) }
+            // A new answer counts afresh: what of the last one still plays reports to a generation that is gone.
+            if state.item != item { state = Playback(item: item, generation: state.generation + 1) }
             state.scheduled += frames
             return state.generation
         }

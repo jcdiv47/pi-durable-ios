@@ -263,7 +263,7 @@ final class RealtimeVoice {
 
     static let instructions = """
     You are the voice of Pi, the user's personal agent on their iPhone. You hear the user and speak Pi's answers; Pi does \
-    the work. Pi can reach their home lab (Proxmox, SSH machines), Home Assistant and other servers they connected, \
+    the work. Pi can reach their home lab (machines over SSH), Home Assistant and other servers they connected, \
     their calendar, reminders, alarms, health data, photos and the web, and it remembers the earlier requests of this \
     conversation.
 
@@ -853,9 +853,10 @@ private final class AudioOutbox: Sendable {
     static let maxHeld = 150
     private let state = OSAllocatedUnfairLock(initialState: State())
 
-    /// A new session's socket; chunks an earlier session left are dropped.
+    /// A new session's socket. What the microphone gave before it is kept, as the recording has it: `close()` cleared
+    /// what an earlier session left.
     func attach(_ socket: URLSessionWebSocketTask) {
-        state.withLock { $0 = State(socket: socket) }
+        state.withLock { $0.socket = socket }
     }
 
     func send(_ chunk: Data) {
