@@ -1018,18 +1018,25 @@ final class ChatStore {
     /// Siri, Shortcuts and notification replies: sends `text` (to a new conversation when `conversationId` is nil) and
     /// waits up to `waitMs` for the answer. A run still going then notifies when it ends.
     func askFromOutside(
-        _ text: String, conversationId: Int?, requestId: String, origin: String, waitMs: Int = 20_000, attachments: [Attachment] = []
+        _ text: String, conversationId: Int?, requestId: String, origin: String, waitMs: Int = 20_000, attachments: [Attachment] = [],
+        voice: String? = nil
     ) async throws -> OutsideAnswer {
         guard let harness else { throw PiIntentError("Pi could not open its storage.") }
         if let conversationId { watch(conversationId) }
         let input = OutsideInput(
             text: text, requestId: requestId, origin: origin, conversationId: conversationId, waitMs: waitMs, model: defaultModel,
-            attachments: attachments.compactMap(InputAttachment.init)
+            attachments: attachments.compactMap(InputAttachment.init), voice: voice
         )
         let answer: OutsideAnswer = try await harness.call("PiRuntime.askFromOutside", [try harness.jsonArgument(input)])
         watch(answer.conversationId)
         diagnostics.record("info", "entry", "\(origin): \(answer.status) in conversation \(answer.conversationId) (\(requestId))")
         return answer
+    }
+
+    /// A line said in a Talk to Pi session, into its conversation as a display-only entry (`voiceLine` in chat.ts).
+    func voiceLine(_ line: VoiceLine) async throws {
+        guard let harness else { throw PiIntentError("Pi could not open its storage.") }
+        try await harness.perform("PiRuntime.voiceLine", [try harness.jsonArgument(line)])
     }
 
     /// Share sheet items (`ShareInbox`): sent with their request ID, so one picked up twice is one message, or put in a
@@ -1104,6 +1111,20 @@ final class ChatStore {
         settings.set(Date(), forKey: key)
         let removed = await Task.detached(priority: .utility) { [kept] in Attachments.sweep(keeping: kept) }.value
         if removed > 0 { diagnostics.record("info", "app", "Deleted \(removed) unused attachment images (\(kept.count) in use)") }
+        await sweepVoiceRecordings()
+    }
+
+    /// Talk to Pi recordings no conversation shows any more (deleted, or forked away from).
+    private func sweepVoiceRecordings() async {
+        guard let harness else { return }
+        do {
+            let sessions: [String] = try await harness.call("PiRuntime.voiceSessions")
+            let live = RealtimeVoice.shared.recordingSession
+            let removed = await Task.detached(priority: .utility) { VoiceRecordings.sweep(keeping: Set(sessions), live: live) }.value
+            if removed > 0 { diagnostics.record("info", "voice", "Deleted \(removed) unused voice recordings (\(sessions.count) in use)") }
+        } catch {
+            report("sweep voice recordings", error)
+        }
     }
 
     /// The share sheet's conversation picker reads these from the App Group.

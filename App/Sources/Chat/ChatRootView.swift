@@ -16,8 +16,8 @@ enum Route: Hashable {
     case alarms
     /// A link, when links open in Pi (`BrowserView`).
     case browser(URL)
-    /// Talk to Pi (`VoiceView`), `pidurable://voice`.
-    case voice
+    /// Talk to Pi (`VoiceView`), `pidurable://voice`: in a new conversation, or `continuing` one.
+    case voice(continuing: Int?)
 
     /// `pidurable://conversation/<id>` (widget and Live Activity taps), `pidurable://widgets`, `pidurable://tasks`,
     /// `pidurable://settings`, `pidurable://alarms`, `pidurable://voice`.
@@ -30,7 +30,7 @@ enum Route: Hashable {
         case "tasks": self = .schedules
         case "settings": self = .settings
         case "alarms": self = .alarms
-        case "voice": self = .voice
+        case "voice": self = .voice(continuing: nil)
         default: return nil
         }
     }
@@ -60,7 +60,7 @@ struct ChatRootView: View {
                     case .tuning: TuningView(store: store)
                     case .alarms: AlarmsView()
                     case let .browser(url): BrowserView(url: url)
-                    case .voice: VoiceView(store: store, path: $path)
+                    case let .voice(continuing): VoiceView(store: store, path: $path, continuing: continuing)
                     }
                 }
         }
@@ -138,7 +138,7 @@ struct ConversationListView: View {
                 .accessibilityLabel("More")
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Button { path.append(.voice) } label: {
+                Button { path.append(.voice(continuing: nil)) } label: {
                     Image(systemName: "waveform")
                 }
                 .accessibilityLabel("Talk to Pi")

@@ -17,7 +17,15 @@ JavaScriptCore runtime.
   Talk to Pi (`RealtimeVoice`, `VoiceAudio`, `VoiceView`, `Route.voice`, `pidurable://voice`): a spoken session over
   OpenAI's Realtime API (WebSocket from Swift, the `openai` key). The voice model's only tool is `ask_pi`, which sends
   the request into a Pi conversation through `askFromOutside` (request ID `voice:<session>:<call_id>`), so Pi's tools,
-  approvals and transcript stay Pi's; approvals are tapped, never spoken. Nothing about the session is durable.
+  approvals and transcript stay Pi's; approvals are tapped, never spoken. The session itself is not durable, but what
+  was said is: each spoken line goes into the conversation as a display-only `app.voice` entry (`voiceLine`, `voice.ts`;
+  the model never reads it), in the order said, around the requests, whose input entry carries the session and which
+  the transcript draws as "Asked Pi", not as a bubble (`VoiceTranscriptViews`). The session is recorded (`VoiceAudio`)
+  as two tracks, never mixed, so no voice is in it twice: the microphone (`<session>.mic.m4a`, on the clock of the audio
+  sent to OpenAI) and Pi's voice as OpenAI sent it, cut where the user cut it off (`<session>.pi.m4a`), in Application
+  Support `voice/` (`VoiceRecordings`, not backed up, Settings › Talk to Pi turns it off). Lines point into their
+  role's track by offset; a session's Play plays its lines in turn (`VoicePlayback`), and a back swipe stops it.
+  Recordings no conversation shows are swept with the attachments (`PiRuntime.voiceSessions`).
   Links go through the root's `openURL` action: with Settings › Links on Pi, web links push `Route.browser`
   (`BrowserView`, a SwiftUI `WebPage`), so the stack's edge swipe returns to the chat.
   Settings › MCP servers (`MCPSettingsView`, `MCPServers`): the user's MCP servers, kept in Swift with their cached

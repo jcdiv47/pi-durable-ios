@@ -5,6 +5,8 @@ import SwiftUI
 struct VoiceView: View {
     @Bindable var store: ChatStore
     @Binding var path: [Route]
+    /// The conversation to talk in; nil starts a new one with the first thing said.
+    var continuing: Int?
     private var voice: RealtimeVoice { .shared }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -27,7 +29,7 @@ struct VoiceView: View {
         .navigationTitle("Talk to Pi")
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            if voice.phase == .off || voice.phase == .ended { await voice.start() }
+            if voice.phase == .off || voice.phase == .ended { await voice.start(conversationId: continuing) }
         }
         .sensoryFeedback(trigger: voice.phase) { _, new in
             new == .live ? .start : new == .ended ? .stop : nil

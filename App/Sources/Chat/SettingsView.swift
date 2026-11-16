@@ -139,6 +139,12 @@ struct SettingsView: View {
                 }
                 .accessibilityIdentifier("settings.alarms")
                 NavigationLink {
+                    VoiceSettingsView()
+                } label: {
+                    SettingsRow("Talk to Pi", systemImage: "waveform", tint: .blue)
+                }
+                .accessibilityIdentifier("settings.voice")
+                NavigationLink {
                     PhotoSearchSettingsView()
                 } label: {
                     SettingsRow("Photo Search", systemImage: "photo.on.rectangle.angled", tint: .indigo)

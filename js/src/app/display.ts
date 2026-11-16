@@ -6,6 +6,7 @@ import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { EntryRecord, InboxState } from "@earendil-works/pi-durable";
 import { attachmentSummary, type DisplayAttachment, type InputData } from "./attachments.ts";
 import { isNoReply, noReplyText } from "./schedule.ts";
+import { type DisplayVoice, VoiceEntry, type VoiceLine } from "./voice.ts";
 
 export type DisplayToolCall = { id: string; name: string; arguments: string };
 
@@ -13,7 +14,17 @@ export type DisplayItem =
 	/** `origin`: where an input from outside the chat came from (Siri, a widget, a schedule). */
 	/** `attachments`: what came with the text (the model got them in the message after it). */
 	/** `skill`: the skill the user ran with "/" (the model got its body; the bubble shows its name). */
-	| { id: number; kind: "user"; text: string; timestamp?: number; origin?: string; attachments?: DisplayAttachment[]; skill?: string }
+	/** `voice`: a request Talk to Pi handed to Pi, in the voice model's words. */
+	| {
+			id: number;
+			kind: "user";
+			text: string;
+			timestamp?: number;
+			origin?: string;
+			attachments?: DisplayAttachment[];
+			skill?: string;
+			voice?: DisplayVoice;
+	  }
 	| {
 			id: number;
 			kind: "assistant";
@@ -39,7 +50,9 @@ export type DisplayItem =
 			/** The parsed output of a tool the chat draws a native card for (`cardTools`). */
 			data?: unknown;
 	  }
-	| { id: number; kind: "notice"; text: string };
+	| { id: number; kind: "notice"; text: string }
+	/** A line said in a Talk to Pi session: by the user, or by the voice. The model never read it. */
+	| { id: number; kind: "voice"; text: string; timestamp?: number; voice: DisplayVoice };
 
 /** A queued user message, by submission ID. */
 export type DisplayQueued = { id: number; text: string; mode: "steer" | "followUp" };
@@ -169,6 +182,18 @@ export function displayItem(entry: EntryRecord): DisplayItem | undefined {
 				origin: data?.origin,
 				attachments: data?.attachments,
 				skill: data?.skill,
+				...(data?.voice === undefined ? {} : { voice: { session: data.voice } }),
+			};
+		}
+		case VoiceEntry: {
+			const line = entry.data as VoiceLine | undefined;
+			if (line === undefined) return undefined;
+			return {
+				id: entry.id,
+				kind: "voice",
+				text: clip(line.text),
+				timestamp: line.at,
+				voice: { session: line.session, role: line.role, startMs: line.startMs, endMs: line.endMs },
 			};
 		}
 		case "pi.compaction":

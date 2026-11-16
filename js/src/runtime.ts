@@ -18,6 +18,7 @@ import { Approvals, type Decision, defaultPolicies, type ToolPolicy } from "./ap
 import type { InputAttachment } from "./app/attachments.ts";
 import { CodeModeTools, codeModeToolInfo } from "./app/codemode.ts";
 import { Chat, intelligenceSettings, type OutsideInput, type WidgetAction } from "./app/chat.ts";
+import type { VoiceLineInput } from "./app/voice.ts";
 import { InstructionsExtension, instructionsSettings } from "./app/instructions.ts";
 import { McpHost, type McpServerConfig } from "./app/mcp.ts";
 import { type AppleModel, type CustomProvider, ModelSetup } from "./app/models.ts";
@@ -364,6 +365,7 @@ const app = {
 	steer: (id: number, submissionId: number) => requireChat().steer(id, submissionId),
 	takeBack: (id: number, submissionId: number) => requireChat().takeBack(id, submissionId),
 	attachmentFiles: () => requireChat().attachmentFiles(),
+	voiceSessions: () => requireChat().voiceSessions(),
 	fork: (id: number, entryId: number) => requireChat().fork(id, entryId),
 	rename: (id: number, title: string) => requireChat().rename(id, title),
 	archiveConversation: (id: number) => requireChat().archive(id),
@@ -414,6 +416,7 @@ const app = {
 	usage: async () => JSON.parse(JSON.stringify(await requireOpen().harness.usage(context))),
 	// Entry points outside the chat (App Intents, widget buttons, notification actions); each carries a request ID.
 	askFromOutside: (input: OutsideInput) => requireChat().ask(input),
+	voiceLine: (input: VoiceLineInput) => requireChat().voiceLine(input),
 	widgetAction: (publishedId: string, action: WidgetAction, requestId: string, provider: string, modelId: string) =>
 		requireChat().widgetAction(publishedId, action, requestId, { provider, modelId }),
 	schedules: () => requireChat().schedules(),

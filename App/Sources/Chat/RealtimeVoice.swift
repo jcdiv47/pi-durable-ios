@@ -11,9 +11,10 @@ import UIKit
 /// one tool, `ask_pi`, which sends the request into a Pi conversation through `ChatStore.askFromOutside`, so Pi's tools,
 /// approvals and transcript work as they do in the chat; the voice model only hears the answer and says it.
 ///
-/// Over a WebSocket from Swift with the OpenAI provider key, which never reaches JS. Nothing about the voice session is
-/// durable: if the app dies the session is gone, and a Pi turn it started finishes in its conversation (and notifies) as
-/// any other turn does. One at a time (`shared`), started from the voice screen or `TalkToPiIntent` (the Action button,
+/// Over a WebSocket from Swift with the OpenAI provider key, which never reaches JS. The session itself is not durable:
+/// if the app dies it is gone, and a Pi turn it started finishes in its conversation (and notifies) as any other turn
+/// does. What was said is: each line goes into the conversation as it is said (`voiceLine`, display-only), and the
+/// session is recorded to a file the lines point into (`VoiceRecordings`, unless the user turned that off). One at a time (`shared`), started from the voice screen or `TalkToPiIntent` (the Action button,
 /// Control Center), which may run with the app in the background: the session shows as a Live Activity
 /// (`PiVoiceAttributes`), and iOS lets it record only while that shows. Leaving the voice screen does not end it.
 @MainActor
@@ -62,6 +63,8 @@ final class RealtimeVoice {
     private(set) var conversationId: Int?
     /// Why the session ended, when it was not the user's doing.
     private(set) var endReason: String?
+    /// The session whose recording is being written; nil once the file is complete.
+    private(set) var recordingSession: String?
 
     private var hearing = false
     private var speaking = false
@@ -73,6 +76,9 @@ final class RealtimeVoice {
         if asks > 0 || waitingForApproval { return .working }
         return .listening
     }
+
+    /// The session going now.
+    var liveSession: String? { phase == .connecting || phase == .live ? sessionId : nil }
 
     var waitingForApproval: Bool { approval != nil }
 
@@ -92,7 +98,7 @@ final class RealtimeVoice {
     private var receiver: Task<Void, Never>?
     private var idle: Task<Void, Never>?
     private var audio: VoiceAudio?
-    private var creating: Task<Int?, Never>?
+    private var log = SessionLog(session: "", conversationId: nil, recorded: false)
     private var interruptions: NSObjectProtocol?
     /// Bumped by every start and end: work from an earlier session finds it changed and does nothing.
     private var generation = 0
@@ -111,7 +117,10 @@ final class RealtimeVoice {
         let generation = generation
         sessionId = UUID().uuidString
         self.conversationId = conversationId
-        creating = nil
+        VoicePlayback.shared.stop()
+        let recorded = VoiceRecordings.keep
+        log = SessionLog(session: sessionId, conversationId: conversationId, recorded: recorded)
+        recordingSession = recorded ? sessionId : nil
         turns = []
         endReason = nil
         hearing = false
@@ -138,7 +147,7 @@ final class RealtimeVoice {
             return end("Pi can't use the microphone. Allow it in the Settings app › Apps › Pi.")
         }
         guard generation == self.generation else { return }
-        await startAudio(generation: generation)
+        await startAudio(generation: generation, recording: recorded ? (VoiceRecordings.url(sessionId, .mic), VoiceRecordings.url(sessionId, .pi)) : nil)
         guard generation == self.generation else { return }
 
         var request = URLRequest(url: URL(string: "wss://api.openai.com/v1/realtime?model=\(Self.model)")!)
@@ -179,8 +188,11 @@ final class RealtimeVoice {
     /// finish (up to 25 s), as the other buttons do, so iOS does not suspend the app mid-run.
     func hangUp() async {
         let wasRunning = phase == .connecting || phase == .live
+        let log = log
         end()
         guard wasRunning, UIApplication.shared.applicationState != .active, store.phase == .ready else { return }
+        // The last lines go into the conversation before iOS suspends the app.
+        await log.chain?.value
         await store.background.waitForIdle(timeout: .seconds(25))
     }
 
@@ -195,10 +207,19 @@ final class RealtimeVoice {
         socket?.cancel(with: .normalClosure, reason: nil)
         socket = nil
         outbox.close()
+        // What was said and not written yet: Pi's words still playing (heard up to here), or not finished.
+        audio?.cut()
+        writeSpoken(all: true)
+        let log = log
         if let audio {
             audio.onInput = nil
             audio.onPlaybackIdle = nil
-            audio.queue.async { audio.stop() }
+            audio.queue.async { [weak self] in
+                audio.stop()
+                Task { @MainActor in self?.recordingClosed(log) }
+            }
+        } else {
+            recordingClosed(log)
         }
         audio = nil
         if let interruptions { NotificationCenter.default.removeObserver(interruptions) }
@@ -337,17 +358,29 @@ final class RealtimeVoice {
         case "input_audio_buffer.speech_started":
             hearing = true
             interrupt()
+            if let item = event.itemId { log.heard[item, default: .init()].startMs = event.audioStartMs }
 
         case "input_audio_buffer.speech_stopped":
             hearing = false
             if let item = event.itemId, !turns.contains(where: { $0.id == item }) {
                 turns.append(Turn(id: item, role: .user, text: "", pending: true))
             }
+            if let item = event.itemId {
+                log.heard[item, default: .init()].endMs = event.audioEndMs
+                writeHeard(item)
+            }
             touch()
+
+        case "conversation.item.input_audio_transcription.failed":
+            guard let item = event.itemId else { break }
+            log.transcripts[item] = ""
+            turns.removeAll { $0.id == item && $0.pending }
 
         case "conversation.item.input_audio_transcription.completed":
             guard let item = event.itemId else { break }
             let text = (event.transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            log.transcripts[item] = text
+            writeHeard(item)
             if let index = turns.firstIndex(where: { $0.id == item }) {
                 turns[index].text = text
                 turns[index].pending = false
@@ -377,6 +410,9 @@ final class RealtimeVoice {
             guard let item = event.itemId, let transcript = event.transcript,
                   let index = turns.firstIndex(where: { $0.id == item }), !turns[index].pending else { break }
             turns[index].text = transcript
+            // Written once it has been heard, or cut off: see `writeSpoken`.
+            log.said.insert(item)
+            if audio?.isPlaying != true { writeSpoken() }
 
         case "response.function_call_arguments.done":
             guard let call = event.callId else { break }
@@ -421,8 +457,8 @@ final class RealtimeVoice {
         }
     }
 
-    private func startAudio(generation: Int) async {
-        let audio = VoiceAudio()
+    private func startAudio(generation: Int, recording: (mic: URL, pi: URL)?) async {
+        let audio = VoiceAudio(recording: recording)
         let outbox = outbox
         audio.onInput = { [weak self] data, level in
             outbox.send(data)
@@ -457,6 +493,7 @@ final class RealtimeVoice {
     private func playbackIdle(generation: Int) {
         guard generation == self.generation, audio?.isPlaying == false else { return }
         speaking = false
+        writeSpoken()
         touch()
     }
 
@@ -470,6 +507,8 @@ final class RealtimeVoice {
             turns[index].pending = true
             turns[index].text += "…"
         }
+        log.said.insert(cut.item)
+        writeSpoken()
     }
 
     // MARK: ask_pi
@@ -486,14 +525,24 @@ final class RealtimeVoice {
         turns.append(Turn(id: turnId, role: .note, text: request, pending: true))
         // The call ID is OpenAI's, unique to this call: a repeated delivery is one request, as for every entry point.
         let requestId = "voice:\(sessionId):\(call)"
+        // "Checking." goes in before the request, though it is still being said.
+        writeSpoken(all: true)
+        let log = log
+        // Admitted in turn with the lines, so the request sits after what led to it; then waited for outside the line.
+        let admitted = log.enqueue { () async throws -> Int in
+            // Started from the Action button, Pi may not be open yet.
+            let store = await ChatStore.ready()
+            guard let conversation = await self.conversation(log, store: store) else { throw PiIntentError("Pi could not start a conversation.") }
+            _ = try await store.askFromOutside(request, conversationId: conversation, requestId: requestId, origin: "Voice", waitMs: 0, voice: log.session)
+            return conversation
+        }
         Task {
             var result: [String: Any]
             do {
-                // Started from the Action button, Pi may not be open yet.
-                let store = await ChatStore.ready()
-                guard let conversation = await conversation(store: store) else { throw PiIntentError("Pi could not start a conversation.") }
-                let answer = try await store.askFromOutside(
-                    request, conversationId: conversation, requestId: requestId, origin: "Voice", waitMs: Self.answerWait
+                let conversation = try await admitted.value
+                // The same request ID: this finds the submission just made and waits for its answer.
+                let answer = try await ChatStore.shared.askFromOutside(
+                    request, conversationId: conversation, requestId: requestId, origin: "Voice", waitMs: Self.answerWait, voice: log.session
                 )
                 switch answer.status {
                 case "done": result = ["status": "done", "answer": String((answer.text ?? "").prefix(6000))]
@@ -512,14 +561,78 @@ final class RealtimeVoice {
         }
     }
 
-    /// The conversation for this session's requests, created once even when two arrive together.
-    private func conversation(store: ChatStore) async -> Int? {
-        if let conversationId { return conversationId }
-        let task = creating ?? Task { await store.newConversation()?.id }
-        creating = task
+    /// The conversation for the session's lines and requests: the one it continues, or one made by the first thing
+    /// said, once even when two need it together.
+    private func conversation(_ log: SessionLog, store: ChatStore) async -> Int? {
+        if let id = log.conversationId { return id }
+        let task = log.creating ?? Task { await store.newConversation()?.id }
+        log.creating = task
         let id = await task.value
-        if conversationId == nil { conversationId = id }
-        return conversationId
+        if log.conversationId == nil { log.conversationId = id }
+        if log === self.log { conversationId = log.conversationId }
+        return log.conversationId
+    }
+
+    // MARK: The record
+
+    /// What the user said in `item`, into the conversation, once its transcription is in (a moment after the speech
+    /// ends): it waits in the session's line, as what comes next was said after it. Nothing heard, nothing written.
+    private func writeHeard(_ item: String) {
+        let log = log
+        guard log.queued.insert(item).inserted else { return }
+        let at = Date.now
+        log.enqueue {
+            for _ in 0..<60 where log.transcripts[item] == nil {
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            guard let text = log.transcripts[item], !text.isEmpty else { return }
+            let store = await ChatStore.ready()
+            guard let conversation = await self.conversation(log, store: store) else { return }
+            let heard = log.heard[item]
+            try await self.write(log, conversation: conversation, item: item, role: "user", text: text, startMs: heard?.startMs, endMs: heard?.endMs, at: at)
+        }
+    }
+
+    /// What the voice said, into the conversation: the answers it finished saying (heard to the end or cut off), or
+    /// with `all`, every answer it has words for, as when the session ends or the words lead to a request. Only into a
+    /// conversation the session already has: the voice talking to itself starts none.
+    private func writeSpoken(all: Bool = false) {
+        let log = log
+        for turn in turns where turn.role == .pi && !turn.text.isEmpty && !log.queued.contains(turn.id) {
+            guard all || log.said.contains(turn.id) else { continue }
+            log.queued.insert(turn.id)
+            // Heard to the end unless it is still playing (a request goes in while "Checking." is said).
+            let span = audio?.span(turn.id, finish: audio?.isPlaying != true)
+            let text = turn.text
+            let at = Date.now
+            log.enqueue {
+                guard let conversation = log.conversationId else { return }
+                try await self.write(log, conversation: conversation, item: turn.id, role: "pi", text: text, startMs: span?.startMs, endMs: span?.endMs, at: at)
+            }
+        }
+    }
+
+    private func write(_ log: SessionLog, conversation: Int, item: String, role: String, text: String, startMs: Int?, endMs: Int?, at: Date) async throws {
+        let line = VoiceLine(
+            conversationId: conversation, itemId: item, session: log.session, role: role, text: text,
+            startMs: log.recorded ? startMs : nil, endMs: log.recorded ? endMs : nil, at: (at.timeIntervalSince1970 * 1000).rounded()
+        )
+        do {
+            try await ChatStore.shared.voiceLine(line)
+            log.wrote = true
+        } catch {
+            ChatStore.shared.diagnostics.record("warn", "voice", "Could not keep a spoken line: \(error.localizedDescription)")
+        }
+    }
+
+    /// The session's recording is complete. One with nothing written about it is deleted: nothing would play it.
+    private func recordingClosed(_ log: SessionLog) {
+        if recordingSession == log.session { recordingSession = nil }
+        guard log.recorded else { return }
+        Task {
+            await log.chain?.value
+            if !log.wrote { VoiceRecordings.delete(log.session) }
+        }
     }
 
     private func output(_ call: String, _ result: [String: Any]) -> [String: Any] {
@@ -657,6 +770,49 @@ final class RealtimeVoice {
     }
 }
 
+/// One session's record: what was heard and said, where in the recording, and the line its writes wait in, so each
+/// goes into the conversation in the order it happened. A new session gets a new one; the old one's writes finish.
+@MainActor
+private final class SessionLog {
+    struct Heard {
+        var startMs: Int?
+        var endMs: Int?
+    }
+
+    let session: String
+    let recorded: Bool
+    var conversationId: Int?
+    var creating: Task<Int?, Never>?
+    /// The user's speech by item: where it is in the recording, and its transcription once in ("" for nothing).
+    var heard: [String: Heard] = [:]
+    var transcripts: [String: String] = [:]
+    /// The voice's answers it has finished saying (heard to the end, or cut off), by item.
+    var said: Set<String> = []
+    /// Items with a write queued.
+    var queued: Set<String> = []
+    /// Whether any line went into the conversation.
+    var wrote = false
+    private(set) var chain: Task<Void, Never>?
+
+    init(session: String, conversationId: Int?, recorded: Bool) {
+        self.session = session
+        self.conversationId = conversationId
+        self.recorded = recorded
+    }
+
+    /// Runs `work` after everything queued before it.
+    @discardableResult
+    func enqueue<T: Sendable>(_ work: @escaping @MainActor @Sendable () async throws -> T) -> Task<T, Error> {
+        let previous = chain
+        let task = Task { @MainActor in
+            await previous?.value
+            return try await work()
+        }
+        chain = Task { _ = try? await task.value }
+        return task
+    }
+}
+
 /// The Realtime server events the session reads; every other field is ignored.
 private struct ServerEvent: Decodable, Sendable {
     struct Problem: Decodable, Sendable {
@@ -679,6 +835,9 @@ private struct ServerEvent: Decodable, Sendable {
     let arguments: String?
     let error: Problem?
     let response: Response?
+    /// Where speech started and stopped in the audio sent so far, for `input_audio_buffer.speech_*`.
+    let audioStartMs: Int?
+    let audioEndMs: Int?
 }
 
 /// Microphone chunks on their way to the socket. Held while the session is being set up, up to `maxHeld`, so the first

@@ -113,7 +113,7 @@ targets:
         NSHealthUpdateUsageDescription: Pi saves health data only when you ask it to.
         NSPhotoLibraryUsageDescription: Pi searches your photos on this iPhone when you ask it to find one. The photos never leave your iPhone.
         NSCameraUsageDescription: Pi uses the camera only when you take a photo to attach to a message.
-        NSMicrophoneUsageDescription: Pi listens only while you dictate a message or talk to Pi, and sends what it hears to OpenAI to turn it into text or answer you.
+        NSMicrophoneUsageDescription: Pi listens only while you dictate a message or talk to Pi, and sends what it hears to OpenAI to turn it into text or answer you. Conversations with Pi are recorded on this iPhone so you can play them back; you can turn that off in Settings.
         # MCP servers in the homelab: plain HTTP to local names and to Tailscale's
         # MagicDNS names, which the tunnel already encrypts. Everything else still needs HTTPS.
         NSAppTransportSecurity:
