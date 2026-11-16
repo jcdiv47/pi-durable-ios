@@ -22,8 +22,38 @@ import UIKit
 final class RealtimeVoice {
     static let shared = RealtimeVoice()
 
-    static let model = "gpt-realtime-2.1"
-    static let voice = "marin"
+    /// The Realtime API's speech-to-speech models with tools (translation and transcription models can't hold a
+    /// conversation), with what Settings › Talk to Pi says of each.
+    static let models: [(id: String, name: String, detail: String)] = [
+        ("gpt-realtime-2.1", "GPT Realtime 2.1", "The newest. Best at hearing and calling Pi."),
+        ("gpt-realtime-2.1-mini", "GPT Realtime 2.1 mini", "Faster, about a third of the price; calls Pi less reliably."),
+        ("gpt-realtime-2", "GPT Realtime 2", "The one before 2.1."),
+    ]
+    static let defaultModel = "gpt-realtime-2.1"
+    /// Settings › Talk to Pi › Model. Like the voice, a session keeps the model it started with.
+    static let modelKey = "voiceRealtimeModel"
+
+    static var model: String {
+        get {
+            let stored = UserDefaults.standard.string(forKey: modelKey) ?? defaultModel
+            return models.contains { $0.id == stored } ? stored : defaultModel
+        }
+        set { UserDefaults.standard.set(newValue, forKey: modelKey) }
+    }
+    /// The Realtime API's built-in voices; `marin` and `cedar` are the newest and sound best.
+    static let voices = ["marin", "cedar", "alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse"]
+    static let defaultVoice = "marin"
+    /// Settings › Talk to Pi › Voice. A session keeps the voice it started with (OpenAI cannot change it once the
+    /// session has spoken); the next session takes the new one.
+    static let voiceKey = "voiceRealtimeVoice"
+
+    static var voice: String {
+        get {
+            let stored = UserDefaults.standard.string(forKey: voiceKey) ?? defaultVoice
+            return voices.contains(stored) ? stored : defaultVoice
+        }
+        set { UserDefaults.standard.set(newValue, forKey: voiceKey) }
+    }
     static let provider = VoiceInput.provider
     /// Quiet this long (nobody speaking, nothing playing, Pi not working or waiting for approval) ends the session.
     static let idleLimit: Duration = .seconds(30)
@@ -103,6 +133,8 @@ final class RealtimeVoice {
     /// Bumped by every start and end: work from an earlier session finds it changed and does nothing.
     private var generation = 0
     private var sessionId = ""
+    /// The model this session connected with: Settings may change while it talks.
+    private var sessionModel = RealtimeVoice.defaultModel
     private var responseActive = false
     private var responseWanted = false
 
@@ -147,10 +179,12 @@ final class RealtimeVoice {
             return end("Pi can't use the microphone. Allow it in the Settings app › Apps › Pi.")
         }
         guard generation == self.generation else { return }
+        VoicePreview.shared.stop()
         await startAudio(generation: generation, recording: recorded ? (VoiceRecordings.url(sessionId, .mic), VoiceRecordings.url(sessionId, .pi)) : nil)
         guard generation == self.generation else { return }
 
-        var request = URLRequest(url: URL(string: "wss://api.openai.com/v1/realtime?model=\(Self.model)")!)
+        sessionModel = Self.model
+        var request = URLRequest(url: URL(string: "wss://api.openai.com/v1/realtime?model=\(sessionModel)")!)
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         let socket = URLSession.shared.webSocketTask(with: request)
         socket.maximumMessageSize = 16 << 20
@@ -172,7 +206,7 @@ final class RealtimeVoice {
             guard let self, generation == self.generation, phase == .connecting else { return }
             end("OpenAI didn't answer. Check the connection and try again.")
         }
-        store.diagnostics.record("info", "voice", "Voice session starting (\(Self.model))\(background ? " in the background" : "")")
+        store.diagnostics.record("info", "voice", "Voice session starting (\(Self.model), \(Self.voice))\(background ? " in the background" : "")")
     }
 
     /// `TalkToPiIntent`: starts a session, or ends the one going. Returns once the session is live, or throws why it
@@ -340,7 +374,7 @@ final class RealtimeVoice {
         guard generation == self.generation else { return }
         switch status {
         case 401: end("OpenAI didn't accept the key. Check it in Settings › Providers.")
-        case 403, 404: end("This OpenAI key can't use \(Self.model) (HTTP \(status ?? 0)).")
+        case 403, 404: end("This OpenAI key can't use \(sessionModel) (HTTP \(status ?? 0)).")
         case 429: end("OpenAI's rate limit or quota is used up (HTTP 429).")
         default: end(phase == .connecting ? "Pi couldn't reach OpenAI: \(error.localizedDescription)" : "The connection to OpenAI closed.")
         }
