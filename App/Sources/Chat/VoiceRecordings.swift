@@ -177,8 +177,9 @@ final class VoicePlayback {
     }
 }
 
-/// Settings › Talk to Pi: Pi's voice, whether sessions are recorded, and the recordings kept.
+/// Settings › Talk to Pi: the model and Pi's voice, whether sessions are recorded, and the recordings kept.
 struct VoiceSettingsView: View {
+    @State private var model = RealtimeVoice.model
     @State private var voice = RealtimeVoice.voice
     @State private var keep = VoiceRecordings.keep
     @State private var usage = VoiceRecordings.usage()
@@ -186,6 +187,16 @@ struct VoiceSettingsView: View {
 
     var body: some View {
         Form {
+            Section {
+                Picker("Model", selection: $model) {
+                    ForEach(RealtimeVoice.models, id: \.id) { option in
+                        Text(option.name).tag(option.id)
+                    }
+                }
+                .accessibilityIdentifier("voice.model")
+            } footer: {
+                Text("\(RealtimeVoice.models.first { $0.id == model }?.detail ?? "") A session already talking keeps its model.")
+            }
             Section {
                 ForEach(RealtimeVoice.voices, id: \.self) { name in
                     VoiceChoiceRow(name: name, selected: voice == name) { voice = name }
@@ -226,6 +237,7 @@ struct VoiceSettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: keep) { VoiceRecordings.keep = keep }
         .onChange(of: voice) { RealtimeVoice.voice = voice }
+        .onChange(of: model) { RealtimeVoice.model = model }
         .onDisappear { preview.stop() }
     }
 
