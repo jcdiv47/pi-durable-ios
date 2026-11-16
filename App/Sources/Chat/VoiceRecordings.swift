@@ -177,14 +177,29 @@ final class VoicePlayback {
     }
 }
 
-/// Settings › Talk to Pi: whether sessions are recorded, and the recordings kept.
+/// Settings › Talk to Pi: Pi's voice, whether sessions are recorded, and the recordings kept.
 struct VoiceSettingsView: View {
+    @State private var voice = RealtimeVoice.voice
     @State private var keep = VoiceRecordings.keep
     @State private var usage = VoiceRecordings.usage()
     @State private var confirmingDelete = false
 
     var body: some View {
         Form {
+            Section {
+                ForEach(RealtimeVoice.voices, id: \.self) { name in
+                    VoiceChoiceRow(name: name, selected: voice == name) { voice = name }
+                }
+            } header: {
+                Text("Voice")
+            } footer: {
+                VStack(alignment: .leading, spacing: 6) {
+                    if let error = preview.error {
+                        Text(error).foregroundStyle(.red)
+                    }
+                    Text("The voice Pi speaks with, from OpenAI's Realtime API. A session already talking keeps its voice; the next one uses this. Samples use your OpenAI key once per voice.")
+                }
+            }
             Section {
                 Toggle("Keep Recordings", isOn: $keep)
                     .accessibilityIdentifier("voice.keep")
@@ -210,5 +225,52 @@ struct VoiceSettingsView: View {
         .navigationTitle("Talk to Pi")
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: keep) { VoiceRecordings.keep = keep }
+        .onChange(of: voice) { RealtimeVoice.voice = voice }
+        .onDisappear { preview.stop() }
+    }
+
+    private var preview: VoicePreview { .shared }
+}
+
+/// A voice in Settings › Talk to Pi: tap to choose it, or its button to hear a sample (`VoicePreview`).
+private struct VoiceChoiceRow: View {
+    let name: String
+    let selected: Bool
+    let choose: () -> Void
+
+    private var preview: VoicePreview { .shared }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button(action: choose) {
+                HStack {
+                    Text(name.capitalized).foregroundStyle(.primary)
+                    Spacer()
+                    if selected {
+                        Image(systemName: "checkmark").foregroundStyle(.tint).fontWeight(.semibold)
+                    }
+                }
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(selected ? .isSelected : [])
+            .accessibilityIdentifier("voice.voice.\(name)")
+
+            Button { preview.toggle(name) } label: {
+                Group {
+                    switch preview.state {
+                    case .loading(name): ProgressView()
+                    case .playing(name): Image(systemName: "stop.circle.fill")
+                    default: Image(systemName: "play.circle")
+                    }
+                }
+                .font(.title2)
+                .frame(width: 30, height: 30)
+            }
+            .buttonStyle(.borderless)
+            .disabled(!preview.available)
+            .accessibilityLabel(preview.state == .playing(name) ? "Stop \(name.capitalized) sample" : "Play \(name.capitalized) sample")
+            .accessibilityIdentifier("voice.sample.\(name)")
+        }
     }
 }
