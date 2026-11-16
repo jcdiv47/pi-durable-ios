@@ -33,6 +33,7 @@ import {
 import { type DisplaySurface, FrameBuilder, textOf } from "./display.ts";
 import { answerText, isNoReply, noReplyText, OriginInput, SchedulesDoc } from "./schedule.ts";
 import { readSkill, skillContent } from "./skills.ts";
+import { VoiceEntry, type VoiceLine, type VoiceLineInput } from "./voice.ts";
 import { PublishedDoc, SurfacesDoc, ValuesDoc } from "./surfaces.ts";
 import { complete, entriesOf, readView, transcriptOf } from "./view.ts";
 import { hostCall } from "../host/hostcall.ts";
@@ -92,6 +93,8 @@ export type OutsideInput = {
 	waitMs: number;
 	/** Screenshots, text and links from the share sheet. */
 	attachments?: InputAttachment[];
+	/** The Talk to Pi session that handed this request over. */
+	voice?: string;
 	model: { provider: string; modelId: string };
 };
 
@@ -252,6 +255,7 @@ export class Chat {
 		origin?: string,
 		attachments: readonly InputAttachment[] = [],
 		skill?: string,
+		voice?: string,
 	): Promise<Submission> {
 		const conversation = await this.#conversation(id);
 		const ran = skill === undefined ? undefined : await readSkill(skill);
@@ -260,6 +264,7 @@ export class Chat {
 			...(attachments.length === 0 && ran === undefined ? {} : { text }),
 			...(attachments.length === 0 ? {} : { attachments: displayAttachments(attachments) }),
 			...(ran === undefined ? {} : { skill: ran.name }),
+			...(voice === undefined ? {} : { voice }),
 		};
 		const content =
 			ran !== undefined
@@ -324,7 +329,7 @@ export class Chat {
 			id ??= (await this.create(input.model, input.requestId)).id;
 		}
 		const startedAt = Date.now();
-		const submission = await this.#submit(id, input.text, input.requestId, input.origin, input.attachments);
+		const submission = await this.#submit(id, input.text, input.requestId, input.origin, input.attachments, undefined, input.voice);
 		if (input.waitMs <= 0) return { conversationId: id, status: "running" };
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		const timeout = new Promise<undefined>((resolve) => {
@@ -435,6 +440,49 @@ export class Chat {
 			attachments: data.attachments === undefined ? [] : editableAttachments(item.content, data.attachments),
 			...(data.skill === undefined ? {} : { skill: data.skill }),
 		};
+	}
+
+	/**
+	 * A line said in a Talk to Pi session, as a display-only entry: the model never reads it, and a busy conversation
+	 * places it at its next boundary, among the work it was said during. The first thing the user says titles a new
+	 * conversation, as a first message does.
+	 */
+	async voiceLine(input: VoiceLineInput): Promise<void> {
+		const { conversationId: id, itemId, ...line } = input;
+		const conversation = await this.#conversation(id);
+		await conversation.submit(
+			{ type: "write", requestId: `voice:${line.session}:${itemId}`, entry: { kind: VoiceEntry, data: line as unknown as JsonValue } },
+			context,
+		);
+		let firstTitle: string | undefined;
+		await this.harness.commit(async (tx) => {
+			const meta = (await tx.doc(ConversationIndex)).items.find((item) => item.id === id);
+			if (meta === undefined) return;
+			meta.updatedAt = Date.now();
+			if (meta.title === untitled && line.role === "user" && line.text.trim() !== "") meta.title = firstTitle = titleFrom(line.text);
+		}, context);
+		await this.#changed();
+		if (firstTitle !== undefined && intelligenceSettings.titles) void this.#writeTitle(id, line.text, firstTitle);
+	}
+
+	/** The Talk to Pi sessions some conversation still shows, archived ones and forks included: their recordings stay. */
+	async voiceSessions(): Promise<string[]> {
+		const sessions = new Set<string>();
+		for (const { id } of await this.#all()) {
+			const conversation = await this.#conversation(id);
+			let cursor: Parameters<Conversation["entries"]>[2];
+			do {
+				const page = await conversation.entries({ order: "ascending" }, 200, cursor, context);
+				for (const entry of page.items as readonly EntryRecord[]) {
+					if (entry.kind === VoiceEntry) sessions.add((entry.data as VoiceLine).session);
+				}
+				cursor = page.next;
+			} while (cursor !== undefined);
+			for (const item of (await this.harness.snapshot(InboxDoc, id as never, context))?.items ?? []) {
+				if (item.mode === "write" && item.entry?.kind === VoiceEntry) sessions.add((item.entry.data as VoiceLine).session);
+			}
+		}
+		return [...sessions];
 	}
 
 	/**

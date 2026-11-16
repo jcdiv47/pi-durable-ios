@@ -17,9 +17,10 @@ export type DisplayAttachment =
 
 /**
  * What the input entry keeps besides the message: where it came from, the typed text, the attachments, and the skill
- * the user ran with "/" (its body went into the message; the transcript shows its name).
+ * the user ran with "/" (its body went into the message; the transcript shows its name). `voice`: the Talk to Pi session
+ * that handed this request to Pi (its text is the voice model's wording, not the user's).
  */
-export type InputData = { origin?: string; text?: string; attachments?: DisplayAttachment[]; skill?: string };
+export type InputData = { origin?: string; text?: string; attachments?: DisplayAttachment[]; skill?: string; voice?: string };
 
 /** A shared PDF or web page can be long; the model gets this much of each. */
 const MAX_TEXT = 100_000;

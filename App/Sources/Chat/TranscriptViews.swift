@@ -2,25 +2,39 @@ import PiUI
 import SwiftUI
 
 /// A transcript entry as the conversation shows it: messages as they are, and each stretch of tool calls folded into one
-/// "Worked" row, with the cards its results draw under it.
+/// "Worked" row, with the cards its results draw under it. A Talk to Pi session gets a header where it starts.
 enum TranscriptRow: Identifiable {
     /// `resent`: an answer cut off by a crash or eviction, which Pi then asked for again.
     case item(DisplayItem, resent: Bool)
     /// Tool-calling answers in a row, and their results (looked up by call ID).
     case work(id: Int, steps: [DisplayItem])
+    /// Where a voice session starts: when, and its spoken lines, which its Play plays in turn.
+    case voiceSession(session: String, date: Date?, lines: [DisplayVoice])
 
-    var id: Int {
-        switch self {
-        case let .item(item, _): item.id
+    enum ID: Hashable {
+        case item(Int)
         // An answer with text and calls is both an item and the start of a work row.
-        case let .work(id, _): -id
+        case work(Int)
+        case voice(String)
+    }
+
+    var id: ID {
+        switch self {
+        case let .item(item, _): .item(item.id)
+        case let .work(id, _): .work(id)
+        case let .voiceSession(session, _, _): .voice(session)
         }
     }
 
     static func rows(_ items: [DisplayItem]) -> [TranscriptRow] {
         let calls = Set(items.flatMap { $0.toolCalls ?? [] }.map(\.id))
         var rows: [TranscriptRow] = []
+        var sessions: Set<String> = []
+        let lines = Dictionary(grouping: items.filter { $0.kind == .voice }.compactMap(\.voice), by: \.session)
         for (index, item) in items.enumerated() {
+            if let session = item.voice?.session, sessions.insert(session).inserted {
+                rows.append(.voiceSession(session: session, date: item.date, lines: lines[session] ?? []))
+            }
             switch item.kind {
             case .assistant:
                 let hasCalls = !(item.toolCalls ?? []).isEmpty
@@ -55,7 +69,8 @@ enum TranscriptRow: Identifiable {
             let next = rows.dropFirst(index + 1).first
             switch next {
             case nil: if !busy { ends.insert(item.id) }
-            case let .item(following, _)? where following.kind == .user: ends.insert(item.id)
+            case let .item(following, _)? where following.kind == .user || following.kind == .voice: ends.insert(item.id)
+            case .voiceSession?: ends.insert(item.id)
             default: break
             }
         }
@@ -118,6 +133,10 @@ struct TranscriptItemView: View {
 
     var body: some View {
         switch item.kind {
+        case .user where item.voice != nil:
+            VoiceHandoffView(text: item.text ?? "")
+        case .voice:
+            if let voice = item.voice { VoiceLineView(text: item.text ?? "", voice: voice) }
         case .user:
             VStack(alignment: .trailing, spacing: 3) {
                 if let origin = item.origin {

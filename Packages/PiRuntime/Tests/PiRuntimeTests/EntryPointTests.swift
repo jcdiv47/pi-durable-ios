@@ -150,6 +150,48 @@ struct EntryPointTests {
         try await harness.close()
     }
 
+    @Test("Talk to Pi's spoken lines are display-only entries, once per item, around the request it handed to Pi", .timeLimit(.minutes(1)))
+    func voiceLines() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let log = ChatLog()
+        let harness = try await openEntryChat(log, db: directory.appendingPathComponent("chat.sqlite").path)
+        let meta: Meta = try await harness.call("PiRuntime.createConversation", ["scripted", "assistant"])
+        try await harness.perform("PiRuntime.watchConversation", [meta.id])
+        func line(_ item: String, _ role: String, _ text: String, startMs: Int) -> [String: any Sendable] {
+            ["conversationId": meta.id, "itemId": item, "session": "s1", "role": role, "text": text, "startMs": startMs, "endMs": startMs + 900, "at": 1_000]
+        }
+        try await harness.perform("PiRuntime.voiceLine", [line("u1", "user", "is the home lab okay", startMs: 200)])
+        // Delivered twice: one entry.
+        try await harness.perform("PiRuntime.voiceLine", [line("u1", "user", "is the home lab okay", startMs: 200)])
+        try await harness.perform("PiRuntime.voiceLine", [line("p1", "pi", "Checking.", startMs: 1_500)])
+        var request = outside("Check the home lab", requestId: "voice:s1:c1", conversationId: meta.id)
+        request["origin"] = "Voice"
+        request["voice"] = "s1"
+        // As RealtimeVoice sends it: admitted in turn with the lines, then the same request ID again to wait for the answer.
+        request["waitMs"] = 0
+        let admitted: OutsideAnswer = try await harness.call("PiRuntime.askFromOutside", [request])
+        #expect(admitted.status == "running")
+        request["waitMs"] = 10_000
+        let answer: OutsideAnswer = try await harness.call("PiRuntime.askFromOutside", [request])
+        #expect(answer.text == "You said: Check the home lab")
+        try await harness.perform("PiRuntime.voiceLine", [line("p2", "pi", "All good.", startMs: 4_000)])
+        try await until { log.items(meta.id).count == 5 }
+        let items = log.items(meta.id)
+        #expect(items.map { $0["kind"] as? String } == ["voice", "voice", "user", "assistant", "voice"])
+        let heard = items[0]["voice"] as? [String: Any]
+        #expect(heard?["role"] as? String == "user")
+        #expect(heard?["startMs"] as? Int == 200)
+        #expect((items[2]["voice"] as? [String: Any])?["session"] as? String == "s1")
+        // The model read only the request, not the spoken lines.
+        #expect(items[3]["text"] as? String == "You said: Check the home lab")
+        let conversations: [Meta] = try await harness.call("PiRuntime.conversations")
+        #expect(conversations.first { $0.id == meta.id }?.title == "is the home lab okay")
+        let sessions: [String] = try await harness.call("PiRuntime.voiceSessions")
+        #expect(sessions == ["s1"])
+        try await harness.close()
+    }
+
     @Test("A widget toggle changes a $doc list once per request ID", .timeLimit(.minutes(1)))
     func widgetToggle() async throws {
         let directory = try temporaryDirectory()

@@ -8,5 +8,7 @@ struct PiWidgets: WidgetBundle {
         PiWidget()
         PiRunLiveActivity()
         PiAlarmLiveActivity()
+        PiVoiceLiveActivity()
+        PiVoiceControl()
     }
 }

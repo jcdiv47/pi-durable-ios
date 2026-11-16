@@ -41,6 +41,8 @@ struct ToolCallItem: Decodable, Hashable {
 struct DisplayItem: Decodable, Identifiable, Hashable {
     enum Kind: String, Decodable {
         case user, assistant, toolResult, notice
+        /// A line said in a Talk to Pi session (`app.voice`); the model never read it.
+        case voice
     }
 
     let id: Int
@@ -67,6 +69,8 @@ struct DisplayItem: Decodable, Identifiable, Hashable {
     var skill: String?
     /// A scheduled run's answer that had nothing to tell (`NO_REPLY`); `text` says so. Shown quietly, never notified.
     var noReply: Bool?
+    /// The Talk to Pi session of a spoken line, or of a request the voice handed to Pi (a `user` item in its words).
+    var voice: DisplayVoice?
 
     var date: Date? { timestamp.map { Date(timeIntervalSince1970: $0 / 1000) } }
 
@@ -76,6 +80,16 @@ struct DisplayItem: Decodable, Identifiable, Hashable {
 
     /// A result that went wrong, as opposed to one the user declined.
     var isFailure: Bool { isError == true && !isDeclined }
+}
+
+/// Where a display item sits in a Talk to Pi session (`DisplayVoice` in voice.ts).
+struct DisplayVoice: Decodable, Hashable {
+    let session: String
+    /// `user` or `pi`, for a spoken line.
+    var role: String?
+    /// The line's place in the session's recording.
+    var startMs: Int?
+    var endMs: Int?
 }
 
 /// An attachment as the transcript shows it; the model got the content itself.
@@ -225,6 +239,23 @@ struct OutsideInput: Encodable {
     let waitMs: Int
     let model: ModelRef
     var attachments: [InputAttachment] = []
+    /// The Talk to Pi session that handed the request over.
+    var voice: String?
+}
+
+/// A line said in a Talk to Pi session, for `PiRuntime.voiceLine` (`VoiceLineInput` in voice.ts).
+struct VoiceLine: Encodable, Sendable {
+    let conversationId: Int
+    /// The Realtime API's item: a repeated write is one entry.
+    let itemId: String
+    let session: String
+    /// `user` or `pi`.
+    let role: String
+    let text: String
+    var startMs: Int?
+    var endMs: Int?
+    /// ms since 1970.
+    let at: Double
 }
 
 struct OutsideAnswer: Decodable {

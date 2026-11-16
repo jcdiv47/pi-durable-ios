@@ -55,6 +55,8 @@ struct ConversationView: View {
                             }
                         case let .work(_, steps):
                             WorkRow(steps: steps, state: state, store: store)
+                        case let .voiceSession(session, date, lines):
+                            VoiceSessionHeader(session: session, date: date, lines: lines)
                         }
                     }
                     LiveView(state: state, store: store)
@@ -98,6 +100,15 @@ struct ConversationView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) { header }
+            ToolbarItem(placement: .topBarTrailing) {
+                // Talk to Pi in this conversation: what is said and asked goes here.
+                Button { path.append(.voice(continuing: conversationId)) } label: {
+                    Image(systemName: "waveform")
+                }
+                .accessibilityLabel("Talk to Pi here")
+                .accessibilityIdentifier("conversation.voice")
+                .disabled(store.phase != .ready)
+            }
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .onAppear {
@@ -110,7 +121,9 @@ struct ConversationView: View {
                 skill = skill ?? kept.skill
             }
         }
+        .background(BackSwipeStopsPlayback())
         .onDisappear {
+            VoicePlayback.shared.stop()
             store.conversationDisappeared(conversationId)
             voice.cancel()
             store.keepComposerDraft(.init(text: draft, attachments: attachments, skill: skill), for: conversationId)
