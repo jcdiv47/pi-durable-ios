@@ -122,6 +122,7 @@ struct ConversationListView: View {
         }
         .navigationTitle("Pi")
         .navigationBarTitleDisplayMode(.inline)
+        .searchable(text: $query, prompt: "Search conversations")
         .toolbar {
             ToolbarItem(placement: .principal) {
                 PiLogo().frame(height: 24)
@@ -206,56 +207,126 @@ struct ConversationListView: View {
                         Text("Waiting for You")
                     }
                 }
-                ForEach(ConversationSections.group(shown)) { section in
-                    Section(section.title) {
-                        ForEach(section.items) { meta in
-                            NavigationLink(value: Route.conversation(meta.id)) {
-                                ConversationRow(
-                                    meta: meta,
-                                    state: store.states[meta.id],
-                                    unread: store.unreadConversations.contains(meta.id),
-                                    waiting: store.approvals.contains { $0.conversationId == meta.id },
-                                    time: section.time
-                                )
-                            }
-                            .swipeActions {
+                if query.isEmpty {
+                    ForEach(ConversationSections.group(shown)) { section in
+                        Section(section.title) {
+                            ForEach(section.items) { meta in row(meta, time: section.time) }
+                        }
+                    }
+                } else {
+                    // A search: the conversations with the text in their title, then the messages with it.
+                    if !shown.isEmpty {
+                        Section("Conversations") {
+                            ForEach(shown) { meta in row(meta, time: Self.searchDate) }
+                        }
+                    }
+                    if !store.search.hits.isEmpty {
+                        Section("Messages") {
+                            ForEach(store.search.hits) { hit in
                                 Button {
-                                    Task { await store.archive(meta.id) }
+                                    path.append(store.open(hit))
                                 } label: {
-                                    Label("Archive", systemImage: "archivebox")
+                                    SearchHitRow(hit: hit, title: store.meta(hit.conversationId)?.title ?? hit.title, time: Self.searchDate)
                                 }
-                                .tint(.indigo)
+                                .tint(.primary)
                             }
-                            .contextMenu {
-                                Button("Rename", systemImage: "pencil") {
-                                    newTitle = meta.title
-                                    renaming = meta
-                                }
-                                Button("Archive", systemImage: "archivebox") {
-                                    Task { await store.archive(meta.id) }
-                                }
+                        }
+                    } else if store.search.searching {
+                        Section {
+                            HStack(spacing: 10) {
+                                ProgressView()
+                                Text("Searching messages…").foregroundStyle(.secondary)
                             }
                         }
                     }
                 }
             }
             .listStyle(.insetGrouped)
-            .searchable(text: $query, placement: .navigationBarDrawer, prompt: "Search conversations")
             .overlay {
-                if !query.isEmpty && shown.isEmpty {
+                if !query.isEmpty && shown.isEmpty && store.search.hits.isEmpty && !store.search.searching {
                     ContentUnavailableView.search(text: query)
                 }
             }
             // Approvals are occasional; without this the rows below jump by a section's height.
             .animation(.snappy, value: store.approvals.map(\.id))
+            .onChange(of: query) { searchMessages() }
+            // A new or renamed conversation, or one with a new message, while the search is on screen.
+            .onChange(of: store.startedConversations) { if !query.isEmpty { searchMessages() } }
+        }
+    }
+
+    private static let searchDate = Date.FormatStyle.dateTime.day().month(.abbreviated)
+
+    private func searchMessages() {
+        store.search.update(query, store: store)
+    }
+
+    private func row(_ meta: ConversationMeta, time: Date.FormatStyle) -> some View {
+        NavigationLink(value: Route.conversation(meta.id)) {
+            ConversationRow(
+                meta: meta,
+                state: store.states[meta.id],
+                unread: store.unreadConversations.contains(meta.id),
+                waiting: store.approvals.contains { $0.conversationId == meta.id },
+                time: time
+            )
+        }
+        .swipeActions {
+            Button {
+                Task { await store.archive(meta.id) }
+            } label: {
+                Label("Archive", systemImage: "archivebox")
+            }
+            .tint(.indigo)
+        }
+        .contextMenu {
+            Button("Rename", systemImage: "pencil") {
+                newTitle = meta.title
+                renaming = meta
+            }
+            Button("Archive", systemImage: "archivebox") {
+                Task { await store.archive(meta.id) }
+            }
         }
     }
 
     /// The started conversations whose title has the search text, all of them while there is none.
     private var shown: [ConversationMeta] {
-        let text = query.trimmingCharacters(in: .whitespaces)
+        let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return store.startedConversations }
         return store.startedConversations.filter { $0.title.localizedStandardContains(text) }
+    }
+}
+
+/// A message the search found: its conversation and when it was said, then who said it and the text around the match.
+private struct SearchHitRow: View {
+    let hit: SearchHit
+    /// The conversation's title now; the hit has it as it was when the search ran.
+    let title: String
+    let time: Date.FormatStyle
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                Text(title).lineLimit(1)
+                Spacer(minLength: 8)
+                if let date = hit.date {
+                    Text(date, format: time)
+                        .font(.subheadline)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Text("\(hit.fromPi ? "Pi" : "You"): \(hit.before)\(Text(hit.matched).bold().foregroundStyle(.primary))\(hit.after)")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+        }
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(.rect)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Opens the conversation at this message")
     }
 }
 

@@ -187,6 +187,28 @@ struct EntryPointTests {
         #expect(items[3]["text"] as? String == "You said: Check the home lab")
         let conversations: [Meta] = try await harness.call("PiRuntime.conversations")
         #expect(conversations.first { $0.id == meta.id }?.title == "is the home lab okay")
+        // The list's search reads what was said and asked, each under its transcript row's entry.
+        // Search finds what was said and asked, newest first, whatever the case or accents, each hit under its
+        // transcript row's entry, with the text around the match.
+        struct Hit: Decodable { let conversationId: Int; let title: String; let messageId: Int; let role: String; let before: String; let matched: String; let after: String }
+        let ids = items.map { $0["id"] as! Int }
+        let lab: [Hit] = try await harness.call("PiRuntime.searchConversations", ["HOME láb"])
+        #expect(lab.map(\.messageId) == [ids[3], ids[2], ids[0]])
+        #expect(lab.map(\.role) == ["pi", "user", "user"])
+        #expect(lab.map(\.conversationId) == [meta.id, meta.id, meta.id])
+        #expect(lab[0].title == "is the home lab okay")
+        #expect([lab[0].before, lab[0].matched, lab[0].after] == ["You said: Check the ", "home lab", ""])
+        // Spoken lines too; a conversation gives its newest hits, as many as asked for.
+        let spoken: [Hit] = try await harness.call("PiRuntime.searchConversations", ["all good"])
+        #expect(spoken.map(\.messageId) == [ids[4]])
+        let one: [Hit] = try await harness.call("PiRuntime.searchConversations", ["home lab", ["perConversation": 1] as [String: any Sendable]])
+        #expect(one.map(\.messageId) == [ids[3]])
+        let none: [Hit] = try await harness.call("PiRuntime.searchConversations", ["zebra"])
+        #expect(none.isEmpty)
+        // A line said after a search is found by the next one, also past where the transcript cuts a long text.
+        try await harness.perform("PiRuntime.voiceLine", [line("u2", "user", String(repeating: "and ", count: 2_000) + "the zebra", startMs: 6_000)])
+        let later: [Hit] = try await harness.call("PiRuntime.searchConversations", ["zebra"])
+        #expect(later.map(\.matched) == ["zebra"])
         let sessions: [String] = try await harness.call("PiRuntime.voiceSessions")
         #expect(sessions == ["s1"])
         try await harness.close()

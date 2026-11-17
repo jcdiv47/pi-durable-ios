@@ -12,7 +12,10 @@ JavaScriptCore runtime.
   approval sheet, settings, diagnostics, scheduled tasks, the component gallery and design tuning). The transcript
   folds tool calls into "Worked" rows (`TranscriptRow`), draws Apple tool results as native cards (`ResultCards`,
   from `cardTools` in display.ts) and assistant text as Markdown (`MarkdownText`). Approvals lead with what a tool does in words (`ToolTitles`, `ApprovalDetails`), the tool's
-  name second; the list groups conversations by date (`ConversationSections`), as Notes does. The composer's mic (`VoiceInput`)
+  name second; the list groups conversations by date (`ConversationSections`), as Notes does, and its search field finds titles and
+  what was said (`ConversationSearch`, over `PiRuntime.searchConversations`: the search itself is JS's, `search.ts` and
+  `Chat.search`, so a search tool for the agent can call the same one; user, assistant and spoken text, never thinking
+  or tool output); a hit opens the transcript at its message. The composer's mic (`VoiceInput`)
   records, and OpenAI's transcription (`gpt-transcribe`, the `openai` provider key, sent from Swift) fills the field.
   Talk to Pi (`RealtimeVoice`, `VoiceAudio`, `VoiceView`, `Route.voice`, `pidurable://voice`): a spoken session over
   OpenAI's Realtime API (WebSocket from Swift, the `openai` key). The voice model's only tool is `ask_pi`, which sends
