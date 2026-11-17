@@ -76,6 +76,10 @@ final class ChatStore {
     private(set) var schedules: [ScheduleEntry] = []
     /// A screen to show, from a notification, a deep link or an intent; the root view takes it.
     var pendingRoute: Route?
+    /// The conversation list's search through messages.
+    let search = ConversationSearch()
+    /// The message a search hit points at, by conversation, until that conversation's view takes it.
+    @ObservationIgnored private var foundMessages: [Int: Int] = [:]
     /// Composer drafts from the share sheet's "Open in Pi to Edit", by conversation; the conversation's view takes them.
     private(set) var drafts: [Int: Draft] = [:]
 
@@ -412,6 +416,23 @@ final class ChatStore {
     func searchText(_ id: Int) async -> String? {
         guard let harness else { return nil }
         return try? await harness.call("PiRuntime.searchText", [id])
+    }
+
+    /// The messages with `query` in them (`Chat.search` in chat.ts, where the matching is); nil when Pi cannot be asked.
+    func searchConversations(_ query: String) async -> [SearchHit]? {
+        guard let harness else { return nil }
+        return try? await harness.call("PiRuntime.searchConversations", [query])
+    }
+
+    /// Opens a conversation at a message the search found.
+    func open(_ hit: SearchHit) -> Route {
+        foundMessages[hit.conversationId] = hit.messageId
+        return .conversation(hit.conversationId)
+    }
+
+    /// The message a search hit opened this conversation at, once.
+    func takeFoundMessage(_ id: Int) -> Int? {
+        foundMessages.removeValue(forKey: id)
     }
 
     /// The conversations the list shows: every one but those nothing was sent in yet.

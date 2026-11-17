@@ -28,6 +28,10 @@ struct ConversationView: View {
     @State private var sent = 0
     /// The screen's width, which bounds the header (see `header`).
     @State private var width: CGFloat = 0
+    /// The message a search hit opened the conversation at: marked until something is sent.
+    @State private var found: Int?
+    /// The transcript stays at the found message, rather than following its end, until the user scrolls or sends.
+    @State private var atFound = false
 
     private var state: ConversationState { store.state(conversationId) }
     private var meta: ConversationMeta? { store.meta(conversationId) }
@@ -50,6 +54,12 @@ struct ConversationView: View {
                         case let .item(item, resent):
                             TranscriptItemView(item: item, state: state, store: store, resent: resent)
                                 .contextMenu { itemMenu(item) }
+                                .background {
+                                    if found == item.id {
+                                        RoundedRectangle(cornerRadius: 16).fill(.yellow.opacity(0.22)).padding(-6)
+                                    }
+                                }
+                                .id(row.id)
                             if answers.contains(item.id), let text = item.text, !text.isEmpty {
                                 AnswerActions(text: text) { fork(at: item) }
                             }
@@ -75,10 +85,27 @@ struct ConversationView: View {
                 // Follow the laid-out transcript, including thinking, tool calls and result cards.
                 // Model changes can arrive before the bottom anchor has moved. A row the user opens stays where it is.
                 if old.contentSize != new.contentSize, keyboardScroll.followsContent {
-                    proxy.scrollTo("bottom", anchor: .bottom)
+                    if let found, atFound {
+                        proxy.scrollTo(TranscriptRow.ID.item(found), anchor: .center)
+                    } else {
+                        proxy.scrollTo("bottom", anchor: .bottom)
+                    }
                 }
             }
-            .onScrollPhaseChange { _, phase in keyboardScroll.phaseChanged(phase) }
+            .onScrollPhaseChange { _, phase in
+                keyboardScroll.phaseChanged(phase)
+                // The user takes over from the found message.
+                if phase == .tracking || phase == .interacting { atFound = false }
+            }
+            .task(id: state.loaded) {
+                // The rows are laid out a moment after the transcript arrives.
+                guard state.loaded else { return }
+                for _ in 0..<2 {
+                    try? await Task.sleep(for: .milliseconds(60))
+                    guard let found, atFound else { return }
+                    proxy.scrollTo(TranscriptRow.ID.item(found), anchor: .center)
+                }
+            }
             .scrollDismissesKeyboard(.interactively)
             .safeAreaBar(edge: .bottom) {
                 composer
@@ -112,6 +139,10 @@ struct ConversationView: View {
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .onAppear {
+            if let message = store.takeFoundMessage(conversationId) {
+                found = message
+                atFound = true
+            }
             store.conversationAppeared(conversationId)
             store.watch(conversationId)
             // What was left here last time; a view that stayed alive under a pushed screen still holds it.
@@ -423,6 +454,8 @@ struct ConversationView: View {
                 attachments = []
                 skill = nil
                 self.sent += 1
+                found = nil
+                atFound = false
                 Task { await store.send(text, attachments: sent, skill: ran, to: conversationId) }
             }
         } label: {

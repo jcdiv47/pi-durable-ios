@@ -32,6 +32,7 @@ import {
 } from "./attachments.ts";
 import { type DisplaySurface, FrameBuilder, textOf } from "./display.ts";
 import { answerText, isNoReply, noReplyText, OriginInput, SchedulesDoc } from "./schedule.ts";
+import { fold, hitsIn, searchable, type SearchableMessage, type SearchHit, type SearchOptions } from "./search.ts";
 import { readSkill, skillContent } from "./skills.ts";
 import { VoiceEntry, type VoiceLine, type VoiceLineInput } from "./voice.ts";
 import { PublishedDoc, SurfacesDoc, ValuesDoc } from "./surfaces.ts";
@@ -125,6 +126,8 @@ export const intelligenceSettings = { titles: false };
 
 export class Chat {
 	readonly #watches = new Map<number, ConversationWatch>();
+	/** Messages read for `search`, by conversation, with the newest entry they were read at. */
+	readonly #searched = new Map<number, { head: number; messages: Promise<readonly SearchableMessage[]> }>();
 
 	constructor(
 		private readonly harness: Harness,
@@ -210,6 +213,46 @@ export class Chat {
 		watch.start(async (call) => {
 			if (call.kind === "value") send(await complete(transcript, transcript.merge(call.value), context));
 		});
+	}
+
+	/**
+	 * Full-text search through what was said in the listed conversations (search.ts): the phrase, whatever its case or
+	 * accents, in the user's messages, Pi's answers and spoken lines. Conversations newest first, and within one its
+	 * newest matching messages first. The conversation list shows the hits; a search tool for the agent would call this too.
+	 */
+	async search(query: string, options: SearchOptions = {}): Promise<SearchHit[]> {
+		const needle = fold(query.trim()).folded;
+		if (needle === "") return [];
+		const limit = options.limit ?? 200;
+		const hits: SearchHit[] = [];
+		for (const meta of await this.conversations()) {
+			let messages: readonly SearchableMessage[];
+			try {
+				messages = await this.#searchable(meta.id);
+			} catch {
+				continue;
+			}
+			for (const hit of hitsIn(messages, needle, options.perConversation ?? 3)) hits.push({ conversationId: meta.id, title: meta.title, ...hit });
+			if (hits.length >= limit) break;
+		}
+		return hits.slice(0, limit);
+	}
+
+	/**
+	 * A conversation's messages ready to search, kept until it has a newer entry: reading a transcript is the slow part
+	 * of a search, and the list searches again at each pause in typing.
+	 */
+	async #searchable(id: number): Promise<readonly SearchableMessage[]> {
+		const conversation = await this.#conversation(id);
+		const head = (await conversation.entries({ order: "descending" }, 1, undefined, context)).items[0]?.id ?? 0;
+		const kept = this.#searched.get(id);
+		if (kept?.head === head) return kept.messages;
+		const messages = this.transcript(id).then((frame) => searchable(frame.items));
+		this.#searched.set(id, { head, messages });
+		messages.catch(() => {
+			if (this.#searched.get(id)?.messages === messages) this.#searched.delete(id);
+		});
+		return messages;
 	}
 
 	/** Spotlight's text for a conversation: its messages from the start, user and assistant text only, cut at `limit`. */

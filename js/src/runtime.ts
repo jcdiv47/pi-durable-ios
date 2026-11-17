@@ -18,6 +18,7 @@ import { Approvals, type Decision, defaultPolicies, type ToolPolicy } from "./ap
 import type { InputAttachment } from "./app/attachments.ts";
 import { CodeModeTools, codeModeToolInfo } from "./app/codemode.ts";
 import { Chat, intelligenceSettings, type OutsideInput, type WidgetAction } from "./app/chat.ts";
+import type { SearchOptions } from "./app/search.ts";
 import type { VoiceLineInput } from "./app/voice.ts";
 import { InstructionsExtension, instructionsSettings } from "./app/instructions.ts";
 import { McpHost, type McpServerConfig } from "./app/mcp.ts";
@@ -358,6 +359,7 @@ const app = {
 	unwatchConversation: async (id: number) => requireChat().unwatch(id),
 	transcript: (id: number) => requireChat().transcript(id),
 	searchText: (id: number) => requireChat().searchText(id),
+	searchConversations: (query: string, options?: SearchOptions) => requireChat().search(query, options ?? undefined),
 	send: (id: number, text: string, requestId: string, attachments?: InputAttachment[], skill?: string) =>
 		requireChat().send(id, text, requestId, attachments, skill ?? undefined),
 	abort: (id: number) => requireChat().abort(id),
