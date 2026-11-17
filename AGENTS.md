@@ -52,6 +52,9 @@ JavaScriptCore runtime.
   (`SQLiteSnapshot`), attachments, widget files, recordings, the user's files, settings and every conversation as
   Markdown; never Keychain secrets. A restore is unpacked and checked into `<App Group>/restore/`, the app exits, and
   the next launch applies it before `ChatStore.shared` reads anything (the replaced storage stays in `restore/previous/`).
+  Spend (`UsageViews`): the transcript's footer shows the conversation's tokens, cost and how full its context is
+  (the frame's `usage`, from `pi.usage` and the newest answer); Settings › Usage adds a month's answers across
+  conversations by model (`PiRuntime.spending`, `usage.ts`; a fork counts only what it asked after forking).
   Settings › Apple Intelligence (`IntelligenceSettingsView`): the on-device model's status, on-device titles and
   notification summaries.
   `App/Sources/M0/`: the headless check modes.

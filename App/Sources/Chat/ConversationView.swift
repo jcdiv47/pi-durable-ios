@@ -71,6 +71,9 @@ struct ConversationView: View {
                         }
                     }
                     LiveView(state: state, store: store)
+                    if !state.live.busy {
+                        ConversationUsageFooter(usage: state.usage, contextWindow: store.model(state.model)?.contextWindow)
+                    }
                     Color.clear.frame(height: 1).id("bottom")
                 }
                 .padding(.horizontal)

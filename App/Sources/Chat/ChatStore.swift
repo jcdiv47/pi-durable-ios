@@ -430,6 +430,13 @@ final class ChatStore {
         return try? await harness.call("PiRuntime.searchConversations", [query])
     }
 
+    /// What the answers asked in `interval` cost, in all conversations; nil when Pi cannot be asked.
+    func spending(_ interval: DateInterval) async -> SpendTotals? {
+        guard let harness else { return nil }
+        let ms = { (date: Date) in date.timeIntervalSince1970 * 1000 }
+        return try? await harness.call("PiRuntime.spending", [ms(interval.start), ms(interval.end)])
+    }
+
     /// Opens a conversation at a message the search found.
     func open(_ hit: SearchHit) -> Route {
         foundMessages[hit.conversationId] = hit.messageId

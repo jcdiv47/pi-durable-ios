@@ -294,10 +294,30 @@ struct DisplayLive: Decodable, Hashable {
     var compactionError: String?
 }
 
+/// A conversation's own spend (its `pi.usage`): tokens sent (cached ones too) and received, and the cost in dollars.
 struct UsageTotals: Decodable, Hashable {
     var input: Double = 0
     var output: Double = 0
     var cost: Double = 0
+    /// Tokens the context holds after the newest answer; nil after a compaction or new context, until the next answer.
+    var context: Double?
+}
+
+/// The spend of the answers asked in a period, in all conversations (`PiRuntime.spending`, usage.ts).
+struct SpendTotals: Decodable, Hashable {
+    struct Model: Decodable, Hashable {
+        /// `provider/modelId`.
+        let model: String
+        let input: Double
+        let output: Double
+        let cost: Double
+    }
+
+    let input: Double
+    let output: Double
+    let cost: Double
+    let conversations: Int
+    let models: [Model]
 }
 
 /// A message waiting for a boundary, by submission ID. A steer lands when the current tool round finishes.

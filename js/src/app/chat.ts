@@ -35,6 +35,7 @@ import { conversationMarkdown } from "./export.ts";
 import { answerText, isNoReply, noReplyText, OriginInput, SchedulesDoc } from "./schedule.ts";
 import { fold, hitsIn, searchable, type SearchableMessage, type SearchHit, type SearchOptions } from "./search.ts";
 import { readSkill, skillContent } from "./skills.ts";
+import { type Spend, spendBetween, spendOf, type SpendTotals } from "./usage.ts";
 import { VoiceEntry, type VoiceLine, type VoiceLineInput } from "./voice.ts";
 import { PublishedDoc, SurfacesDoc, ValuesDoc } from "./surfaces.ts";
 import { complete, entriesOf, readView, transcriptOf } from "./view.ts";
@@ -133,6 +134,8 @@ export class Chat {
 	readonly #watches = new Map<number, ConversationWatch>();
 	/** Messages read for `search`, by conversation, with the newest entry they were read at. */
 	readonly #searched = new Map<number, { head: number; messages: Promise<readonly SearchableMessage[]> }>();
+	/** Answers' spend read for `spending`, by conversation, with the newest entry they were read at. */
+	readonly #spent = new Map<number, { head: number; spend: Promise<readonly Spend[]> }>();
 
 	constructor(
 		private readonly harness: Harness,
@@ -262,6 +265,38 @@ export class Chat {
 			if (this.#searched.get(id)?.messages === messages) this.#searched.delete(id);
 		});
 		return messages;
+	}
+
+	/**
+	 * What the model answers asked in `[from, to)` (ms since 1970) cost, in all conversations, archived ones too. A
+	 * deleted conversation's spend goes with it. Reads every transcript once; later calls reread only changed ones.
+	 */
+	async spending(from: number, to: number): Promise<SpendTotals> {
+		const all: (readonly Spend[])[] = [];
+		for (const meta of await this.#all()) {
+			let spend: readonly Spend[];
+			try {
+				spend = await this.#spend(meta.id);
+			} catch {
+				continue;
+			}
+			// A fork's transcript holds its parent's answers up to the fork; they are the parent's spend.
+			all.push(meta.forkOf === undefined ? spend : spend.filter((item) => item.at >= meta.createdAt));
+		}
+		return spendBetween(all, from, to);
+	}
+
+	async #spend(id: number): Promise<readonly Spend[]> {
+		const conversation = await this.#conversation(id);
+		const head = (await conversation.entries({ order: "descending" }, 1, undefined, context)).items[0]?.id ?? 0;
+		const kept = this.#spent.get(id);
+		if (kept?.head === head) return kept.spend;
+		const spend = readView(conversation, context).then((view) => spendOf(entriesOf(view)));
+		this.#spent.set(id, { head, spend });
+		spend.catch(() => {
+			if (this.#spent.get(id)?.spend === spend) this.#spent.delete(id);
+		});
+		return spend;
 	}
 
 	/** Spotlight's text for a conversation: its messages from the start, user and assistant text only, cut at `limit`. */
