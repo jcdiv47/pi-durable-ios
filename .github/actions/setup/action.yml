@@ -1,0 +1,15 @@
+name: Set up Xcode and bun
+description: Selects the newest Xcode on the runner (the code uses iOS 27 / macOS 27 APIs) and installs bun.
+runs:
+  using: composite
+  steps:
+    - name: Select Xcode
+      shell: bash
+      run: |
+        xcode=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+        sudo xcode-select -s "$xcode"
+        xcodebuild -version
+        swift --version
+    - uses: oven-sh/setup-bun@v2
+      with:
+        bun-version-file: .bun-version
