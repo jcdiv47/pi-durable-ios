@@ -97,9 +97,11 @@ struct HTTPEndpoint: Codable, Identifiable, Hashable {
 
     func call(_ arguments: JSONValue, tool: String) -> Call {
         let method = arguments["method"]?.string?.uppercased() ?? (tool == "http_get" ? "GET" : "POST")
-        let path = (arguments["path"]?.string ?? "").split(separator: "/", omittingEmptySubsequences: true).joined(separator: "/")
+        let given = arguments["path"]?.string ?? ""
+        let path = given.split(separator: "/", omittingEmptySubsequences: true).joined(separator: "/")
         let trimmedBase = baseUrl.hasSuffix("/") ? String(baseUrl.dropLast()) : baseUrl
-        var url = path.isEmpty ? baseUrl : "\(trimmedBase)/\(path)"
+        // As JS builds it (`requestUrl`): a trailing slash is kept, since `items` and `items/` can be different routes.
+        var url = path.isEmpty ? baseUrl : "\(trimmedBase)/\(path)\(given.hasSuffix("/") ? "/" : "")"
         if case let .object(query)? = arguments["query"], !query.isEmpty, var components = URLComponents(string: url) {
             components.queryItems = query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value.string ?? $0.value.jsonText) }
             url = components.string ?? url
