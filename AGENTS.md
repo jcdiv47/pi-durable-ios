@@ -11,7 +11,11 @@ JavaScriptCore runtime.
 - `App/Sources/Chat/`: the chat app (`ChatStore.shared` owns the Harness; conversation list, transcript,
   approval sheet, settings, diagnostics, scheduled tasks, the component gallery and design tuning). The transcript
   folds tool calls into "Worked" rows (`TranscriptRow`), draws Apple tool results as native cards (`ResultCards`,
-  from `cardTools` in display.ts) and assistant text as Markdown (`MarkdownText`). Approvals lead with what a tool does in words (`ToolTitles`, `ApprovalDetails`), the tool's
+  from `cardTools` in display.ts) and assistant text as Markdown (`MarkdownText`). The transcript's pieces draw with the
+  chat's design tokens (`Design/PiDesign`: palette, radii, elevation, motion) and shared components (`Design/PiComponents`:
+  `ShimmerText`, `ToolStatus`, `ToolChips` while a run works, `ContextCards` for skills and pages a run read, `DiffView`,
+  `PiTable` and `RecordsTable` for JSON tool output, `PiMeter`); Settings › Widgets › Chat Components shows them all.
+  Use the tokens, not ad-hoc colors and radii, in new chat views. Approvals lead with what a tool does in words (`ToolTitles`, `ApprovalDetails`), the tool's
   name second; the list groups conversations by date (`ConversationSections`), as Notes does, and its search field finds titles and
   what was said (`ConversationSearch`, over `PiRuntime.searchConversations`: the search itself is JS's, `search.ts` and
   `Chat.search`, so a search tool for the agent can call the same one; user, assistant and spoken text, never thinking

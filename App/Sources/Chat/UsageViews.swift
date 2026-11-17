@@ -30,14 +30,21 @@ struct ConversationUsageFooter: View {
 
     var body: some View {
         if !parts.isEmpty {
-            Text(parts.joined(separator: " · "))
-                .font(.caption2)
-                .monospacedDigit()
-                .foregroundStyle(.tertiary)
-                .frame(maxWidth: .infinity)
-                .padding(.top, 4)
-                .accessibilityLabel(accessibilityText)
-                .accessibilityIdentifier("conversation.usage")
+            VStack(spacing: 6) {
+                Text(parts.joined(separator: " · "))
+                    .font(.caption2)
+                    .monospacedDigit()
+                    .foregroundStyle(.tertiary)
+                // How full the context is, at a glance; orange and red as it nears the window.
+                if let contextShare {
+                    PiMeter(value: contextShare).frame(width: 64)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, 4)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(accessibilityText)
+            .accessibilityIdentifier("conversation.usage")
         }
     }
 
