@@ -61,6 +61,10 @@ final class ChatStore {
     private(set) var sshHosts: [SSHHost] = SSHHostFile.load()
     /// Hosts whose password or key is in the Keychain.
     private(set) var sshSecretIDs: Set<String> = []
+    /// Settings › HTTP Endpoints. Added and changed by hand only; secrets in `HTTPSecrets`.
+    private(set) var httpEndpoints: [HTTPEndpoint] = HTTPEndpointFile.load()
+    /// Endpoints whose secret is in the Keychain.
+    private(set) var httpSecretIDs: Set<String> = []
     /// Settings › Instructions: the user's AGENTS.md, a prompt section in every conversation. Written by hand only.
     private(set) var instructions = InstructionsFile.load()
     /// Settings › Skills: the imported and written skills. Changed by hand only.
@@ -185,6 +189,8 @@ final class ChatStore {
         mcpSignedIn = Set(mcpServers.filter(MCPOAuth.isSignedIn).map(\.id))
         SSHHostList.shared.set(sshHosts)
         sshSecretIDs = Set(sshHosts.filter(SSHSecrets.has).map(\.id))
+        ProviderKeys.setHTTPEndpoints(Self.httpBases(httpEndpoints))
+        httpSecretIDs = Set(httpEndpoints.filter(HTTPSecrets.has).map(\.id))
         dial = settings.data(forKey: Self.dialKey).flatMap { try? JSONDecoder().decode(GenerativityDial.self, from: $0) } ?? GenerativityDial()
         surfaceHost = SurfaceHost(
             native: native,
@@ -253,7 +259,7 @@ final class ChatStore {
             let ssh = SSHToolHost(hosts: { SSHHostList.shared.hosts }, secret: SSHSecrets.secret(for:), installID: SSHInstall.id)
             skills = skillLibrary.list()
             let harness = try await PiHarness.load(bundle: AppModel.bundleURL, options: .init(
-                keys: keys,
+                keys: AppKeys(providers: keys),
                 usage: .shared,
                 onEvent: { [weak self] json in
                     DispatchQueue.main.async { MainActor.assumeIsolated { self?.handle(json) } }
@@ -291,6 +297,7 @@ final class ChatStore {
                 policies: settings.dictionary(forKey: "toolPolicies") as? [String: String],
                 mcpServers: mcpServersJSON,
                 sshHosts: sshHostInfos,
+                httpEndpoints: httpEndpointInfos,
                 instructions: instructions,
                 skills: skills,
                 appleModels: AppleIntelligence.models(),
@@ -963,6 +970,59 @@ final class ChatStore {
             try await harness.perform("PiRuntime.setSshHosts", [try sshHostInfos.map { try harness.jsonArgument($0) }])
         } catch {
             report("SSH hosts", error)
+        }
+    }
+
+    // MARK: HTTP endpoints
+
+    private var httpEndpointInfos: [PiHarness.HTTPEndpointInfo] { httpEndpoints.map { $0.info(hasSecret: httpSecretIDs.contains($0.id)) } }
+
+    /// Each endpoint's base URL, by ID: where its secret may go.
+    private static func httpBases(_ endpoints: [HTTPEndpoint]) -> [String: String] {
+        Dictionary(endpoints.map { ($0.id, $0.baseUrl) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    /// Adds or replaces an endpoint. `secret`: a new one for the Keychain; nil keeps the saved one. An endpoint whose
+    /// auth no longer uses a secret loses it, and so does one whose base URL moved to another origin: it may be another
+    /// service, and the user should enter it again for that one.
+    func saveHTTPEndpoint(_ endpoint: HTTPEndpoint, secret: String?) async {
+        if let previous = httpEndpoints.first(where: { $0.id == endpoint.id }) {
+            let origin = { (text: String) in URL(string: text).map { "\($0.scheme ?? "")://\($0.host() ?? ""):\($0.port ?? -1)" } }
+            if !endpoint.auth.usesSecret || origin(previous.baseUrl) != origin(endpoint.baseUrl) {
+                HTTPSecrets.remove(previous)
+                httpSecretIDs.remove(endpoint.id)
+            }
+        }
+        if let secret, endpoint.auth.usesSecret {
+            do {
+                try HTTPSecrets.set(secret, for: endpoint)
+                httpSecretIDs.insert(endpoint.id)
+            } catch {
+                report("save HTTP endpoint secret", error)
+            }
+        }
+        if let index = httpEndpoints.firstIndex(where: { $0.id == endpoint.id }) { httpEndpoints[index] = endpoint } else { httpEndpoints.append(endpoint) }
+        await applyHTTPEndpoints()
+        diagnostics.record("info", "http", "Saved \(endpoint.name) (\(endpoint.baseUrl))")
+    }
+
+    func removeHTTPEndpoint(_ id: String) async {
+        guard let endpoint = httpEndpoints.first(where: { $0.id == id }) else { return }
+        HTTPSecrets.remove(endpoint)
+        httpSecretIDs.remove(id)
+        httpEndpoints.removeAll { $0.id == id }
+        await applyHTTPEndpoints()
+    }
+
+    /// Saves the list, pins each secret to its base URL, and hands the list to JS (without secrets).
+    private func applyHTTPEndpoints() async {
+        do { try HTTPEndpointFile.save(httpEndpoints) } catch { report("save HTTP endpoints", error) }
+        ProviderKeys.setHTTPEndpoints(Self.httpBases(httpEndpoints))
+        guard let harness else { return }
+        do {
+            try await harness.perform("PiRuntime.setHttpEndpoints", [try httpEndpointInfos.map { try harness.jsonArgument($0) }])
+        } catch {
+            report("HTTP endpoints", error)
         }
     }
 

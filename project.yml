@@ -122,7 +122,7 @@ targets:
             ts.net:
               NSIncludesSubdomains: true
               NSExceptionAllowsInsecureHTTPLoads: true
-        NSLocalNetworkUsageDescription: Pi connects to the MCP servers and SSH hosts you add in Settings when they are on your home network.
+        NSLocalNetworkUsageDescription: Pi connects to the MCP servers, SSH hosts and HTTP endpoints you add in Settings when they are on your home network.
     entitlements:
       path: App/PiApp.entitlements
       properties:

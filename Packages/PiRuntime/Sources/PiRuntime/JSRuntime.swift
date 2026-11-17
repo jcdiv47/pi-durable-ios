@@ -316,12 +316,14 @@ public final class JSRuntime: @unchecked Sendable {
                 }
             }
             let body = request.forProperty("body").flatMap { $0.isNull || $0.isUndefined ? nil : JSBytes.data(of: $0) }
+            let redirect = request.forProperty("redirect").flatMap { $0.isString ? $0.toString() : nil } ?? "follow"
             self.fetch.start(.init(
                 id: id,
                 url: request.forProperty("url").toString(),
                 method: request.forProperty("method").toString(),
                 headers: headers,
-                body: body
+                body: body,
+                followRedirects: redirect == "follow"
             ))
         }
         set("fetchStart", fetchStart)

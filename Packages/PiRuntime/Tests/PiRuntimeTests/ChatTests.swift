@@ -74,7 +74,7 @@ func until(_ timeout: Duration = .seconds(10), _ condition: () -> Bool) async th
 
 struct Meta: Decodable { let id: Int; let title: String }
 
-func openChat(_ log: ChatLog, db: String) async throws -> PiHarness {
+func openChat(_ log: ChatLog, db: String, localHosts: [String: any LocalHTTPService] = [:]) async throws -> PiHarness {
     let (_, url) = try bundledScript("pi-runtime")
     let harness = try await PiHarness.load(bundle: url, options: .init(
         onEvent: { log.handle($0) },
@@ -92,7 +92,8 @@ func openChat(_ log: ChatLog, db: String) async throws -> PiHarness {
             case "ssh.job": return #"{"host":"nas","job":"i1-t1","state":"running","pid":42,"stdout":"","stderr":"","stdoutBytes":0,"stderrBytes":0}"#
             default: throw JSRuntimeError("unexpected host call \(name)")
             }
-        }
+        },
+        localHosts: localHosts
     ))
     _ = try await harness.open(.init(dbPath: db, provider: "faux", modelId: "killtest"))
     return harness

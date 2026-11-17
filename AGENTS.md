@@ -38,6 +38,10 @@ JavaScriptCore runtime.
   `ASWebAuthenticationSession` redirecting to `dev.jcdiv47.pidurable:/oauth/mcp`.
   Settings › SSH Hosts (`SSHSettingsView`, `SSHHosts`): the user's machines (Application Support `ssh-hosts.json`), their
   passwords or keys in the Keychain service `dev.jcdiv47.pidurable.ssh` (`SSHSecrets`), host keys pinned in Settings.
+  Settings › HTTP Endpoints (`HTTPSettingsView`, `HTTPEndpoints`): the user's own HTTP APIs (Application Support
+  `http-endpoints.json`): a base URL, a description for the model, and auth (none, a bearer token, a custom header or a
+  query parameter) whose secret is in the Keychain service `dev.jcdiv47.pidurable.http` (`HTTPSecrets`, read by the
+  fetch bridge through `AppKeys`). The approval sheet shows the call's method, full URL and body.
   Settings › Instructions and Skills (`SkillsViews`, `Skills`): the user's AGENTS.md (Application Support `AGENTS.md`)
   and the skills imported from Files or written in the editor (`SkillEditorView`, `skills/<name>/`); the composer's "/"
   menu and chip run a skill.
@@ -88,7 +92,9 @@ JavaScriptCore runtime.
   phone is offline waits for the network and is sent again, instead of using up Pi's retries), the Apple tool stubs, the UI tools (`surfaces.ts`: specs in Pi documents, JSON Patch), scheduled tasks
   and `notify_schedule` (`schedule.ts`: day and week intervals keep their local time across daylight saving changes; a
   run that answers `NO_REPLY` posts no notification), the web tools (`web.ts`: `web_search` through DeepSeek or Brave,
-  `web_fetch` through DeepSeek Fetch) over keyed HTTP services (`services.ts`), SSH tools (`ssh.ts`: `ssh_exec`, `ssh_job`), MCP servers (`mcp.ts`: a connection per
+  `web_fetch` through DeepSeek Fetch) over keyed HTTP services (`services.ts`), SSH tools (`ssh.ts`: `ssh_exec`, `ssh_job`), HTTP endpoint tools (`http.ts`: `http_get` for GET and HEAD,
+  replay-safe; `http_send` for writes, not replay-safe and always asking; two tools because Pi's replay policy is per
+  tool), MCP servers (`mcp.ts`: a connection per
   server over `@earendil-works/pi-mcp`'s Streamable HTTP client, and the `mcp` extension), the user's instructions and skills
   (`instructions.ts`, `skills.ts`: prompt sections, `skill_read`, `skill_file`), Code Mode (`codemode.ts`: the
   `codemode` tool, scripts that call the other tools in QuickJS-wasm, read from the bundle resource `quickjs.wasm` on
@@ -172,7 +178,8 @@ intended rendering change, re-record with `PI_RECORD_SNAPSHOTS=1 swift test` and
   idle before returning, or iOS suspends the app mid-run.
 - A new HTTP API is a service: its hosts (and a monthly cap, if its
   plan has one) in `ProviderKeys`, a key entry in `ChatStore.services`, and tools that call `serviceFetch` with the
-  key placeholder in a header or a URL query. Never a generic HTTP tool: a page could use it to send data out.
+  key placeholder in a header or a URL query. Never a generic HTTP tool: a page could use it to send data out. The one
+  exception is the user's HTTP endpoints, and only because the user registered each base URL in Settings.
 - The `apple` provider is text only and has no tools; its endpoint writes its own short instructions. One-shot jobs
   (titles, summaries) fall back to the old behavior when the model is unavailable, slow or refuses. Private Cloud
   Compute needs a managed entitlement the free team lacks.
@@ -186,6 +193,16 @@ intended rendering change, re-record with `PI_RECORD_SNAPSHOTS=1 swift test` and
   host keys never reach JS: JS names a host by its ID. Nothing logs in before the user trusted the host key. Every
   command is a detached job named after its tool task (`SSHJobScript`), which is what makes `ssh_exec` replay-safe;
   keep it so.
+- HTTP endpoints are added, changed and removed only by the user, in Settings; no tool may change one. The model names
+  an endpoint by ID and gives a path under its base URL, a query and a body: never a host, a scheme or a header. JS
+  refuses absolute URLs, `//`, `@`, backslashes, dot segments (plain or encoded) and any `pi-host-key:` from the model,
+  and checks the built URL is still inside the base. The secret (`http-<id>`) goes in as its placeholder; the fetch
+  bridge substitutes it only for URLs inside the base (`ProviderKeys.setHTTPEndpoints`: scheme, host, port, and whole
+  path segments after resolving dot segments and percent-encoding), and a keyed redirect is followed only inside it.
+  Every call is sent with `redirect: "manual"`, which the bridge honors, so none ends up at another origin, keyed or
+  not; the model reads the 3xx and its Location. Responses are data, not outside text (`untrustedText` leaves them out),
+  so they don't stop "Read without asking"; that skips the ask for `http_get` only, and never in a conversation that
+  holds outside text.
 - Instructions and skills are written, edited, imported and removed only by the user, in Settings; no tool may change them, and
   a skill's scripts never run. Skill files are read only through `SkillLibrary`, which keeps paths inside the skill.
 - Code Mode scripts reach only the conversation's tools; every nested call goes through the approval gate, and its

@@ -74,6 +74,13 @@ struct ConformanceTests {
         #expect(report.passed == 9)
     }
 
+    @Test("HTTP endpoint tools: URLs, refusals, reads and writes, trust, responses", .timeLimit(.minutes(1)))
+    func http() async throws {
+        let report = try await runSuite("runHttp")
+        #expect(report.failed == 0)
+        #expect(report.passed == 7)
+    }
+
     @Test("Host polyfills", .timeLimit(.minutes(1)))
     func polyfills() async throws {
         let report = try await runSuite("runPolyfills")

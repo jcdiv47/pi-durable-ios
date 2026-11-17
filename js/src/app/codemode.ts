@@ -45,6 +45,7 @@ export const CodeModeTools = createCodemodeExtension({
 	namespaces: [
 		{ name: "mcp", prefix: "mcp__", description: "Tools of the user's MCP servers, named mcp__<server>__<tool>." },
 		{ name: "ssh", prefix: "ssh_", description: "Commands on the user's SSH hosts." },
+		{ name: "http", prefix: "http_", description: "Requests to the user's HTTP endpoints." },
 	],
 	// No `models.classify()` or `models.generateImages()`: scripts spend nothing on the user's keys but through tools.
 	models: false,

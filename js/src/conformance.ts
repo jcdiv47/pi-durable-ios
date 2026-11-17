@@ -8,6 +8,7 @@ import { createStorageConformance, type StorageConformanceAssertions } from "@ea
 import { native } from "./host/native.ts";
 import { openIOSSqliteDatabase } from "./host/sqlite.ts";
 import { createFacadeCases } from "../test/facade-cases.ts";
+import { createHttpCases } from "../test/http-cases.ts";
 import { createMcpCases } from "../test/mcp-cases.ts";
 import { createPolyfillCases } from "../test/polyfill-cases.ts";
 
@@ -176,4 +177,8 @@ function runMcp(): Promise<ConformanceReport> {
 	return runCases("MCP client and extension", createMcpCases(assertions));
 }
 
-(globalThis as Record<string, unknown>).PiConformance = { runStorage, runFacade, runPolyfills, runMcp };
+function runHttp(): Promise<ConformanceReport> {
+	return runCases("HTTP endpoint tools", createHttpCases(assertions));
+}
+
+(globalThis as Record<string, unknown>).PiConformance = { runStorage, runFacade, runPolyfills, runMcp, runHttp };

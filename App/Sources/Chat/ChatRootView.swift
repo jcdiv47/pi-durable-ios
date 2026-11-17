@@ -516,6 +516,27 @@ struct ApprovalSheet: View {
                     } footer: {
                         footer
                     }
+                } else if let call = httpCall {
+                    // What the request does: the method and the whole URL (no secret), then what it would send.
+                    Section {
+                        LabeledContent("Endpoint", value: httpEndpointLabel)
+                        Text("\(Text(call.method).fontWeight(.semibold)) \(call.url)")
+                            .font(.callout.monospaced())
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityIdentifier("approval.request")
+                        if let body = call.body {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Body").font(.subheadline).foregroundStyle(.secondary)
+                                Text(body).font(.callout.monospaced()).textSelection(.enabled)
+                            }
+                            .padding(.vertical, 2)
+                        }
+                    } header: {
+                        Text("Request")
+                    } footer: {
+                        footer
+                    }
                 } else if !details.isEmpty {
                     Section {
                         ForEach(details, id: \.key) { row in
@@ -596,6 +617,15 @@ struct ApprovalSheet: View {
         }
         .accessibilityIdentifier("approval.header")
     }
+
+    private var httpEndpoint: HTTPEndpoint? {
+        guard request.tool == "http_get" || request.tool == "http_send", let id = request.arguments["endpoint"]?.string else { return nil }
+        return store.httpEndpoints.first { $0.id == id.trimmingCharacters(in: .whitespaces) }
+    }
+
+    private var httpCall: HTTPEndpoint.Call? { httpEndpoint?.call(request.arguments, tool: request.tool) }
+
+    private var httpEndpointLabel: String { httpEndpoint?.name ?? request.arguments["endpoint"]?.string ?? "?" }
 
     private var sshHostLabel: String {
         let id = request.arguments["host"]?.string ?? "?"

@@ -20,6 +20,7 @@ import { CodeModeTools, codeModeToolInfo } from "./app/codemode.ts";
 import { Chat, intelligenceSettings, type OutsideInput, type WidgetAction } from "./app/chat.ts";
 import type { SearchOptions } from "./app/search.ts";
 import type { VoiceLineInput } from "./app/voice.ts";
+import { type HttpEndpointConfig, httpSettings, HttpTools, httpToolInfo, httpTrusted } from "./app/http.ts";
 import { InstructionsExtension, instructionsSettings } from "./app/instructions.ts";
 import { McpHost, type McpServerConfig } from "./app/mcp.ts";
 import { type AppleModel, type CustomProvider, ModelSetup } from "./app/models.ts";
@@ -59,6 +60,8 @@ export interface OpenOptions {
 	readonly mcpServers?: string;
 	/** Settings › SSH Hosts, without secrets. */
 	readonly sshHosts?: readonly SshHostConfig[];
+	/** Settings › HTTP Endpoints, without secrets. */
+	readonly httpEndpoints?: readonly HttpEndpointConfig[];
 	/** Settings › Instructions: the user's AGENTS.md text. */
 	readonly instructions?: string;
 	/** Settings › Skills: the imported skills, as Swift parsed them. */
@@ -112,6 +115,8 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 	registry.install(WebTools);
 	sshSettings.hosts = [...(options.sshHosts ?? [])];
 	registry.install(SshTools);
+	httpSettings.endpoints = [...(options.httpEndpoints ?? [])];
+	registry.install(HttpTools);
 	// From the cached tool lists, so a call a crash interrupted finds its tool before any server answers.
 	mcp.install = (extension) => registry.install(extension);
 	mcp.setServers(parseServers(options.mcpServers));
@@ -148,7 +153,7 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 	root = await harness.root(context, {
 		agent: { model: { provider: options.provider, modelId: options.modelId }, extensions: [KillTestTools(0)] },
 	});
-	chat = new Chat(harness, approvals, [AppleTools, SurfaceTools, WebTools, SshTools, mcp.extension, scheduleTools, InstructionsExtension, skills.extension, CodeModeTools, approvalGate], emit, (model, level) =>
+	chat = new Chat(harness, approvals, [AppleTools, SurfaceTools, WebTools, SshTools, HttpTools, mcp.extension, scheduleTools, InstructionsExtension, skills.extension, CodeModeTools, approvalGate], emit, (model, level) =>
 		setup.clampThinking(model, level),
 	);
 	await chat.upgrade();
@@ -161,6 +166,10 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 	approvals.trusted.ssh_exec = async (args, conversationId, context) => {
 		const conversation = await harness?.conversation(conversationId as never, context);
 		return conversation !== undefined && sshTrusted(args, (await conversation.context(context)).entries);
+	};
+	approvals.trusted.http_get = async (args, conversationId, context) => {
+		const conversation = await harness?.conversation(conversationId as never, context);
+		return conversation !== undefined && httpTrusted("http_get", args, (await conversation.context(context)).entries);
 	};
 	const wake = harness.wake();
 	onWake(wake);
@@ -379,7 +388,7 @@ const app = {
 	answerApproval: async (id: number, decision: Decision) => requireChat().answerApproval(id, decision),
 	setPolicies: async (policies: Record<string, ToolPolicy>) => requireChat().setPolicies(policies),
 	tools: async () =>
-		[...appleToolInfo, ...webToolInfo, ...sshToolInfo, ...surfaceToolInfo, ...scheduleToolInfo, ...codeModeToolInfo, ...mcp.toolInfo()].map((tool) => ({
+		[...appleToolInfo, ...webToolInfo, ...sshToolInfo, ...httpToolInfo, ...surfaceToolInfo, ...scheduleToolInfo, ...codeModeToolInfo, ...mcp.toolInfo()].map((tool) => ({
 			...tool,
 			policy: approvals.policy(tool.name),
 		})),
@@ -409,6 +418,10 @@ const app = {
 	// Settings › SSH Hosts changed; applies from the next tool call and model request.
 	setSshHosts: async (hosts: SshHostConfig[]) => {
 		sshSettings.hosts = [...hosts];
+	},
+	// Settings › HTTP Endpoints changed; applies from the next tool call and model request.
+	setHttpEndpoints: async (endpoints: HttpEndpointConfig[]) => {
+		httpSettings.endpoints = [...endpoints];
 	},
 	// Settings › Instructions and Settings › Skills changed; both apply from the next model request.
 	setInstructions: async (text: string) => {

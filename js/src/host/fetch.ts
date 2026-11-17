@@ -458,6 +458,13 @@ async function fetchPolyfill(input: string | URL | RequestPolyfill, init?: Reque
 			switch (type) {
 				case "response": {
 					const p = payload as { status: number; statusText: string; headers: [string, string][]; url: string };
+					if (request.redirect === "error" && p.status >= 300 && p.status < 400 && p.headers.some(([name]) => name === "location")) {
+						native.fetchCancel(id);
+						finish();
+						settled = true;
+						reject(new TypeError("fetch failed: redirect mode is \"error\""));
+						break;
+					}
 					const body =
 						request.method === "HEAD" || p.status === 204 || p.status === 304
 							? null
@@ -509,6 +516,9 @@ async function fetchPolyfill(input: string | URL | RequestPolyfill, init?: Reque
 			method: request.method,
 			headers: [...request.headers.entries()],
 			body: bodyBytes,
+			// "manual" and "error" follow no redirect: the bridge hands back the 3xx response itself (with its real status
+			// and Location, not an opaque one), and "error" turns it into a network error here.
+			redirect: request.redirect === "manual" || request.redirect === "error" ? "manual" : "follow",
 		});
 	});
 }

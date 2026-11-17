@@ -8,6 +8,8 @@ export interface NativeFetchRequest {
 	readonly method: string;
 	readonly headers: [string, string][];
 	readonly body: Uint8Array | null;
+	/** "manual": the bridge follows no redirect and delivers the 3xx response. */
+	readonly redirect?: "follow" | "manual";
 }
 
 export interface NativeBindings {
