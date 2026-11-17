@@ -205,8 +205,8 @@ struct EntryPointTests {
         #expect(one.map(\.messageId) == [ids[3]])
         let none: [Hit] = try await harness.call("PiRuntime.searchConversations", ["zebra"])
         #expect(none.isEmpty)
-        // A line said after a search is found by the next one.
-        try await harness.perform("PiRuntime.voiceLine", [line("u2", "user", "and the zebra", startMs: 6_000)])
+        // A line said after a search is found by the next one, also past where the transcript cuts a long text.
+        try await harness.perform("PiRuntime.voiceLine", [line("u2", "user", String(repeating: "and ", count: 2_000) + "the zebra", startMs: 6_000)])
         let later: [Hit] = try await harness.call("PiRuntime.searchConversations", ["zebra"])
         #expect(later.map(\.matched) == ["zebra"])
         let sessions: [String] = try await harness.call("PiRuntime.voiceSessions")

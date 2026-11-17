@@ -135,11 +135,13 @@ function assistantParts(message: { content?: Block[] } | undefined) {
 	};
 }
 
-export function displayItem(entry: EntryRecord): DisplayItem | undefined {
+/** `whole`: what the user wrote or said is not cut at `MAX_TEXT` (search reads all of it; the transcript does not). */
+export function displayItem(entry: EntryRecord, whole = false): DisplayItem | undefined {
 	const message = entry.model?.[0] as Record<string, unknown> | undefined;
+	const said = whole ? (text: string) => text : clip;
 	switch (entry.kind) {
 		case "pi.user":
-			return { id: entry.id, kind: "user", text: clip(textOf(message?.content)), timestamp: message?.timestamp as number | undefined };
+			return { id: entry.id, kind: "user", text: said(textOf(message?.content)), timestamp: message?.timestamp as number | undefined };
 		case "pi.assistant": {
 			const parts = assistantParts(message as { content?: Block[] });
 			const noReply = parts.toolCalls.length === 0 && message?.stopReason === "stop" && isNoReply(parts.text);
@@ -177,7 +179,7 @@ export function displayItem(entry: EntryRecord): DisplayItem | undefined {
 			return {
 				id: entry.id,
 				kind: "user",
-				text: clip(data?.attachments === undefined && data?.skill === undefined ? textOf(message?.content) : (data.text ?? "")),
+				text: said(data?.attachments === undefined && data?.skill === undefined ? textOf(message?.content) : (data.text ?? "")),
 				timestamp: message?.timestamp as number | undefined,
 				origin: data?.origin,
 				attachments: data?.attachments,
@@ -191,7 +193,7 @@ export function displayItem(entry: EntryRecord): DisplayItem | undefined {
 			return {
 				id: entry.id,
 				kind: "voice",
-				text: clip(line.text),
+				text: said(line.text),
 				timestamp: line.at,
 				voice: { session: line.session, role: line.role, startMs: line.startMs, endMs: line.endMs },
 			};

@@ -30,7 +30,7 @@ import {
 	type InputData,
 	inputContent,
 } from "./attachments.ts";
-import { type DisplaySurface, FrameBuilder, textOf } from "./display.ts";
+import { displayItem, type DisplaySurface, FrameBuilder, textOf } from "./display.ts";
 import { answerText, isNoReply, noReplyText, OriginInput, SchedulesDoc } from "./schedule.ts";
 import { fold, hitsIn, searchable, type SearchableMessage, type SearchHit, type SearchOptions } from "./search.ts";
 import { readSkill, skillContent } from "./skills.ts";
@@ -247,7 +247,10 @@ export class Chat {
 		const head = (await conversation.entries({ order: "descending" }, 1, undefined, context)).items[0]?.id ?? 0;
 		const kept = this.#searched.get(id);
 		if (kept?.head === head) return kept.messages;
-		const messages = this.transcript(id).then((frame) => searchable(frame.items));
+		// The entries' whole text: the transcript's items cut long messages.
+		const messages = readView(conversation, context).then((view) =>
+			searchable(entriesOf(view).flatMap((entry) => displayItem(entry, true) ?? [])),
+		);
 		this.#searched.set(id, { head, messages });
 		messages.catch(() => {
 			if (this.#searched.get(id)?.messages === messages) this.#searched.delete(id);
