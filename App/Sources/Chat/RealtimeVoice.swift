@@ -281,7 +281,7 @@ final class RealtimeVoice {
                     "input": [
                         "format": ["type": "audio/pcm", "rate": Int(VoiceAudio.sampleRate)],
                         "noise_reduction": ["type": "near_field"],
-                        "transcription": ["model": VoiceInput.model],
+                        "transcription": ["model": VoiceInput.model, "prompt": Self.transcriptionPrompt],
                         "turn_detection": ["type": "semantic_vad", "create_response": true, "interrupt_response": true],
                     ],
                     "output": [
@@ -294,6 +294,10 @@ final class RealtimeVoice {
             ] as [String: Any],
         ]
     }
+
+    /// Biases the caption model (the transcript the user sees and the conversation keeps), not the voice model. No
+    /// `language`: it takes one code, and fixing it would garble the other language.
+    static let transcriptionPrompt = "The speaker uses Mandarin Chinese (Simplified) and English, sometimes mixed in one sentence."
 
     static let instructions = """
     You are the voice of Pi, the user's personal agent on their iPhone. You hear the user and speak Pi's answers; Pi does \
