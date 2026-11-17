@@ -3,12 +3,14 @@ import SwiftUI
 
 /// Settings is an index: a few groups of rows, each opening one focused page, the way iOS Settings reads.
 /// Chat (how new conversations start, your instructions and skills, archived ones, backups, links), Connections (model providers, web search, MCP servers, SSH hosts),
-/// Permissions (tool approvals), and Pi itself (scheduled tasks, widgets, alarms, diagnostics).
+/// Permissions (tool approvals), and Pi itself (scheduled tasks, widgets, alarms, usage, diagnostics).
 struct SettingsView: View {
     @Bindable var store: ChatStore
 
     private var savedProviders: Int { ChatStore.providers.filter { store.hasKey($0.id) }.count }
     private var askingTools: Int { store.tools.filter { $0.server == nil && $0.policy == "ask" }.count }
+    /// This month's cost so far, across conversations.
+    @State private var monthCost: Double?
 
     var body: some View {
         Form {
@@ -156,6 +158,14 @@ struct SettingsView: View {
                     SettingsRow("Photo Search", systemImage: "photo.on.rectangle.angled", tint: .indigo)
                 }
                 .accessibilityIdentifier("settings.photos")
+                NavigationLink {
+                    UsageSettingsView(store: store)
+                } label: {
+                    SettingsRow("Usage", systemImage: "chart.bar.fill", tint: .teal) {
+                        if let monthCost { Text(UsageFormat.cost(monthCost)).monospacedDigit() }
+                    }
+                }
+                .accessibilityIdentifier("settings.usage")
                 NavigationLink(value: Route.diagnostics) {
                     SettingsRow("Diagnostics", systemImage: "stethoscope", tint: .gray)
                 }
@@ -168,6 +178,7 @@ struct SettingsView: View {
         .task {
             await store.refreshTools()
             await store.refreshModels()
+            monthCost = await store.spending(UsageSettingsView.month(0))?.cost
         }
     }
 

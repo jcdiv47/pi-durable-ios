@@ -279,6 +279,44 @@ struct EntryPointTests {
         try await harness.close()
     }
 
+    @Test("Spending adds the answers asked in a period, a fork's only after it forked; frames carry the context's tokens", .timeLimit(.minutes(1)))
+    func spending() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let log = ChatLog()
+        let harness = try await openEntryChat(log, db: directory.appendingPathComponent("chat.sqlite").path)
+        struct Usage: Decodable { let input: Double; let output: Double; let cost: Double; let context: Double? }
+        struct Frame: Decodable { let items: [Item]; let usage: Usage; struct Item: Decodable { let id: Int; let kind: String } }
+        struct Model: Decodable { let model: String; let input: Double; let output: Double }
+        struct Totals: Decodable { let input: Double; let output: Double; let cost: Double; let conversations: Int; let models: [Model] }
+        let now = Date().timeIntervalSince1970 * 1000
+        let empty: Totals = try await harness.call("PiRuntime.spending", [0, now + 3_600_000])
+        #expect(empty.conversations == 0 && empty.input == 0 && empty.models.isEmpty)
+
+        let answer: OutsideAnswer = try await harness.call("PiRuntime.askFromOutside", [outside("How much does this cost", requestId: "spend:1")])
+        #expect(answer.status == "done")
+        let frame: Frame = try await harness.call("PiRuntime.transcript", [answer.conversationId])
+        // The offline model reports estimated tokens and no cost.
+        #expect(frame.usage.input + frame.usage.output > 0)
+        #expect(frame.usage.context ?? 0 > 0)
+        let month: Totals = try await harness.call("PiRuntime.spending", [now - 60_000, now + 3_600_000])
+        #expect(month.conversations == 1)
+        #expect(month.models.map(\.model) == ["scripted/assistant"])
+        #expect(month.input + month.output == frame.usage.input + frame.usage.output)
+        let before: Totals = try await harness.call("PiRuntime.spending", [0, now - 60_000])
+        #expect(before.conversations == 0)
+
+        // A fork holds the parent's answer, but that spend is the parent's.
+        let answered = try #require(frame.items.last { $0.kind == "assistant" })
+        let fork: Meta = try await harness.call("PiRuntime.fork", [answer.conversationId, answered.id])
+        let withFork: Totals = try await harness.call("PiRuntime.spending", [now - 60_000, now + 3_600_000])
+        #expect(withFork.conversations == 1)
+        #expect(withFork.input == month.input)
+        let forkFrame: Frame = try await harness.call("PiRuntime.transcript", [fork.id])
+        #expect(forkFrame.usage.input == 0)
+        try await harness.close()
+    }
+
     @Test("A widget toggle changes a $doc list once per request ID", .timeLimit(.minutes(1)))
     func widgetToggle() async throws {
         let directory = try temporaryDirectory()

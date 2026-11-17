@@ -6,6 +6,7 @@ import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { EntryRecord, InboxState } from "@earendil-works/pi-durable";
 import { attachmentSummary, type DisplayAttachment, type InputData } from "./attachments.ts";
 import { isNoReply, noReplyText } from "./schedule.ts";
+import { contextTokens } from "./usage.ts";
 import { type DisplayVoice, VoiceEntry, type VoiceLine } from "./voice.ts";
 
 export type DisplayToolCall = { id: string; name: string; arguments: string };
@@ -78,7 +79,8 @@ export type DisplayFrame = {
 	queue: DisplayQueued[];
 	model?: { provider: string; modelId: string };
 	thinkingLevel: ModelThinkingLevel;
-	usage: { input: number; output: number; cost: number };
+	/** `context`: tokens the context holds after the newest answer (usage.ts), when known. */
+	usage: { input: number; output: number; cost: number; context?: number };
 };
 
 /** Display text is bounded; tool results such as a month of calendar events can be long. */
@@ -235,12 +237,16 @@ export function displayLive(live: LiveDoc | undefined): DisplayLive {
 	};
 }
 
-type UsageDoc = { models?: Record<string, { input?: number; output?: number; cost?: { total?: number } }> };
+type UsageDoc = {
+	models?: Record<string, { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; cost?: { total?: number } }>;
+};
 
-export function displayUsage(usage: UsageDoc | undefined): DisplayFrame["usage"] {
-	const total = { input: 0, output: 0, cost: 0 };
+/** `input` counts cached tokens too, as usage.ts does: all of it was sent. */
+
+export function displayUsage(usage: UsageDoc | undefined, context?: number): DisplayFrame["usage"] {
+	const total: DisplayFrame["usage"] = { input: 0, output: 0, cost: 0, ...(context === undefined ? {} : { context }) };
 	for (const bucket of Object.values(usage?.models ?? {})) {
-		total.input += bucket.input ?? 0;
+		total.input += (bucket.input ?? 0) + (bucket.cacheRead ?? 0) + (bucket.cacheWrite ?? 0);
 		total.output += bucket.output ?? 0;
 		total.cost += bucket.cost?.total ?? 0;
 	}
@@ -293,7 +299,7 @@ export class FrameBuilder {
 			),
 			model: agent?.model,
 			thinkingLevel: agent?.thinkingLevel ?? "off",
-			usage: displayUsage(docs["pi.usage"] as UsageDoc | undefined),
+			usage: displayUsage(docs["pi.usage"] as UsageDoc | undefined, contextTokens(value.entries)),
 		};
 	}
 }

@@ -360,6 +360,7 @@ const app = {
 	transcript: (id: number) => requireChat().transcript(id),
 	searchText: (id: number) => requireChat().searchText(id),
 	searchConversations: (query: string, options?: SearchOptions) => requireChat().search(query, options ?? undefined),
+	spending: (from: number, to: number) => requireChat().spending(from, to),
 	send: (id: number, text: string, requestId: string, attachments?: InputAttachment[], skill?: string) =>
 		requireChat().send(id, text, requestId, attachments, skill ?? undefined),
 	abort: (id: number) => requireChat().abort(id),
