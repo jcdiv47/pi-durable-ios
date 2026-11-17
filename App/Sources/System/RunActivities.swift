@@ -76,6 +76,13 @@ final class RunActivities {
         Task.detached { await box.activity.update(content) }
     }
 
+    /// A deleted conversation's activity goes at once.
+    func remove(conversationId id: Int) {
+        running.remove(id)
+        shown[id] = nil
+        if let activity = activities.removeValue(forKey: id) { Self.end(activity, nil, dismissalPolicy: .immediate) }
+    }
+
     /// `Activity` is not `Sendable`; its async methods are called from outside the main actor, holding nothing else.
     private struct ActivityBox: @unchecked Sendable {
         let activity: Activity<PiRunAttributes>

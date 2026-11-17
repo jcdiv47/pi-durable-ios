@@ -44,6 +44,14 @@ JavaScriptCore runtime.
   Settings › Alarms & Timers (`AlarmsView`, `pidurable://alarms`): the alarms Pi set (`PiAlarms` in PiAppleTools), counting
   down; the Clock app never shows them. A timer's Lock Screen countdown is the widget's `PiAlarmLiveActivity`, over
   PiUI's `PiAlarmMetadata`.
+  Deleting a conversation (`Chat.delete`): pi-durable has no way to remove entries, so it leaves `ConversationIndex`
+  for its `deleted` list, and nothing opens it again (`#conversation` refuses it); its schedules, widgets, notifications
+  and Live Activity go, and the attachment and voice sweeps run at once. Forks keep what they show of it.
+  Export: a conversation as Markdown (`export.ts`, `Chat.exportMarkdown`; `ConversationMarkdown` for `ShareLink`), and
+  Settings › Backup & Export (`Backup`, `BackupView`): an Apple Archive of a `VACUUM INTO` copy of Pi's storage
+  (`SQLiteSnapshot`), attachments, widget files, recordings, the user's files, settings and every conversation as
+  Markdown; never Keychain secrets. A restore is unpacked and checked into `<App Group>/restore/`, the app exits, and
+  the next launch applies it before `ChatStore.shared` reads anything (the replaced storage stays in `restore/previous/`).
   Settings › Apple Intelligence (`IntelligenceSettingsView`): the on-device model's status, on-device titles and
   notification summaries.
   `App/Sources/M0/`: the headless check modes.

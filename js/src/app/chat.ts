@@ -30,7 +30,8 @@ import {
 	type InputData,
 	inputContent,
 } from "./attachments.ts";
-import { displayItem, type DisplaySurface, FrameBuilder, textOf } from "./display.ts";
+import { type DisplayItem, displayItem, type DisplaySurface, FrameBuilder, textOf } from "./display.ts";
+import { conversationMarkdown } from "./export.ts";
 import { answerText, isNoReply, noReplyText, OriginInput, SchedulesDoc } from "./schedule.ts";
 import { fold, hitsIn, searchable, type SearchableMessage, type SearchHit, type SearchOptions } from "./search.ts";
 import { readSkill, skillContent } from "./skills.ts";
@@ -52,8 +53,12 @@ export type ConversationMeta = {
 	archivedAt?: number;
 };
 
-/** Every conversation, archived ones included, newest activity first when read. Conversations are never deleted. */
-export const ConversationIndex = defineDoc<{ items: ConversationMeta[] }>({
+/**
+ * Every conversation, archived ones included, newest activity first when read. `deleted`: conversations the user deleted.
+ * Pi has no way to remove a conversation's entries, so a deleted one leaves the index and nothing opens it again: no list,
+ * search, entry point or sweep sees it, and its attachment images and voice recordings go at the next sweep.
+ */
+export const ConversationIndex = defineDoc<{ items: ConversationMeta[]; deleted?: number[] }>({
 	kind: "app.conversations",
 	version: 1,
 	scope: "session",
@@ -190,6 +195,7 @@ export class Chat {
 	}
 
 	async #conversation(id: number): Promise<Conversation> {
+		if ((await this.harness.snapshot(ConversationIndex, context))?.deleted?.includes(id)) throw new Error(`Conversation ${id} was deleted`);
 		const conversation = await this.harness.conversation(id as never, context);
 		if (conversation === undefined) throw new Error(`No conversation ${id}`);
 		return conversation;
@@ -372,6 +378,8 @@ export class Chat {
 		let id = input.conversationId;
 		if (id === undefined) {
 			id = (await this.harness.snapshot(RequestsDoc, context))?.items[input.requestId]?.conversationId;
+			// A retried request whose conversation was deleted meanwhile starts a new one.
+			if (id !== undefined && !(await this.#all()).some((meta) => meta.id === id)) id = undefined;
 			id ??= (await this.create(input.model, input.requestId)).id;
 		}
 		const startedAt = Date.now();
@@ -642,6 +650,62 @@ export class Chat {
 			if (meta !== undefined) delete meta.archivedAt;
 		}, context);
 		await this.#changed();
+	}
+
+	/**
+	 * Deletes a conversation, listed or archived: stops its work and schedules, takes its widgets off the Home Screen and
+	 * drops it from the index for good (see `ConversationIndex`). Its forks keep what they show of it.
+	 */
+	async delete(id: number): Promise<void> {
+		if (!(await this.#all()).some((meta) => meta.id === id)) return;
+		this.unwatch(id);
+		this.#searched.delete(id);
+		await this.abort(id);
+		for (const schedule of await this.schedules()) {
+			if (schedule.conversationId === id) await this.cancelSchedule(schedule.taskId);
+		}
+		for (const entry of await this.published()) {
+			if (entry.conversationId === id) await this.unpublish(entry.publishedId);
+		}
+		await this.harness.commit(async (tx) => {
+			const index = await tx.doc(ConversationIndex);
+			const at = index.items.findIndex((item) => item.id === id);
+			if (at >= 0) index.items.splice(at, 1);
+			index.deleted = [...(index.deleted ?? []), id];
+		}, context);
+		await this.#changed();
+	}
+
+	/**
+	 * A conversation as Markdown (export.ts): what was said whole, tool calls folded, thinking left out. `fileName` is the
+	 * title made safe for a file.
+	 */
+	async exportMarkdown(id: number): Promise<{ title: string; fileName: string; markdown: string }> {
+		const all = await this.#all();
+		const meta = all.find((item) => item.id === id);
+		if (meta === undefined) throw new Error(`No conversation ${id}`);
+		const view = await readView(await this.#conversation(id), context);
+		// Tool results whole up to the transcript's clip; what was said whole.
+		const items = entriesOf(view).flatMap((entry): DisplayItem | DisplayItem[] => displayItem(entry, true) ?? []);
+		const agent = view.docs["pi.agent"] as { model?: { provider: string; modelId: string } } | undefined;
+		const forkOf = meta.forkOf === undefined ? undefined : (all.find((item) => item.id === meta.forkOf!.conversationId)?.title ?? "a deleted conversation");
+		const markdown = conversationMarkdown(
+			{
+				title: meta.title,
+				createdAt: meta.createdAt,
+				...(agent?.model === undefined ? {} : { model: agent.model }),
+				...(forkOf === undefined ? {} : { forkOf }),
+				...(meta.archivedAt === undefined ? {} : { archivedAt: meta.archivedAt }),
+			},
+			items,
+		);
+		const safe = meta.title.replace(/[\\/:*?"<>|\n\r\t]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80) || "Conversation";
+		return { title: meta.title, fileName: `${safe}.md`, markdown };
+	}
+
+	/** Every conversation, archived ones included, for the backup archive. */
+	async allConversations(): Promise<ConversationMeta[]> {
+		return this.#all();
 	}
 
 	/** Live tasks with what the scheduler would do with them. */

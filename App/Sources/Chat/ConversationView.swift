@@ -32,6 +32,7 @@ struct ConversationView: View {
     @State private var found: Int?
     /// The transcript stays at the found message, rather than following its end, until the user scrolls or sends.
     @State private var atFound = false
+    @State private var deleting: ConversationMeta?
 
     private var state: ConversationState { store.state(conversationId) }
     private var meta: ConversationMeta? { store.meta(conversationId) }
@@ -136,7 +137,31 @@ struct ConversationView: View {
                 .accessibilityIdentifier("conversation.voice")
                 .disabled(store.phase != .ready)
             }
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    if let meta {
+                        ShareLink(item: ConversationMarkdown(id: meta.id, title: meta.title), preview: SharePreview(meta.title)) {
+                            Label("Export as Markdown", systemImage: "square.and.arrow.up")
+                        }
+                        if meta.archivedAt == nil {
+                            Button("Archive", systemImage: "archivebox") {
+                                Task {
+                                    await store.archive(meta.id)
+                                    leave()
+                                }
+                            }
+                        }
+                        Button("Delete", systemImage: "trash", role: .destructive) { deleting = meta }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                }
+                .accessibilityLabel("More")
+                .accessibilityIdentifier("conversation.more")
+                .disabled(store.phase != .ready || meta == nil)
+            }
         }
+        .deleteConversationDialog($deleting, store: store) { leave() }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .onAppear {
             if let message = store.takeFoundMessage(conversationId) {
@@ -160,6 +185,11 @@ struct ConversationView: View {
             store.keepComposerDraft(.init(text: draft, attachments: attachments, skill: skill), for: conversationId)
         }
         .onChange(of: store.drafts[conversationId], initial: true) { takeDraft() }
+    }
+
+    /// Back to the screen under this conversation, once it is archived or deleted.
+    private func leave() {
+        if case .conversation(conversationId)? = path.last { path.removeLast() }
     }
 
     /// A share sheet item opened to edit: its text goes ahead of anything typed, its attachments after the ones here.

@@ -83,6 +83,16 @@ final class Notifications: NSObject, UNUserNotificationCenterDelegate {
         await add("answer-\(conversationId)-\(entryId)", content, trigger: nil)
     }
 
+    /// A deleted conversation's delivered and pending notifications: its answers, approvals and scheduled reminders.
+    func removeConversation(_ id: Int) async {
+        let center = UNUserNotificationCenter.current()
+        let belongs = { (content: UNNotificationContent) in (content.userInfo["conversationId"] as? Int) == id || content.threadIdentifier == "conversation-\(id)" }
+        let delivered = await center.deliveredNotifications().filter { belongs($0.request.content) }.map(\.request.identifier)
+        center.removeDeliveredNotifications(withIdentifiers: delivered)
+        let pending = await center.pendingNotificationRequests().filter { belongs($0.content) }.map(\.identifier)
+        center.removePendingNotificationRequests(withIdentifiers: pending)
+    }
+
     /// A notice from the app itself, such as an MCP server that can't be reached. The identifier replaces an earlier one.
     func postNotice(identifier: String, title: String, body: String) async {
         guard await authorize() else { return }
