@@ -106,6 +106,7 @@ struct ConversationListView: View {
     @Bindable var store: ChatStore
     @Binding var path: [Route]
     @State private var renaming: ConversationMeta?
+    @State private var deleting: ConversationMeta?
     @State private var newTitle = ""
     @State private var query = ""
 
@@ -161,6 +162,7 @@ struct ConversationListView: View {
             }
             Button("Cancel", role: .cancel) {}
         }
+        .deleteConversationDialog($deleting, store: store)
     }
 
     /// Opens the unused conversation if there is one; a new one stays out of the list until something is sent in it.
@@ -278,14 +280,26 @@ struct ConversationListView: View {
                 Label("Archive", systemImage: "archivebox")
             }
             .tint(.indigo)
+            Button {
+                deleting = meta
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+            .tint(.red)
         }
         .contextMenu {
             Button("Rename", systemImage: "pencil") {
                 newTitle = meta.title
                 renaming = meta
             }
+            ShareLink(item: ConversationMarkdown(id: meta.id, title: meta.title), preview: SharePreview(meta.title)) {
+                Label("Export as Markdown", systemImage: "square.and.arrow.up")
+            }
             Button("Archive", systemImage: "archivebox") {
                 Task { await store.archive(meta.id) }
+            }
+            Button("Delete", systemImage: "trash", role: .destructive) {
+                deleting = meta
             }
         }
     }

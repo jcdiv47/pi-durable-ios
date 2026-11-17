@@ -15,7 +15,13 @@ import UIKit
 @MainActor
 @Observable
 final class ChatStore {
-    static let shared = ChatStore()
+    /// A restore staged in Settings › Backup is applied first, before anything reads the files it replaces.
+    static let shared: ChatStore = {
+        let restored = LaunchMode.current == .chat ? Backup.applyPendingRestore() : nil
+        let store = ChatStore()
+        if let restored { store.diagnostics.record(restored.failed ? "error" : "info", "backup", restored.message) }
+        return store
+    }()
 
     /// The store once Pi is open, for entry points that may have launched the app in the background.
     static func ready() async -> ChatStore {
@@ -560,6 +566,65 @@ final class ChatStore {
         } catch {
             report("archive", error)
         }
+    }
+
+    /// Deletes a conversation, listed or archived, after stopping its work, schedules and widgets (`Chat.delete`), and
+    /// sweeps the attachment images and voice recordings only it showed.
+    func delete(_ id: Int) async {
+        guard let harness else { return }
+        do {
+            try await harness.perform("PiRuntime.deleteConversation", [id])
+        } catch {
+            return report("delete", error)
+        }
+        watched.remove(id)
+        states[id] = nil
+        unreadConversations.remove(id)
+        drafts[id] = nil
+        composerDrafts[id] = nil
+        foundMessages[id] = nil
+        activities.remove(conversationId: id)
+        diagnostics.record("info", "app", "Deleted conversation \(id)")
+        await notifications.removeConversation(id)
+        await refreshSchedules()
+        await refreshPublished()
+        await sweepAttachments(force: true)
+    }
+
+    /// A conversation as a Markdown file in the temporary directory, named for its title (`Chat.exportMarkdown`).
+    func markdownFile(_ id: Int) async throws -> URL {
+        guard let harness else { throw PiIntentError("Pi isn't open yet.") }
+        let exported: MarkdownExport = try await harness.call("PiRuntime.exportMarkdown", [id])
+        let directory = FileManager.default.temporaryDirectory.appending(path: "markdown/\(id)", directoryHint: .isDirectory)
+        try? FileManager.default.removeItem(at: directory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appending(path: exported.fileName)
+        try Data(exported.markdown.utf8).write(to: url, options: .atomic)
+        return url
+    }
+
+    struct MarkdownExport: Decodable {
+        let title: String
+        let fileName: String
+        let markdown: String
+    }
+
+    /// Every conversation, archived ones included, as Markdown, for the backup archive.
+    func allMarkdown() async throws -> [(meta: ConversationMeta, export: MarkdownExport)] {
+        guard let harness else { throw PiIntentError("Pi isn't open yet.") }
+        let all: [ConversationMeta] = try await harness.call("PiRuntime.allConversations")
+        var exports: [(meta: ConversationMeta, export: MarkdownExport)] = []
+        for meta in all {
+            exports.append((meta: meta, export: try await harness.call("PiRuntime.exportMarkdown", [meta.id])))
+        }
+        return exports
+    }
+
+    /// Closes Pi's storage so a staged restore can replace it at the next launch.
+    func closeForRestore() async {
+        guard let harness else { return }
+        self.harness = nil
+        try? await harness.close()
     }
 
     func unarchive(_ id: Int) async {
@@ -1117,9 +1182,10 @@ final class ChatStore {
     /// Deletes attachment images nothing shows or sends any more (`Attachments.sweep`), at most once a day, when Pi
     /// opens: the composer's own attachments are then all younger than the sweep's grace period. Removing a
     /// conversation lets its images go; a fork keeps the ones it shows.
-    private func sweepAttachments() async {
+    /// `force`: now, after a delete, whenever the last sweep was.
+    private func sweepAttachments(force: Bool = false) async {
         let key = "attachmentsSweptAt"
-        guard let harness, Date().timeIntervalSince(settings.object(forKey: key) as? Date ?? .distantPast) > Attachments.sweepGrace else { return }
+        guard let harness, force || Date().timeIntervalSince(settings.object(forKey: key) as? Date ?? .distantPast) > Attachments.sweepGrace else { return }
         // Swift's references first: a share item moves from the inbox to `drafts` to a composer, and a composer's left-over
         // draft waits in `composerDrafts`.
         var kept = Set(ShareInbox.pending().flatMap { Attachments.files($0.attachments) } + (Array(drafts.values) + composerDrafts.values).flatMap { Attachments.files($0.attachments) })

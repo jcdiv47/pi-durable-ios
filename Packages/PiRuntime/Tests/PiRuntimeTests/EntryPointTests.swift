@@ -150,6 +150,71 @@ struct EntryPointTests {
         try await harness.close()
     }
 
+    @Test("A conversation exports as Markdown; deleting it hides it everywhere and frees its attachments", .timeLimit(.minutes(1)))
+    func exportAndDelete() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let log = ChatLog()
+        let harness = try await openEntryChat(log, db: directory.appendingPathComponent("chat.sqlite").path)
+        let answer: OutsideAnswer = try await harness.call("PiRuntime.askFromOutside", [outside("hello from Siri", requestId: "siri-1")])
+        let id = answer.conversationId
+        try await harness.perform("PiRuntime.watchConversation", [id])
+        let image: [String: any Sendable] = ["kind": "image", "data": "iVBORw0KGgo=", "mimeType": "image/png", "file": "gone.jpg", "name": "Receipt"]
+        try await harness.perform("PiRuntime.send", [id, "look at ```this```", "r1", [image]])
+        try await until { !log.busy(id) && log.items(id).count == 4 }
+        let keep: Meta = try await harness.call("PiRuntime.createConversation", ["scripted", "assistant"])
+        try await harness.perform("PiRuntime.send", [keep.id, "keep me", "k1", [["kind": "image", "data": "iVBORw0KGgo=", "mimeType": "image/png", "file": "kept.jpg"]]])
+        try await harness.perform("PiRuntime.watchConversation", [keep.id])
+        try await until { !log.busy(keep.id) && log.items(keep.id).count == 2 }
+        // A fork of the first answer shows "hello from Siri" only.
+        let fork: Meta = try await harness.call("PiRuntime.fork", [id, log.items(id)[1]["id"] as! Int])
+
+        struct Exported: Decodable { let title: String; let fileName: String; let markdown: String }
+        let exported: Exported = try await harness.call("PiRuntime.exportMarkdown", [id])
+        #expect(exported.fileName == "hello from Siri.md")
+        let markdown = exported.markdown
+        #expect(markdown.hasPrefix("# hello from Siri\n"))
+        #expect(markdown.contains("model scripted/assistant"))
+        #expect(markdown.contains("**You (Siri)**"))
+        #expect(markdown.contains("You said: hello from Siri"))
+        #expect(markdown.contains("look at ```this```"))
+        #expect(markdown.contains("- Image: Receipt (`attachments/gone.jpg`)"))
+        let forked: Exported = try await harness.call("PiRuntime.exportMarkdown", [fork.id])
+        #expect(forked.markdown.contains("forked from “hello from Siri”"))
+        #expect(!forked.markdown.contains("look at"))
+
+        try await harness.perform("PiRuntime.deleteConversation", [id])
+        let listed: [Meta] = try await harness.call("PiRuntime.conversations")
+        let all: [Meta] = try await harness.call("PiRuntime.allConversations")
+        #expect(Set(listed.map(\.id)) == [keep.id, fork.id])
+        #expect(Set(all.map(\.id)) == [keep.id, fork.id])
+        let files: [String] = try await harness.call("PiRuntime.attachmentFiles")
+        #expect(files == ["kept.jpg"], "the deleted conversation's image can be swept")
+        struct Hit: Decodable { let conversationId: Int }
+        let hits: [Hit] = try await harness.call("PiRuntime.searchConversations", ["look at"])
+        #expect(hits.isEmpty)
+        await #expect(throws: (any Error).self) { try await harness.perform("PiRuntime.send", [id, "still there?", "r2"]) }
+        await #expect(throws: (any Error).self) { try await harness.perform("PiRuntime.watchConversation", [id]) }
+        // The fork still shows what it had of it.
+        let forkAgain: Exported = try await harness.call("PiRuntime.exportMarkdown", [fork.id])
+        #expect(forkAgain.markdown.contains("You said: hello from Siri"))
+        #expect(forkAgain.markdown.contains("forked from “a deleted conversation”"))
+        // A retried request whose conversation is gone starts a new one.
+        let retried: OutsideAnswer = try await harness.call("PiRuntime.askFromOutside", [outside("hello from Siri", requestId: "siri-1")])
+        #expect(retried.conversationId != id)
+
+        // The backup's copy, taken while Pi is open, opens as the same conversations.
+        let copy = directory.appendingPathComponent("backup.sqlite")
+        try SQLiteSnapshot.copy(directory.appendingPathComponent("chat.sqlite"), to: copy)
+        #expect(SQLiteSnapshot.isIntact(copy))
+        let before: [Meta] = try await harness.call("PiRuntime.conversations")
+        try await harness.close()
+        let restored = try await openEntryChat(ChatLog(), db: copy.path)
+        let after: [Meta] = try await restored.call("PiRuntime.conversations")
+        #expect(after.map(\.id) == before.map(\.id))
+        try await restored.close()
+    }
+
     @Test("Talk to Pi's spoken lines are display-only entries, once per item, around the request it handed to Pi", .timeLimit(.minutes(1)))
     func voiceLines() async throws {
         let directory = try temporaryDirectory()
