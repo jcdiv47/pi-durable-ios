@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Bundle and typecheck the JS that runs inside JSC. Linux: the cheap runner.
+  js:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: js
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      - run: npx tsc -p .
+
+  # The macOS jobs need Xcode 27 (AppleIntelligence.swift uses an iOS 27 / macOS 27 API), which is only on the
+  # `xcode-27` preview image.
+
+  # The Swift packages' tests in macOS JSC. PiUI's snapshot sheets are macOS renders that only match on the OS
+  # release that recorded them, so they are skipped here; run them locally.
+  packages:
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup
+      - name: Bundle JS (PiRuntime's test resources)
+        working-directory: js
+        run: bun install --frozen-lockfile && bun run build
+      - name: PiRuntime
+        working-directory: Packages/PiRuntime
+        run: swift test
+      - name: PiUI
+        working-directory: Packages/PiUI
+        run: swift test --skip SnapshotTests
+      - name: PiSSH
+        working-directory: Packages/PiSSH
+        run: swift test
+      - name: PiAppleTools
+        working-directory: Packages/PiAppleTools
+        run: swift test
+
+  # The app, widget and share extension build for the simulator, unsigned. The "Bundle JS" phase runs bun itself.
+  app:
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup
+      - run: brew install xcodegen
+      - run: xcodegen generate
+      - name: Build PiApp
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project PiDurable.xcodeproj \
+            -scheme PiApp \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcbeautify --renderer github-actions
