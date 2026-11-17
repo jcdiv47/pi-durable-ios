@@ -150,6 +150,10 @@ build and install. `PI_CONFIGURATION=Release` builds Release.
   Never put keys in the repo, in launch arguments or in JS. JS only sees `pi-host-key:<provider>`,
   and Swift substitutes the real key for that provider's allowlisted hosts. The one exception is OAuth MCP servers:
   pi-mcp's OAuth client refreshes their tokens in JS, so those tokens are in JS memory (never in a tool's output).
+- `scripts/release.sh <version>`: sets `MARKETING_VERSION` in `project.yml`, adds one to `CURRENT_PROJECT_VERSION`
+  (the build number), commits `project.yml` and tags it `v<version>`. It pushes nothing; it prints the push and
+  `gh release create` commands. Set versions only there (every target reads the project-wide settings), never with
+  `agvtool` or in an `info:` block.
 
 The app's modes are launch arguments (`-PiMode <mode>`); see `LaunchMode` in `App/Sources/PiApp.swift`.
 
