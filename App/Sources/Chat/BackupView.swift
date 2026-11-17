@@ -157,13 +157,14 @@ struct ConversationMarkdown: Transferable {
 extension View {
     /// Asks before deleting `meta`'s conversation; `deleted` runs once it is gone (a conversation's own view pops itself).
     func deleteConversationDialog(_ meta: Binding<ConversationMeta?>, store: ChatStore, deleted: @escaping () -> Void = {}) -> some View {
-        confirmationDialog(
+        // An alert, not a confirmation dialog: these views attach it to a whole list, and iOS 26 draws a confirmation
+        // dialog there as a popover pointing at the list's middle, whichever row was swiped, with no Cancel.
+        alert(
             "Delete “\(meta.wrappedValue?.title ?? "")”?",
             isPresented: Binding(get: { meta.wrappedValue != nil }, set: { if !$0 { meta.wrappedValue = nil } }),
-            titleVisibility: .visible,
             presenting: meta.wrappedValue
         ) { target in
-            Button("Delete Conversation", role: .destructive) {
+            Button("Delete", role: .destructive) {
                 Task {
                     await store.delete(target.id)
                     deleted()
