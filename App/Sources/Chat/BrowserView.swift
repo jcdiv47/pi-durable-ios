@@ -92,7 +92,24 @@ struct BrowserView: View {
             do {
                 for try await _ in page.load(target) {}
             } catch {
-                let error = error as NSError
+                // WebPage wraps the URL-loading error; the wrapper's description only says "error 0".
+                let underlying: any Error
+                if let navigationError = error as? WebPage.NavigationError {
+                    switch navigationError {
+                    case .failedProvisionalNavigation(let cause): underlying = cause
+                    case .pageClosed: return
+                    case .webContentProcessTerminated:
+                        failure = "The web page stopped unexpectedly. Try loading it again."
+                        return
+                    case .invalidURL:
+                        failure = "This link isn't a valid web address."
+                        return
+                    @unknown default: underlying = error
+                    }
+                } else {
+                    underlying = error
+                }
+                let error = underlying as NSError
                 let interrupted = error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled
                     || error.domain == "WebKitErrorDomain" && error.code == 102
                 if !interrupted { failure = error.localizedDescription }
