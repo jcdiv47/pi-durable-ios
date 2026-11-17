@@ -34,16 +34,21 @@ export function createPolyfillCases(t: StorageConformanceAssertions): Case[] {
 		{
 			name: "timers fire in order; clearTimeout and setInterval work",
 			async run() {
+				// Waits for the timers, not a fixed time: a busy machine (CI) can hold the queue for longer than the delays.
 				const order: number[] = [];
-				setTimeout(() => order.push(2), 20);
+				const last = new Promise<void>((resolve) => setTimeout(() => (order.push(2), resolve()), 20));
 				setTimeout(() => order.push(1), 5);
 				const cancelled = setTimeout(() => order.push(99), 10);
 				clearTimeout(cancelled);
 				let ticks = 0;
-				const interval = setInterval(() => {
-					if (++ticks === 3) clearInterval(interval);
-				}, 2);
-				await new Promise((resolve) => setTimeout(resolve, 60));
+				const ticked = new Promise<void>((resolve) => {
+					const interval = setInterval(() => {
+						if (++ticks === 3) (clearInterval(interval), resolve());
+					}, 2);
+				});
+				await Promise.all([last, ticked]);
+				// Room for a cancelled timeout or a cleared interval to fire, if they were going to.
+				await new Promise((resolve) => setTimeout(resolve, 20));
 				t.deepEqual(order, [1, 2]);
 				t.strictEqual(ticks, 3);
 				const handle = setTimeout(() => {}, 1) as unknown as { unref?: () => unknown };
