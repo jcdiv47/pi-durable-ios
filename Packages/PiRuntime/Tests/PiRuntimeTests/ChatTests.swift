@@ -331,6 +331,33 @@ struct ChatTests {
         try await harness.close()
     }
 
+    @Test("A conversation's model and effort change until something is sent in it", .timeLimit(.minutes(1)))
+    func setConversationModel() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let log = ChatLog()
+        let harness = try await openChat(log, db: directory.appendingPathComponent("chat.sqlite").path)
+        let meta: Meta = try await harness.call("PiRuntime.createConversation", ["scripted", "assistant", "low"])
+        try await harness.perform("PiRuntime.watchConversation", [meta.id])
+        try await until { log.thinking(meta.id) == "low" }
+
+        // Clamped as at creation: the offline model reasons up to high, the kill-test model not at all.
+        try await harness.perform("PiRuntime.setConversationModel", [meta.id, "scripted", "assistant", "max"])
+        try await until { log.thinking(meta.id) == "high" }
+        try await harness.perform("PiRuntime.setConversationModel", [meta.id, "faux", "killtest", "high"])
+        try await until { log.thinking(meta.id) == "off" }
+        try await harness.perform("PiRuntime.setConversationModel", [meta.id, "scripted", "assistant", "medium"])
+        try await until { log.thinking(meta.id) == "medium" }
+
+        // Once it started, it keeps them.
+        try await harness.perform("PiRuntime.send", [meta.id, "hello", "set-model-1"])
+        try await until { log.items(meta.id).count >= 2 && !log.busy(meta.id) }
+        await #expect(throws: (any Error).self) {
+            try await harness.perform("PiRuntime.setConversationModel", [meta.id, "scripted", "assistant", "low"])
+        }
+        try await harness.close()
+    }
+
     @Test("A new reminder asks first and carries its tool task's idempotency key", .timeLimit(.minutes(1)))
     func reminderCreate() async throws {
         let directory = try temporaryDirectory()

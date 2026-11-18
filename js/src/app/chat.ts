@@ -656,6 +656,18 @@ export class Chat {
 		return meta!;
 	}
 
+	/**
+	 * Changes the model and effort of a conversation nothing was sent in yet (the composer's model menu, or a new default
+	 * from Settings for the unused conversation). One that started keeps its own, so it refuses.
+	 */
+	async setModel(id: number, model: { provider: string; modelId: string }, thinkingLevel: ModelThinkingLevel): Promise<void> {
+		const meta = (await this.#all()).find((item) => item.id === id);
+		if (meta === undefined) throw new Error(`No conversation ${id}`);
+		if (meta.forkOf !== undefined || meta.updatedAt !== meta.createdAt) throw new Error(`Conversation ${id} already started; it keeps its model`);
+		const conversation = await this.#conversation(id);
+		await conversation.configure({ model, thinkingLevel: this.clampThinking(model, thinkingLevel) }, context);
+	}
+
 	async rename(id: number, title: string): Promise<void> {
 		await this.harness.commit(async (tx) => {
 			const meta = (await tx.doc(ConversationIndex)).items.find((item) => item.id === id);
