@@ -100,7 +100,8 @@ JavaScriptCore runtime.
   and `notify_schedule` (`schedule.ts`: day and week intervals keep their local time across daylight saving changes; a
   run that answers `NO_REPLY` posts no notification), the web tools (`web.ts`: `web_search` through DeepSeek or Brave,
   `web_fetch` through DeepSeek Fetch) over keyed HTTP services (`services.ts`), SSH tools (`ssh.ts`: `ssh_exec`, `ssh_job`), MCP servers (`mcp.ts`: a connection per
-  server over `@earendil-works/pi-mcp`'s Streamable HTTP client, and the `mcp` extension), the user's instructions and skills
+  server over `@earendil-works/pi-mcp`'s Streamable HTTP client, and the `mcp` extension, whose tools are deferred:
+  the system prompt lists their names and the model loads the ones it needs with `tool_search`), the user's instructions and skills
   (`instructions.ts`, `skills.ts`: prompt sections, `skill_read`, `skill_file`), Code Mode (`codemode.ts`: the
   `codemode` tool, scripts that call the other tools in QuickJS-wasm, read from the bundle resource `quickjs.wasm` on
   the first script), the approval gate and the offline
