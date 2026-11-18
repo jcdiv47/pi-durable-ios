@@ -23,6 +23,8 @@
 //                   rows toggle it and whose buttons reset it or send a prompt
 //   "skill <name>" → skill_read the skill
 //   "ssh <host> <command…>" → ssh_exec (asks unless the host runs without asking); "sshjob <host> <job>" → ssh_job
+//   "http get <endpoint> <path>" → http_get (asks unless the endpoint reads without asking);
+//   "http <post|put|patch|delete> <endpoint> <path> [body…]" → http_send (always asks)
 //   "skillfile <name> <path>" → skill_file a file of the skill
 //   "code <script…>" → codemode with the rest of the prompt as the script, such as "code return 6 * 7"
 //   "section <key>" → answers with the system prompt section `key` as it stands (or "(none)")
@@ -270,6 +272,16 @@ export function createScriptedModel() {
 				// "ssh <host> <command…>"
 				const [, host = "", ...rest] = prompt.split(" ");
 				return fauxAssistantMessage(fauxToolCall("ssh_exec", { host, command: rest.join(" ") || "uname -a" }), { stopReason: "toolUse" });
+			}
+			case "http": {
+				const [, verb = "get", endpoint = "", path = "", ...rest] = prompt.split(" ");
+				if (verb === "get" || verb === "head") {
+					return fauxAssistantMessage(fauxToolCall("http_get", { endpoint, path, method: verb.toUpperCase() }), { stopReason: "toolUse" });
+				}
+				const body = rest.join(" ");
+				return fauxAssistantMessage(fauxToolCall("http_send", { endpoint, path, method: verb.toUpperCase(), ...(body ? { body } : {}) }), {
+					stopReason: "toolUse",
+				});
 			}
 			case "sshjob": {
 				const [, host = "", job = ""] = prompt.split(/\s+/);

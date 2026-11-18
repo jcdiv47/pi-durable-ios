@@ -22,6 +22,8 @@ enum ToolTitles {
         case "schedule_task": Title(action: "Schedule a task", symbol: "clock.arrow.circlepath", tint: .pink)
         case "web_fetch": Title(action: "Read a web page", symbol: "globe", tint: .blue)
         case "ssh_exec": Title(action: "Run a command on your machine", symbol: "terminal.fill", tint: .mint)
+        case "http_get": Title(action: "Read from your API", symbol: "network", tint: .indigo)
+        case "http_send": Title(action: "Send a request to your API", symbol: "paperplane.fill", tint: .indigo)
         case "codemode": Title(action: "Run a script that uses Pi's tools", symbol: "curlybraces", tint: .indigo)
         default: Title(action: "Run \(tool)", symbol: "wrench.and.screwdriver.fill", tint: .gray)
         }
@@ -33,7 +35,7 @@ enum ToolTitles {
 /// A tool call's arguments as the approval sheet lists them: what the call is about first (title, label, URL), then when,
 /// then the rest; keys as words ("allDay" → "All day"), and ISO 8601 dates as the user's own date and time.
 enum ApprovalDetails {
-    private static let order = ["title", "label", "name", "url", "host", "command", "start", "end", "at", "due", "time", "afterSeconds", "every", "weekdays", "allDay", "location", "list", "notes", "prompt"]
+    private static let order = ["title", "label", "name", "url", "host", "command", "endpoint", "method", "path", "query", "start", "end", "at", "due", "time", "afterSeconds", "every", "weekdays", "allDay", "location", "list", "notes", "prompt"]
 
     static func rows(_ arguments: JSONValue) -> [(key: String, label: String, value: String)] {
         let fields = arguments.fields

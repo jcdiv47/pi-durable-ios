@@ -18,6 +18,8 @@ public final class PiHarness: Sendable {
         public var mcpServers: String?
         /// Settings › SSH Hosts, without secrets (`SshHostConfig[]` in `js/src/app/ssh.ts`).
         public var sshHosts: [SSHHostInfo]?
+        /// Settings › HTTP Endpoints, without secrets (`HttpEndpointConfig[]` in `js/src/app/http.ts`).
+        public var httpEndpoints: [HTTPEndpointInfo]?
         /// Settings › Instructions: the user's AGENTS.md text, a prompt section in every conversation.
         public var instructions: String?
         /// Settings › Skills: the imported skills (`SkillLibrary.list()`).
@@ -38,6 +40,7 @@ public final class PiHarness: Sendable {
             policies: [String: String]? = nil,
             mcpServers: String? = nil,
             sshHosts: [SSHHostInfo]? = nil,
+            httpEndpoints: [HTTPEndpointInfo]? = nil,
             instructions: String? = nil,
             skills: [SkillLibrary.Skill]? = nil,
             appleModels: [AppleIntelligence.Model]? = nil,
@@ -53,6 +56,7 @@ public final class PiHarness: Sendable {
             self.policies = policies
             self.mcpServers = mcpServers
             self.sshHosts = sshHosts
+            self.httpEndpoints = httpEndpoints
             self.instructions = instructions
             self.skills = skills
             self.appleModels = appleModels
@@ -84,6 +88,41 @@ public final class PiHarness: Sendable {
             self.ready = ready
             self.needsVpn = needsVpn
             self.runWithoutAsking = runWithoutAsking
+        }
+    }
+
+    /// An HTTP endpoint as JS sees it: its base URL and how its auth is sent, never the secret.
+    public struct HTTPEndpointInfo: Codable, Sendable, Equatable {
+        public var id: String
+        public var name: String
+        /// `scheme://host[:port][/path]`.
+        public var baseUrl: String
+        /// What the API is and how to use it, for the model.
+        public var description: String
+        public var enabled: Bool
+        /// Its auth needs no secret, or the secret is saved.
+        public var ready: Bool
+        public var needsVpn: Bool
+        public var readWithoutAsking: Bool
+        /// `none`, `bearer`, `header` or `query`.
+        public var auth: String
+        /// The header or query parameter the secret goes in.
+        public var authName: String?
+
+        public init(
+            id: String, name: String, baseUrl: String, description: String, enabled: Bool, ready: Bool, needsVpn: Bool,
+            readWithoutAsking: Bool, auth: String, authName: String?
+        ) {
+            self.id = id
+            self.name = name
+            self.baseUrl = baseUrl
+            self.description = description
+            self.enabled = enabled
+            self.ready = ready
+            self.needsVpn = needsVpn
+            self.readWithoutAsking = readWithoutAsking
+            self.auth = auth
+            self.authName = authName
         }
     }
 

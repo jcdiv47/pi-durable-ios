@@ -41,6 +41,10 @@ export const defaultPolicies: Record<string, ToolPolicy> = {
 	// A shell on the user's machines. A host set to "Run without asking" skips this while the conversation holds no
 	// outside text (`trusted`, ssh.ts).
 	ssh_exec: "ask",
+	// The user's HTTP APIs (http.ts). A read skips this on an endpoint set to "Read without asking" while the
+	// conversation holds no outside text (`trusted`); a send always asks.
+	http_get: "ask",
+	http_send: "ask",
 };
 
 /** A call of an "ask" tool that may run without asking. */

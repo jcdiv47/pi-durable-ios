@@ -31,9 +31,13 @@ public enum ProviderKeys {
 
     private static let customHost = OSAllocatedUnfairLock<String?>(initialState: nil)
     private static let mcpHosts = OSAllocatedUnfairLock<[String: String]>(initialState: [:])
+    private static let httpBases = OSAllocatedUnfairLock<[String: EndpointBase]>(initialState: [:])
 
     /// The key prefix of MCP servers' tokens: server `ha`'s is the Keychain item and placeholder `mcp-ha`.
     public static let mcpPrefix = "mcp-"
+
+    /// The key prefix of HTTP endpoints' secrets: endpoint `ha`'s is the key and placeholder `http-ha`.
+    public static let httpPrefix = "http-"
 
     /// The host of the user's OpenAI-compatible endpoint, the only host the `custom` key may be sent to.
     public static func setCustomHost(_ host: String?) {
@@ -46,23 +50,62 @@ public enum ProviderKeys {
         mcpHosts.withLock { $0 = hosts.mapValues { $0.lowercased() } }
     }
 
+    /// The base URL of each HTTP endpoint the user added in Settings, by endpoint ID. An endpoint's secret
+    /// (`http-<id>`) may be sent only to URLs inside its base: the same scheme, host and port, and a path under the base
+    /// path on whole segments. Set from Swift only; JS cannot add an endpoint. Base URLs that don't parse are dropped.
+    public static func setHTTPEndpoints(_ bases: [String: String]) {
+        let parsed = bases.compactMapValues { URL(string: $0).flatMap(EndpointBase.init) }
+        httpBases.withLock { $0 = parsed }
+    }
+
+    /// Whether `url` can be an HTTP endpoint's base: `http` or `https`, a host, and no user, query or fragment.
+    public static func isEndpointBase(_ url: URL) -> Bool { EndpointBase(url) != nil }
+
     static func hosts(for provider: String) -> Set<String> {
         if provider == "custom" { return customHost.withLock { $0.map { [$0] } ?? [] } }
         if provider.hasPrefix(mcpPrefix) {
             let id = String(provider.dropFirst(mcpPrefix.count))
             return mcpHosts.withLock { $0[id].map { [$0] } ?? [] }
         }
+        // An endpoint's secret is pinned to more than a host: see `allows(_:url:)`.
+        if provider.hasPrefix(httpPrefix) { return [] }
         return allowedHosts[provider] ?? []
     }
 
+    /// Whether `provider`'s key may be sent with a request to `url`. Model providers, services and MCP servers: by host.
+    /// HTTP endpoints: inside the endpoint's base URL (`EndpointBase.contains`).
+    static func allows(_ provider: String, url: URL) -> Bool {
+        if provider.hasPrefix(httpPrefix) {
+            let id = String(provider.dropFirst(httpPrefix.count))
+            guard let base = httpBases.withLock({ $0[id] }) else { return false }
+            return base.contains(url)
+        }
+        guard let host = url.host?.lowercased() else { return false }
+        return hosts(for: provider).contains(host)
+    }
+
+    /// Replaces placeholders in a header value of a request to `url`; see `substitute(_:host:keys:used:)`.
+    static func substitute(_ value: String, url: URL, keys: ProviderKeySource?, used: inout Set<String>) throws -> String {
+        try substitute(value, target: url.host ?? "?", allowed: { allows($0, url: url) }, keys: keys, used: &used)
+    }
+
     /// Replaces placeholders in a header value and adds the services whose keys it used to `used`. Throws when a
-    /// placeholder targets a host it is not allowed for.
+    /// placeholder targets a host it is not allowed for. A host alone never allows an HTTP endpoint's secret.
     static func substitute(_ value: String, host: String?, keys: ProviderKeySource?, used: inout Set<String>) throws -> String {
+        try substitute(value, target: host ?? "?", allowed: { provider in
+            guard let host, !provider.hasPrefix(httpPrefix) else { return false }
+            return hosts(for: provider).contains(host.lowercased())
+        }, keys: keys, used: &used)
+    }
+
+    private static func substitute(
+        _ value: String, target: String, allowed: (String) -> Bool, keys: ProviderKeySource?, used: inout Set<String>
+    ) throws -> String {
         var result = value
         while let range = result.range(of: prefix) {
             let provider = String(result[range.upperBound...].prefix { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" })
-            guard let host, hosts(for: provider).contains(host.lowercased()) else {
-                throw FetchBridgeError.keyNotAllowed(provider: provider, host: host ?? "?")
+            guard allowed(provider) else {
+                throw FetchBridgeError.keyNotAllowed(provider: provider, host: target)
             }
             guard let key = keys?.apiKey(for: provider), !key.isEmpty else {
                 throw FetchBridgeError.missingKey(provider: provider)
@@ -80,7 +123,7 @@ public enum ProviderKeys {
         let decoded = query.replacingOccurrences(of: "pi-host-key%3A", with: prefix, options: .caseInsensitive)
         guard decoded.contains(prefix) else { return url }
         var keysUsed = Set<String>()
-        let substituted = try substitute(decoded, host: url.host, keys: EncodedKeys(keys: keys), used: &keysUsed)
+        let substituted = try substitute(decoded, url: url, keys: EncodedKeys(keys: keys), used: &keysUsed)
         components.percentEncodedQuery = substituted
         guard let result = components.url else { throw FetchBridgeError.badURL(url.absoluteString) }
         used.formUnion(keysUsed)
@@ -95,6 +138,58 @@ public enum ProviderKeys {
             allowed.remove(charactersIn: "&=+#")
             return keys?.apiKey(for: provider)?.addingPercentEncoding(withAllowedCharacters: allowed)
         }
+    }
+}
+
+/// An HTTP endpoint's base URL as the key check compares it: scheme, host, port and path segments.
+struct EndpointBase: Equatable {
+    let scheme: String
+    let host: String
+    let port: Int
+    let segments: [String]
+
+    /// Nil for a URL that is not plain `http` or `https` with a host, or that has a user, query or fragment.
+    init?(_ url: URL) {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let scheme = components.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              let host = components.host?.lowercased(), !host.isEmpty,
+              components.user == nil, components.password == nil, components.query == nil, components.fragment == nil,
+              let segments = Self.segments(components.percentEncodedPath)
+        else { return nil }
+        self.scheme = scheme
+        self.host = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        self.port = components.port ?? (scheme == "https" ? 443 : 80)
+        self.segments = segments
+    }
+
+    /// Whether `url` is inside the base: the same scheme, host and port, no user, and the base's path segments first.
+    func contains(_ url: URL) -> Bool {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.scheme?.lowercased() == scheme,
+              components.host?.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]")) == host,
+              (components.port ?? (scheme == "https" ? 443 : 80)) == port,
+              components.user == nil, components.password == nil,
+              let path = Self.segments(components.percentEncodedPath)
+        else { return false }
+        return path.count >= segments.count && Array(path.prefix(segments.count)) == segments
+    }
+
+    /// A percent-encoded path as decoded segments, with dot segments resolved (`.`, `..` and their encodings, such as
+    /// `%2e%2e`) and empty segments dropped. Nil when a segment doesn't decode, decodes to a slash or a backslash (a
+    /// server may read `%2F` as a separator), or `..` climbs above the root.
+    static func segments(_ percentEncodedPath: String) -> [String]? {
+        var result: [String] = []
+        for raw in percentEncodedPath.split(separator: "/", omittingEmptySubsequences: false) {
+            guard let segment = String(raw).removingPercentEncoding, !segment.contains("/"), !segment.contains("\\") else { return nil }
+            switch segment {
+            case "", ".": continue
+            case "..":
+                guard !result.isEmpty else { return nil }
+                result.removeLast()
+            default: result.append(segment)
+            }
+        }
+        return result
     }
 }
 
@@ -173,6 +268,8 @@ final class FetchBridge: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         let method: String
         let headers: [(String, String)]
         let body: Data?
+        /// False for `fetch`'s `redirect: "manual"` and `"error"`: JS gets the redirect response itself.
+        var followRedirects = true
     }
 
     private let lock = OSAllocatedUnfairLock(initialState: State())
@@ -181,6 +278,8 @@ final class FetchBridge: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         var ids: [Int: Int] = [:] // taskIdentifier -> fetch id
         /// Requests that carry a key, by fetch id: never tell JS a URL with the key in it.
         var keyed: [Int: Keyed] = [:]
+        /// Requests that follow no redirect, by fetch id.
+        var manual: Set<Int> = []
         /// Requests a `LocalHTTPService` is answering, by fetch id.
         var local: [Int: Task<Void, Never>] = [:]
     }
@@ -235,7 +334,7 @@ final class FetchBridge: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         do {
             urlRequest = URLRequest(url: try ProviderKeys.substitute(url: url, keys: keys, used: &used))
             for (name, value) in request.headers {
-                urlRequest.addValue(try ProviderKeys.substitute(value, host: url.host, keys: keys, used: &used), forHTTPHeaderField: name)
+                urlRequest.addValue(try ProviderKeys.substitute(value, url: url, keys: keys, used: &used), forHTTPHeaderField: name)
             }
             for service in used.sorted() { try usage?.record(service) }
         } catch {
@@ -250,6 +349,7 @@ final class FetchBridge: NSObject, URLSessionDataDelegate, @unchecked Sendable {
             $0.tasks[request.id] = task
             $0.ids[task.taskIdentifier] = request.id
             $0.keyed[request.id] = keyed
+            if !request.followRedirects { $0.manual.insert(request.id) }
         }
         task.resume()
     }
@@ -307,6 +407,7 @@ final class FetchBridge: NSObject, URLSessionDataDelegate, @unchecked Sendable {
             guard let task = state.tasks.removeValue(forKey: id) else { return nil }
             state.ids.removeValue(forKey: task.taskIdentifier)
             state.keyed.removeValue(forKey: id)
+            state.manual.remove(id)
             return task
         }
         task?.cancel()
@@ -329,8 +430,9 @@ final class FetchBridge: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         lock.withLock { $0.keyed[id] }
     }
 
-    /// A request that carries a key follows redirects only to its services' hosts; elsewhere JS gets the redirect
-    /// response itself. URLSession would copy the key's headers to the new request.
+    /// A request that carries a key follows redirects only to where its services' keys may go (for an HTTP endpoint:
+    /// inside its base URL); elsewhere JS gets the redirect response itself. URLSession would copy the key's headers to
+    /// the new request. A request sent with `redirect: "manual"` follows none.
     func urlSession(
         _ session: URLSession,
         task: URLSessionTask,
@@ -338,9 +440,16 @@ final class FetchBridge: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         newRequest request: URLRequest,
         completionHandler: @escaping (URLRequest?) -> Void
     ) {
-        guard let id = fetchID(task), let keyed = keyed(id) else { return completionHandler(request) }
-        let host = request.url?.host?.lowercased() ?? ""
-        completionHandler(keyed.services.allSatisfy { ProviderKeys.hosts(for: $0).contains(host) } ? request : nil)
+        guard let id = fetchID(task) else { return completionHandler(nil) }
+        if lock.withLock({ $0.manual.contains(id) }) { return completionHandler(nil) }
+        guard let keyed = keyed(id) else { return completionHandler(request) }
+        completionHandler(Self.mayFollow(keyed.services, to: request.url) ? request : nil)
+    }
+
+    /// Whether a keyed request may follow a redirect to `url`: every key it carries may go there.
+    static func mayFollow(_ services: Set<String>, to url: URL?) -> Bool {
+        guard let url else { return false }
+        return services.allSatisfy { ProviderKeys.allows($0, url: url) }
     }
 
     func urlSession(
@@ -382,6 +491,7 @@ final class FetchBridge: NSObject, URLSessionDataDelegate, @unchecked Sendable {
             guard let id = state.ids.removeValue(forKey: task.taskIdentifier) else { return nil }
             state.tasks.removeValue(forKey: id)
             state.keyed.removeValue(forKey: id)
+            state.manual.remove(id)
             return id
         }
         guard let id else { return }

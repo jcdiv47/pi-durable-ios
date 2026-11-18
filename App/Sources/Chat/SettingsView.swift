@@ -116,6 +116,14 @@ struct SettingsView: View {
                     }
                 }
                 .accessibilityIdentifier("settings.ssh")
+                NavigationLink {
+                    HTTPEndpointsSettingsView(store: store)
+                } label: {
+                    SettingsRow("HTTP Endpoints", systemImage: "network", tint: .indigo) {
+                        Text(store.httpEndpoints.isEmpty ? "None" : "\(store.httpEndpoints.count)")
+                    }
+                }
+                .accessibilityIdentifier("settings.http")
             } header: {
                 Text("Connections")
             } footer: {
