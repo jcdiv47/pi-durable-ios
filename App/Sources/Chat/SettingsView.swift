@@ -251,6 +251,9 @@ extension SettingsRow where Value == EmptyView {
 /// Settings › Default Model: the model and effort new conversations start with.
 struct ModelSettingsView: View {
     @Bindable var store: ChatStore
+    /// Checking pi.dev for newer model lists, then what came of it.
+    @State private var checking = false
+    @State private var checkResult: String?
     /// The efforts the default model supports; just `off` for one without reasoning, which gets no effort picker.
     private var defaultLevels: [String] { store.model(store.defaultModel)?.thinkingLevels ?? [] }
 
@@ -280,6 +283,23 @@ struct ModelSettingsView: View {
             } footer: {
                 Text("New conversations start with this model and effort, and keep them. Conversations already started don't change.")
             }
+            if store.models.contains(where: { !["scripted", "apple", "custom"].contains($0.provider) }) {
+                Section {
+                    Button {
+                        Task { await checkForModels() }
+                    } label: {
+                        HStack {
+                            Text("Check for New Models")
+                            Spacer()
+                            if checking { ProgressView() }
+                        }
+                    }
+                    .disabled(checking)
+                    .accessibilityIdentifier("settings.checkModels")
+                } footer: {
+                    Text(checkResult ?? "Pi asks pi.dev for newer model lists every few hours, as the pi command line does.")
+                }
+            }
             if store.models.count <= 1 {
                 Section {
                     NavigationLink("Add a Provider Key") { ProvidersSettingsView(store: store) }
@@ -290,6 +310,24 @@ struct ModelSettingsView: View {
         }
         .navigationTitle("Default Model")
         .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+extension ModelSettingsView {
+    private func checkForModels() async {
+        guard !checking else { return }
+        checking = true
+        let before = store.models.count
+        let failed = await store.refreshModelCatalogs()
+        checking = false
+        let added = store.models.count - before
+        if !failed.isEmpty {
+            checkResult = "Couldn't check \(failed.keys.sorted().joined(separator: ", ")). Try again later."
+        } else if added > 0 {
+            checkResult = added == 1 ? "1 new model." : "\(added) new models."
+        } else {
+            checkResult = "No new models."
+        }
     }
 }
 

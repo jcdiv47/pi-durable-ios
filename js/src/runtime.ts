@@ -22,6 +22,7 @@ import type { SearchOptions } from "./app/search.ts";
 import type { VoiceLineInput } from "./app/voice.ts";
 import { InstructionsExtension, instructionsSettings } from "./app/instructions.ts";
 import { McpHost, type McpServerConfig } from "./app/mcp.ts";
+import type { CatalogFile } from "./app/catalog.ts";
 import { type AppleModel, type CustomProvider, ModelSetup } from "./app/models.ts";
 import { waitWhileOffline } from "./app/network.ts";
 import { answerText, ScheduleTools, scheduleToolInfo } from "./app/schedule.ts";
@@ -63,6 +64,8 @@ export interface OpenOptions {
 	readonly instructions?: string;
 	/** Settings › Skills: the imported skills, as Swift parsed them. */
 	readonly skills?: readonly SkillInfo[];
+	/** pi.dev's newer model lists as JSON text (`CatalogFile`), saved from `modelCatalogs` events. */
+	readonly modelCatalogs?: string;
 	/** Milliseconds the kill test's tools take. */
 	readonly toolMs?: number;
 }
@@ -77,6 +80,8 @@ setup.models.streamSimple = waitWhileOffline(setup.models.streamSimple.bind(setu
 	onWaiting: (waiting) => emit({ type: "network", waiting }),
 });
 webSettings.keyed = (service) => setup.keyed.has(service);
+// Swift saves the lists and reads the picker again.
+setup.catalogs.onWrite = (file) => emit({ type: "modelCatalogs", json: JSON.stringify(file) });
 const approvals = new Approvals((pending) => emit({ type: "approvals", pending }));
 const mcp = new McpHost(undefined, (statuses) => emit({ type: "mcp", statuses }));
 approvals.dynamicDefaults = () => mcp.defaultPolicies();
@@ -96,7 +101,11 @@ function onWake(wake: Wake): void {
 async function open(options: OpenOptions): Promise<{ openMs: number; rootId: number; wake: Wake }> {
 	if (harness !== undefined) throw new Error("PiRuntime is already open");
 	const t0 = performance.now();
-	configureProviders(options.keyedProviders ?? [], options.customProvider);
+	setup.keyed = new Set(options.keyedProviders ?? []);
+	setup.setCustom(options.customProvider);
+	// The saved lists, before anything resumes: a conversation on a model only pi.dev listed must find it.
+	setup.catalogs.load(parseCatalogs(options.modelCatalogs));
+	await setup.models.refresh({ allowNetwork: false });
 	setup.setApple(options.appleModels ?? []);
 	intelligenceSettings.titles = options.intelligenceTitles ?? false;
 	if (options.policies !== undefined) approvals.policies = { ...defaultPolicies, ...options.policies };
@@ -173,6 +182,7 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 	harness.resume();
 	// Fresh tool lists; Swift caches what comes back (`mcp` events).
 	void mcp.refresh();
+	void refreshCatalogs(false);
 	return { openMs: performance.now() - t0, rootId: root.id, wake };
 }
 
@@ -182,10 +192,31 @@ function parseServers(json: string | undefined): McpServerConfig[] {
 	return Array.isArray(parsed) ? (parsed as McpServerConfig[]) : [];
 }
 
-/** Keys or the custom endpoint changed in Settings; applies from the next request. */
+/** Keys or the custom endpoint changed in Settings; applies from the next request. A newly keyed provider's list is fetched. */
 function configureProviders(keyedProviders: readonly string[], custom?: CustomProvider): void {
 	setup.keyed = new Set(keyedProviders);
 	setup.setCustom(custom);
+	void refreshCatalogs(false);
+}
+
+function parseCatalogs(json: string | undefined): CatalogFile {
+	if (json === undefined || json === "") return {};
+	try {
+		const parsed = JSON.parse(json) as unknown;
+		return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? (parsed as CatalogFile) : {};
+	} catch {
+		return {};
+	}
+}
+
+/**
+ * Asks pi.dev for newer model lists of the providers with keys: those older than `catalogInterval`, or all with
+ * `force`. Resolves to the providers that failed, with why; Swift reads the picker again on `modelCatalogs` events.
+ */
+async function refreshCatalogs(force: boolean): Promise<Record<string, string>> {
+	if (!native.networkOnline()) return force ? { "pi.dev": "The iPhone is offline" } : {};
+	const result = await setup.models.refresh({ allowNetwork: true, force });
+	return Object.fromEntries([...result.errors].map(([provider, error]) => [provider, error.message]));
 }
 
 function requireChat(): Chat {
@@ -403,6 +434,8 @@ const app = {
 		webSettings.provider = provider;
 	},
 	models: async () => setup.available(),
+	/** Settings › Default Model's refresh: newer model lists from pi.dev now. */
+	refreshModelCatalogs: async () => refreshCatalogs(true),
 	// Settings › MCP servers: the list changed (JSON text, as in `open`). Swift then calls `refreshMcp` for the server.
 	setMcpServers: async (json: string) => mcp.setServers(parseServers(json)),
 	/** Lists the tools of every enabled server (or those in `ids`) again; returns their statuses. */

@@ -309,7 +309,8 @@ final class ChatStore {
                 instructions: instructions,
                 skills: skills,
                 appleModels: AppleIntelligence.models(),
-                intelligenceTitles: intelligenceTitles
+                intelligenceTitles: intelligenceTitles,
+                modelCatalogs: ModelCatalogFile.load()
             ))
             self.harness = harness
             conversations = try await harness.call("PiRuntime.conversations")
@@ -389,6 +390,10 @@ final class ChatStore {
             Task { await refreshTasks() }
         case "mcp":
             if let event = try? decoder.decode(MCPEvent.self, from: data) { mcpChanged(event.statuses) }
+        case "modelCatalogs":
+            guard let event = try? decoder.decode(ModelCatalogsEvent.self, from: data) else { return }
+            do { try ModelCatalogFile.save(event.json) } catch { report("save model lists", error) }
+            Task { await refreshModels() }
         case "network":
             guard let event = try? decoder.decode(NetworkEvent.self, from: data) else { return }
             let started = networkWaits == 0 && event.waiting > 0
@@ -415,6 +420,7 @@ final class ChatStore {
     private struct WakeEvent: Decodable { let wake: BackgroundWork.Wake }
     private struct MCPEvent: Decodable { let statuses: [MCPStatus] }
     private struct NetworkEvent: Decodable { let waiting: Int }
+    private struct ModelCatalogsEvent: Decodable { let json: String }
 
     // MARK: Conversations
 
@@ -797,6 +803,21 @@ final class ChatStore {
     func applySearchProvider() async {
         guard let harness else { return }
         do { try await harness.perform("PiRuntime.setSearchProvider", [searchProvider]) } catch { report("search provider", error) }
+    }
+
+    /// Settings › Default Model's refresh: asks pi.dev for newer model lists of the providers with keys now. The
+    /// picker follows on `modelCatalogs` events. Returns the providers whose list failed, with why.
+    func refreshModelCatalogs() async -> [String: String] {
+        guard let harness else { return [:] }
+        do {
+            let failed: [String: String] = try await harness.call("PiRuntime.refreshModelCatalogs")
+            for (provider, error) in failed { diagnostics.record("warn", "models", "\(provider): \(error)") }
+            await refreshModels()
+            return failed
+        } catch {
+            report("model lists", error)
+            return ["pi.dev": error.localizedDescription]
+        }
     }
 
     func refreshModels() async {

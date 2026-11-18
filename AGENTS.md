@@ -95,7 +95,10 @@ JavaScriptCore runtime.
 - `js/`: TypeScript run inside JSC. `bun build.ts` bundles `src/runtime.ts` (the app's harness
   bootstrap) and `src/conformance.ts` (test suites) into `App/Resources/` and the PiRuntime test
   resources. `src/app/` is the chat API Swift calls (`PiRuntime.*`): conversations, display frames,
-  providers (`models.ts`, including the keyless `apple` provider; `network.ts`: a model request that fails while the
+  providers (`models.ts`, including the keyless `apple` provider; `catalog.ts`: pi.dev's newer model lists, as
+  `pi update --models` gets them, added to pi-ai's built-in ones for providers with keys, kept by Swift in Application
+  Support `model-catalogs.json` and loaded before the Harness opens, refreshed every 4 hours and from Settings › Default
+  Model; only models whose API and endpoint a built-in model of that provider has; `network.ts`: a model request that fails while the
   phone is offline waits for the network and is sent again, instead of using up Pi's retries), the Apple tool stubs, the UI tools (`surfaces.ts`: specs in Pi documents, JSON Patch), scheduled tasks
   and `notify_schedule` (`schedule.ts`: day and week intervals keep their local time across daylight saving changes; a
   run that answers `NO_REPLY` posts no notification), the web tools (`web.ts`: `web_search` through DeepSeek or Brave,
