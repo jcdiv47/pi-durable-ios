@@ -13,6 +13,7 @@ import {
 	type McpToolDefinition,
 	OAUTH_REDIRECT_URL,
 	outputOf,
+	shorten,
 } from "../src/app/mcp.ts";
 import { Buffer, sha256 } from "../src/host/pi-mcp-shims.ts";
 
@@ -232,6 +233,15 @@ const context = { abortSignal: undefined } as never;
 export function createMcpCases(t: StorageConformanceAssertions): Case[] {
 	return [
 		{
+			name: "long descriptions end at a paragraph, line or sentence that fits",
+			async run() {
+				t.strictEqual(shorten("  short  ", 100), "short");
+				t.strictEqual(shorten(`${"a".repeat(60)}\n\n${"b".repeat(60)}`, 100), `${"a".repeat(60)} …`);
+				t.strictEqual(shorten(`${"a".repeat(60)}. ${"b".repeat(60)}`, 100), `${"a".repeat(60)}. …`);
+				t.strictEqual(shorten("x".repeat(200), 100), `${"x".repeat(99)}…`);
+			},
+		},
+		{
 			name: "connects, pages tools/list, reads SSE, answers a ping, and sends session, version and key placeholder",
 			async run() {
 				const fake = new FakeServer();
@@ -314,13 +324,17 @@ export function createMcpCases(t: StorageConformanceAssertions): Case[] {
 				const reports: McpStatus[][] = [];
 				const host = new McpHost((extension) => installed.push((extension.tools ?? []).map((tool) => tool.name)), (s) => reports.push(s), fake.fetch);
 				host.setServers([{ ...server(), tools: [tools[0]!] }, server({ id: "off", enabled: false, tools })]);
-				t.deepEqual(installed.at(-1), ["mcp__ha__get_state"]);
+				t.deepEqual(installed.at(-1), ["mcp__ha__get_state", "tool_search"]);
 				const statuses = await host.refresh();
 				t.deepEqual(statuses.map((s) => [s.id, s.state, s.tools?.length]), [["ha", "ok", 3]]);
-				t.deepEqual(installed.at(-1), ["mcp__ha__get_state", "mcp__ha__turn_on", "mcp__ha__send"]);
+				t.deepEqual(installed.at(-1), ["mcp__ha__get_state", "mcp__ha__turn_on", "mcp__ha__send", "tool_search"]);
 				t.deepEqual(host.defaultPolicies(), { mcp__ha__get_state: "auto", mcp__ha__turn_on: "ask", mcp__ha__send: "ask" });
 				const registered = new Map((host.extension.tools ?? []).map((tool) => [tool.name, tool]));
 				t.strictEqual(registered.get("mcp__ha__get_state")!.replay, "safe");
+				// Offered only once tool_search loads them.
+				t.ok(["mcp__ha__get_state", "mcp__ha__turn_on", "mcp__ha__send"].every((name) => registered.get(name)!.deferred === true));
+				t.strictEqual(registered.get("tool_search")!.deferred, undefined);
+				t.strictEqual(registered.get("mcp__ha__get_state")!.description, "Get state\nRead an entity's state\n(MCP: Home Assistant)");
 				t.strictEqual(registered.get("mcp__ha__turn_on")!.replay, "safe"); // idempotent
 				t.strictEqual(registered.get("mcp__ha__send")!.replay, "unsafe");
 				// A schema Pi cannot compile (a $ref to nothing) becomes any object, so the tool still works.
@@ -333,7 +347,8 @@ export function createMcpCases(t: StorageConformanceAssertions): Case[] {
 				await rejects(t, registered.get("mcp__ha__get_state")!.execute({ entity: "sun.sun" }, noApi, context));
 				t.strictEqual(reports.at(-1)!.find((s) => s.id === "ha")!.state, "unreachable");
 				const section = await host.extension.sections![0]!.render({} as never, context);
-				t.ok(section!.includes("Use entity IDs.") && section!.includes("mcp__ha__"), section);
+				t.ok(section!.includes("Use entity IDs.") && section!.includes("mcp__ha__") && section!.includes("tool_search"), section);
+				t.ok(section!.includes("get_state, turn_on, send"), section);
 			},
 		},
 		{
