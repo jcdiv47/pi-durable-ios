@@ -177,6 +177,8 @@ final class ChatStore {
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private var startTask: Task<Void, Never>?
     private var receivingShares = false
+    /// A default changed in Settings before there was an unused conversation to take it.
+    @ObservationIgnored private var defaultsPending = false
     @ObservationIgnored private(set) var background: BackgroundWork!
     @ObservationIgnored private(set) var notifications: Notifications!
     @ObservationIgnored private(set) var activities: RunActivities!
@@ -469,7 +471,7 @@ final class ChatStore {
     /// Opens a conversation with `text` in its composer, to edit and send: the unused one if there is one, else a new one.
     /// Empty pages (no scheduled tasks, no alarms) use it to show what to ask.
     func compose(_ text: String) async {
-        var id = unusedConversation?.id
+        var id = await openUnusedConversation()?.id
         if id == nil { id = await newConversation()?.id }
         guard let id else { return }
         drafts[id] = Draft(text: text, attachments: [])
@@ -478,10 +480,13 @@ final class ChatStore {
 
     func newConversation() async -> ConversationMeta? {
         guard let harness else { return nil }
+        let model = defaultModel, thinking = defaultThinking
         do {
             let meta: ConversationMeta = try await harness.call(
-                "PiRuntime.createConversation", [defaultModel.provider, defaultModel.modelId, defaultThinking]
+                "PiRuntime.createConversation", [model.provider, model.modelId, thinking]
             )
+            // It starts with the defaults; a change made while it was created still waits.
+            if defaultModel == model && defaultThinking == thinking { defaultsPending = false }
             watch(meta.id)
             return meta
         } catch {
@@ -501,11 +506,26 @@ final class ChatStore {
         }
     }
 
-    /// A new default from Settings reaches the unused conversation, so the compose button opens one with it.
+    /// A new default from Settings reaches the unused conversation, so the compose button opens one with it. One that
+    /// comes before the conversation list waits for `openUnusedConversation`.
     private func applyDefaultsToUnused() {
-        guard let id = unusedConversation?.id else { return }
+        guard let id = unusedConversation?.id else {
+            defaultsPending = true
+            return
+        }
+        defaultsPending = false
         let model = defaultModel, thinking = defaultThinking
         Task { await setModel(id, model, thinking: thinking) }
+    }
+
+    /// The unused conversation for the compose button, with a default from Settings it has not taken yet.
+    func openUnusedConversation() async -> ConversationMeta? {
+        guard let unused = unusedConversation else { return nil }
+        if defaultsPending {
+            defaultsPending = false
+            await setModel(unused.id, defaultModel, thinking: defaultThinking)
+        }
+        return unused
     }
 
     /// `skill`: one picked from the "/" menu; JS reads its body now and sends it first.

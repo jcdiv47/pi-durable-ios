@@ -167,10 +167,10 @@ struct ConversationListView: View {
 
     /// Opens the unused conversation if there is one; a new one stays out of the list until something is sent in it.
     private func compose() {
-        if let unused = store.unusedConversation {
-            path.append(.conversation(unused.id))
-        } else {
-            Task { if let meta = await store.newConversation() { path.append(.conversation(meta.id)) } }
+        Task {
+            var meta = await store.openUnusedConversation()
+            if meta == nil { meta = await store.newConversation() }
+            if let meta { path.append(.conversation(meta.id)) }
         }
     }
 
