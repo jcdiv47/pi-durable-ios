@@ -1,0 +1,172 @@
+/* Pi's web cards: base styles for plain HTML and the <pi-*> components. The tokens (--pi-*) come from PiDesign.css,
+   which the app puts before this sheet; light and dark follow the phone through prefers-color-scheme. */
+
+html {
+	font: -apple-system-body;
+	-webkit-text-size-adjust: 100%;
+	-webkit-tap-highlight-color: transparent;
+	color: var(--pi-text);
+	background: transparent;
+}
+body {
+	margin: 0;
+	padding: 1px 0;
+	font-size: 0.94em;
+	line-height: 1.38;
+	background: transparent;
+	overflow-wrap: anywhere;
+}
+body > * + * { margin-top: var(--pi-space-m); }
+* { box-sizing: border-box; }
+h1, h2, h3, h4 { margin: 0.6em 0 0.3em; line-height: 1.2; }
+h1 { font-size: 1.4em; } h2 { font-size: 1.2em; } h3 { font-size: 1.05em; }
+p { margin: 0.4em 0; }
+a { color: var(--pi-accent); text-decoration: none; }
+small, .pi-secondary { color: var(--pi-secondary); }
+code, pre, kbd { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.88em; }
+img, svg, video, canvas { max-width: 100%; }
+hr { border: 0; border-top: 1px solid var(--pi-hairline); margin: var(--pi-space-m) 0; }
+
+/* Plain tables and buttons look native too. */
+table:not(.pi-table) { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+table:not(.pi-table) th, table:not(.pi-table) td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--pi-hairline); }
+table:not(.pi-table) th { color: var(--pi-secondary); font-weight: 600; }
+button, .pi-btn {
+	font: inherit; font-weight: 600; border: 0; cursor: pointer;
+	padding: 10px 16px; border-radius: 999px;
+	background: var(--pi-accent); color: #fff;
+	transition: transform 0.12s ease, opacity 0.2s ease;
+}
+button:active, .pi-btn:active { transform: scale(0.97); }
+button:disabled, .pi-btn:disabled { opacity: 0.45; }
+button.pi-plain, .pi-btn.pi-plain { background: var(--pi-sunken); color: var(--pi-text); box-shadow: inset 0 0 0 1px var(--pi-hairline); }
+input, select, textarea { font: inherit; color: inherit; }
+
+/* Surfaces */
+.pi-surface, pi-card, pi-form {
+	display: block;
+	background: var(--pi-surface);
+	border-radius: var(--pi-radius-card);
+	box-shadow: inset 0 0 0 1px var(--pi-hairline);
+	padding: var(--pi-space-l);
+}
+pi-card > * + *, pi-form form > * + * { margin-top: var(--pi-space-m); }
+.pi-card-head { display: grid; gap: 2px; }
+.pi-kicker { font-size: 0.72em; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--pi-accent); }
+.pi-card-title { font-size: 1.18em; font-weight: 650; }
+.pi-card-subtitle { color: var(--pi-secondary); font-size: 0.92em; }
+.pi-card-body > * + * { margin-top: var(--pi-space-m); }
+.pi-card-body > :first-child { margin-top: 0; }
+
+/* Stats */
+pi-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: var(--pi-space-s); }
+pi-stat { display: block; background: var(--pi-sunken); border-radius: var(--pi-radius-control); padding: 10px 12px; }
+.pi-stat-label { font-size: 0.78em; color: var(--pi-secondary); font-weight: 600; }
+.pi-stat-value { font-size: 1.55em; font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.pi-stat-delta { font-size: 0.8em; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--pi-secondary); }
+.pi-stat-delta.up { color: var(--pi-success); } .pi-stat-delta.down { color: var(--pi-danger); }
+
+/* Badges */
+pi-badge {
+	display: inline-flex; align-items: center; gap: 4px;
+	padding: 2px 8px; border-radius: 999px;
+	font-size: 0.78em; font-weight: 650;
+	background: var(--pi-sunken); color: var(--pi-secondary); box-shadow: inset 0 0 0 1px var(--pi-hairline);
+}
+pi-badge[tone="accent"] { color: var(--pi-accent); background: color-mix(in srgb, var(--pi-accent) 14%, transparent); box-shadow: none; }
+pi-badge[tone="success"] { color: var(--pi-success); background: color-mix(in srgb, var(--pi-success) 14%, transparent); box-shadow: none; }
+pi-badge[tone="warning"] { color: var(--pi-warning); background: color-mix(in srgb, var(--pi-warning) 16%, transparent); box-shadow: none; }
+pi-badge[tone="danger"] { color: var(--pi-danger); background: color-mix(in srgb, var(--pi-danger) 14%, transparent); box-shadow: none; }
+
+/* Progress */
+pi-progress { display: block; }
+.pi-progress-head { display: flex; justify-content: space-between; font-size: 0.85em; margin-bottom: 6px; }
+.pi-progress-head span:last-child { color: var(--pi-secondary); font-variant-numeric: tabular-nums; }
+.pi-progress-track { height: 6px; border-radius: 999px; background: var(--pi-sunken); overflow: hidden; box-shadow: inset 0 0 0 1px var(--pi-hairline); }
+.pi-progress-fill { height: 100%; border-radius: 999px; background: var(--pi-accent); transition: width 0.4s ease; }
+
+/* Charts */
+pi-chart { display: block; position: relative; }
+pi-chart svg { display: block; width: 100%; overflow: visible; }
+pi-chart .pi-grid { stroke: var(--pi-hairline); stroke-width: 1; }
+pi-chart .pi-axis { fill: var(--pi-tertiary); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+pi-chart .pi-guide { stroke: var(--pi-hairline-strong); stroke-width: 1; }
+.pi-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; font-size: 0.8em; color: var(--pi-secondary); }
+.pi-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; vertical-align: 0; }
+.pi-tip {
+	position: absolute; top: 0; pointer-events: none; z-index: 2;
+	background: var(--pi-raised); color: var(--pi-text);
+	border-radius: var(--pi-radius-chip); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12), inset 0 0 0 1px var(--pi-hairline);
+	padding: 6px 9px; font-size: 0.78em; font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.pi-tip b { display: block; margin-bottom: 2px; }
+
+/* Tables */
+pi-table { display: block; }
+.pi-table-wrap { overflow-x: auto; border-radius: var(--pi-radius-control); box-shadow: inset 0 0 0 1px var(--pi-hairline); background: var(--pi-surface); }
+table.pi-table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 0.92em; }
+.pi-table th { background: var(--pi-sunken); color: var(--pi-secondary); font-weight: 600; text-align: left; padding: 8px 12px; white-space: nowrap; cursor: pointer; user-select: none; }
+.pi-table th[data-sort]::after { content: attr(data-sort); margin-left: 4px; color: var(--pi-accent); }
+.pi-table td { padding: 8px 12px; border-top: 1px solid var(--pi-hairline); }
+.pi-table .num { text-align: right; }
+
+/* Lists */
+pi-list { display: block; border-radius: var(--pi-radius-control); background: var(--pi-surface); box-shadow: inset 0 0 0 1px var(--pi-hairline); overflow: hidden; }
+.pi-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; }
+.pi-row + .pi-row { border-top: 1px solid var(--pi-hairline); }
+.pi-row[data-tap]:active { background: var(--pi-sunken); }
+.pi-row-main { flex: 1; min-width: 0; }
+.pi-row-title { font-weight: 550; }
+.pi-row-subtitle { font-size: 0.85em; color: var(--pi-secondary); }
+.pi-row-trailing { color: var(--pi-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* Tabs */
+pi-tabs { display: block; }
+.pi-segments { display: flex; padding: 2px; border-radius: 999px; background: var(--pi-sunken); box-shadow: inset 0 0 0 1px var(--pi-hairline); margin-bottom: var(--pi-space-m); }
+.pi-segments button { flex: 1; padding: 6px 10px; background: transparent; color: var(--pi-secondary); font-size: 0.88em; }
+.pi-segments button[aria-selected="true"] { background: var(--pi-raised); color: var(--pi-text); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), inset 0 0 0 1px var(--pi-hairline); }
+pi-tab { display: block; }
+pi-tab[hidden] { display: none; }
+
+/* Code and diffs */
+pi-code, pi-diff { display: block; border-radius: var(--pi-radius-control); background: var(--pi-surface); box-shadow: inset 0 0 0 1px var(--pi-hairline); overflow: hidden; }
+.pi-code-head { display: flex; justify-content: space-between; padding: 6px 12px; background: var(--pi-sunken); border-bottom: 1px solid var(--pi-hairline); font: 0.78em ui-monospace, "SF Mono", Menlo, monospace; color: var(--pi-secondary); }
+.pi-code-head .add { color: var(--pi-success); font-weight: 700; } .pi-code-head .del { color: var(--pi-danger); font-weight: 700; margin-left: 6px; }
+pi-code pre, pi-diff pre { margin: 0; padding: 10px 12px; overflow-x: auto; font-size: 0.82em; line-height: 1.45; }
+pi-diff pre { padding: 6px 0; }
+pi-diff .l { display: block; padding: 0 12px; white-space: pre; }
+pi-diff .l.add { background: var(--pi-added); } pi-diff .l.del { background: var(--pi-removed); }
+pi-diff .l.hunk { color: var(--pi-accent); } pi-diff .l.meta { color: var(--pi-secondary); }
+
+/* Forms and inputs */
+pi-form form { margin: 0; }
+.pi-field { display: grid; gap: 6px; }
+.pi-field > .pi-label { font-size: 0.82em; font-weight: 600; color: var(--pi-secondary); display: flex; justify-content: space-between; }
+.pi-field > .pi-label output { color: var(--pi-text); font-variant-numeric: tabular-nums; }
+.pi-input {
+	width: 100%; padding: 10px 12px; border: 0; outline: 0;
+	border-radius: var(--pi-radius-control); background: var(--pi-raised);
+	box-shadow: inset 0 0 0 1px var(--pi-hairline-strong);
+	-webkit-appearance: none; appearance: none; min-height: 42px;
+}
+.pi-input:focus { box-shadow: inset 0 0 0 2px var(--pi-accent); }
+.pi-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.pi-chip { position: relative; }
+.pi-chip input { position: absolute; opacity: 0; pointer-events: none; }
+.pi-chip span {
+	display: inline-block; padding: 7px 14px; border-radius: 999px; font-size: 0.92em; font-weight: 550;
+	background: var(--pi-raised); box-shadow: inset 0 0 0 1px var(--pi-hairline-strong);
+	transition: background 0.15s ease, color 0.15s ease, transform 0.12s ease;
+}
+.pi-chip:active span { transform: scale(0.96); }
+.pi-chip input:checked + span { background: var(--pi-accent); color: #fff; box-shadow: none; }
+.pi-chip input:disabled + span { opacity: 0.5; }
+input[type="range"].pi-range { width: 100%; accent-color: var(--pi-accent); height: 28px; }
+.pi-toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.pi-toggle input { -webkit-appearance: none; appearance: none; width: 51px; height: 31px; border-radius: 999px; background: var(--pi-hairline-strong); position: relative; transition: background 0.2s ease; flex: none; margin: 0; }
+.pi-toggle input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%; background: #fff; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2); transition: transform 0.2s ease; }
+.pi-toggle input:checked { background: var(--pi-success); }
+.pi-toggle input:checked::after { transform: translateX(20px); }
+.pi-actions { display: flex; justify-content: flex-end; gap: 8px; }
+pi-form[data-sent] .pi-actions button { background: var(--pi-success); }
+pi-button { display: inline-block; }

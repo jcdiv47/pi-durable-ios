@@ -38,6 +38,7 @@ import { readSkill, skillContent } from "./skills.ts";
 import { type Spend, spendBetween, spendOf, type SpendTotals } from "./usage.ts";
 import { VoiceEntry, type VoiceLine, type VoiceLineInput } from "./voice.ts";
 import { PublishedDoc, SurfacesDoc, ValuesDoc } from "./surfaces.ts";
+import { cardValueSummary, WebCardsDoc } from "./webui.ts";
 import { complete, entriesOf, readView, transcriptOf } from "./view.ts";
 import { hostCall } from "../host/hostcall.ts";
 
@@ -90,6 +91,23 @@ function trimRequests(items: Record<string, { at: number }>): void {
 }
 
 /** An input from outside the chat: `origin` labels it in the transcript ("Siri", "Widget: Morning"). */
+/**
+ * What the user did in a web card (`show_ui`): submitted a value, or tapped something that sends a prompt. Swift derives
+ * `requestId` from the card, its version and the value, so a repeated tap or a resent message is one input.
+ */
+export type CardInput = {
+	conversationId: number;
+	cardId: string;
+	requestId: string;
+	kind: "submit" | "prompt";
+	/** For `submit`: the value, as the page passed it. */
+	value?: JsonValue;
+	/** For `prompt`: the text to send. */
+	text?: string;
+	/** What the bubble shows for a submission: the page's label, or a summary of the value. */
+	label?: string;
+};
+
 export type OutsideInput = {
 	text: string;
 	requestId: string;
@@ -343,6 +361,7 @@ export class Chat {
 		attachments: readonly InputAttachment[] = [],
 		skill?: string,
 		voice?: string,
+		card?: { id: string; title: string; label: string },
 	): Promise<Submission> {
 		const conversation = await this.#conversation(id);
 		const ran = skill === undefined ? undefined : await readSkill(skill);
@@ -352,6 +371,7 @@ export class Chat {
 			...(attachments.length === 0 ? {} : { attachments: displayAttachments(attachments) }),
 			...(ran === undefined ? {} : { skill: ran.name }),
 			...(voice === undefined ? {} : { voice }),
+			...(card === undefined ? {} : { card: { id: card.id, title: card.title }, text: card.label }),
 		};
 		const content =
 			ran !== undefined
@@ -381,6 +401,33 @@ export class Chat {
 		await this.#changed();
 		if (firstTitle !== undefined && intelligenceSettings.titles && ran === undefined) void this.#writeTitle(id, text, firstTitle);
 		return submission;
+	}
+
+	/** A web card's submission or prompt, as the user's message in the card's conversation. */
+	async cardInput(input: CardInput): Promise<{ submissionId: number }> {
+		const doc = await this.harness.snapshot(WebCardsDoc, input.conversationId as never, context);
+		const card = doc?.items[input.cardId];
+		if (card === undefined) throw new Error(`No card ${input.cardId} in conversation ${input.conversationId}`);
+		const origin = `Card: ${card.title}`;
+		if (input.kind === "prompt") {
+			const text = (input.text ?? "").trim();
+			if (text === "") throw new Error("A card prompt needs text");
+			const submission = await this.#submit(input.conversationId, text, input.requestId, origin, [], undefined, undefined, {
+				id: card.id,
+				title: card.title,
+				label: text,
+			});
+			return { submissionId: submission.id };
+		}
+		const value = input.value ?? null;
+		const label = input.label?.trim() || cardValueSummary(value);
+		const text = `Submitted from card ${card.id} ("${card.title}", version ${card.version}):\n${JSON.stringify(value, null, 1)}`;
+		const submission = await this.#submit(input.conversationId, text, input.requestId, origin, [], undefined, undefined, {
+			id: card.id,
+			title: card.title,
+			label,
+		});
+		return { submissionId: submission.id };
 	}
 
 	/**

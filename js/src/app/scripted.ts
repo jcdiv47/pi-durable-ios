@@ -6,6 +6,8 @@
 //   "slow …"      → a long answer, for abort
 //   "widget …"    → create_surface (a morning widget), then publish_surface (asks for approval)
 //   "card …"      → create_surface (a checklist card shown in the chat)
+//   "webui …"     → show_ui with a chart, a table and a form; "webupdate <id>" → update_ui of that card
+//   "webauto …"   → show_ui whose script tries to send, fetch and open without a tap (the sandbox must stop all of it)
 //   "repair …"    → create_surface with an error (a Ring without goal), then patch_surface to fix it
 //   "schedule …"  → schedule_task "nudge" in 3 seconds, once, with a notification; its run calls set_value nudge
 //   "quiet …"     → schedule_task "quiet" in 3 seconds, once, with a notification; its run answers NO_REPLY
@@ -70,6 +72,33 @@ const widgetSpec = {
 		{ c: "Quote", text: "Small steps count.", emphasis: "secondary", families: ["systemMedium"] },
 	],
 };
+
+/** The "webui" cue's card: the components a real answer would use, so the simulator and tests see them all. */
+const webCardHtml = `<pi-card kicker="Lisbon" title="Your trip" subtitle="Weather and prices for June">
+<pi-stats><pi-stat label="Avg high" value="26°" delta="+2°" trend="up"></pi-stat><pi-stat label="Flights" value="$412" delta="-8%" trend="down"></pi-stat></pi-stats>
+<pi-chart type="area" unit="°" data='{"labels":["Mon","Tue","Wed","Thu","Fri","Sat","Sun"],"series":[{"name":"High","values":[24,25,27,26,28,27,25]},{"name":"Low","values":[16,17,18,18,19,18,17]}]}'></pi-chart>
+<pi-table data='[{"hotel":"Alfama Loft","price":189,"rating":4.7},{"hotel":"Baixa House","price":142,"rating":4.4},{"hotel":"LX Factory","price":121,"rating":4.2}]'></pi-table>
+</pi-card>
+<pi-form submit="Plan it">
+<pi-date name="from" label="From" type="date" value="2026-06-03"></pi-date>
+<pi-slider name="nights" label="Nights" min="2" max="10" value="4"></pi-slider>
+<pi-choice name="pace" label="Pace" options='["Slow","Balanced","Packed"]' value="Balanced"></pi-choice>
+<pi-toggle name="car" label="Rent a car"></pi-toggle>
+</pi-form>`;
+
+/** The "webauto" cue's card: a page that tries to act on its own. Each line says what got through. */
+const webAutoHtml = `<pi-card title="Sandbox check"><p id="out">Running…</p></pi-card>
+<script>
+const out = [];
+const say = (line) => { out.push(line); document.getElementById("out").textContent = out.join(" · "); };
+pi.prompt("UNTOUCHED PROMPT");
+pi.submit({ untouched: true });
+setTimeout(() => pi.prompt("LATE PROMPT"), 1500);
+fetch("https://example.com/").then(() => say("fetch: got through"), () => say("fetch: blocked"));
+const img = new Image(); img.onload = () => say("image: got through"); img.onerror = () => say("image: blocked"); img.src = "https://example.com/x.png";
+say(typeof RTCPeerConnection === "undefined" ? "webrtc: gone" : "webrtc: present");
+try { localStorage.setItem("k", "v"); say("storage: works"); } catch (e) { say("storage: blocked"); }
+</script>`;
 
 const habits = [{ title: "Water" }, { title: "Walk" }, { title: "Read" }];
 
@@ -214,6 +243,15 @@ export function createScriptedModel() {
 				return fauxAssistantMessage(fauxToolCall("create_surface", { spec: choresSpec as never }), { stopReason: "toolUse" });
 			case "card":
 				return fauxAssistantMessage(fauxToolCall("create_surface", { spec: cardSpec as never }), { stopReason: "toolUse" });
+			case "webui":
+				return fauxAssistantMessage(fauxToolCall("show_ui", { title: "Trip planner", html: webCardHtml }), { stopReason: "toolUse" });
+			case "webauto":
+				return fauxAssistantMessage(fauxToolCall("show_ui", { title: "Sandbox check", html: webAutoHtml }), { stopReason: "toolUse" });
+			case "webupdate":
+				return fauxAssistantMessage(
+					fauxToolCall("update_ui", { id: prompt.split(/\s+/)[1] ?? "w1", title: "Trip planned", html: "<pi-card title=\"Booked\"><p>See you in Lisbon.</p></pi-card>" }),
+					{ stopReason: "toolUse" },
+				);
 			case "repair":
 				return fauxAssistantMessage(
 					fauxToolCall("create_surface", { spec: { surface: "card", slots: [{ c: "Ring", value: 5, label: "Glasses" }] } as never }),

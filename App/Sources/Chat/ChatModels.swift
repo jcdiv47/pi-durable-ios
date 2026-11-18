@@ -61,6 +61,10 @@ struct DisplayItem: Decodable, Identifiable, Hashable {
     var origin: String?
     /// A surface a UI tool made or changed (`DisplaySurface` in display.ts).
     var surface: SurfaceRef?
+    /// A web card `show_ui` or `update_ui` drew, at this version (`DisplayWebCard` in webui.ts).
+    var webCard: WebCardRef?
+    /// The web card a user message came from (`card` in `InputData`): the text is what the user picked.
+    var card: CardOrigin?
     /// The parsed output of a tool the chat draws a native card for (`cardTools` in display.ts).
     var data: JSONValue?
     /// What came with a user message (`DisplayAttachment` in attachments.ts).
@@ -179,6 +183,31 @@ struct TakenBack: Decodable {
 }
 
 /// One version of a surface, as a UI tool result or `PiRuntime.surfaces` carries it.
+/// A web card: agent-written HTML drawn in a sandboxed web view (`WebCardView`).
+struct WebCardRef: Decodable, Hashable, Identifiable {
+    let conversationId: Int
+    let id: String
+    let version: Int
+    let title: String
+    let html: String
+}
+
+/// `CardInput` in chat.ts.
+struct CardInputArguments: Encodable {
+    let conversationId: Int
+    let cardId: String
+    let requestId: String
+    let kind: String
+    let value: JSONValue?
+    let text: String?
+    let label: String?
+}
+
+struct CardOrigin: Decodable, Hashable {
+    let id: String
+    let title: String
+}
+
 struct SurfaceRef: Decodable, Hashable, Identifiable {
     struct Published: Decodable, Hashable {
         let publishedId: String
@@ -359,6 +388,8 @@ final class ConversationState {
     private(set) var busySince: Date?
     /// For each surface ID, the call whose result holds its newest version: the transcript draws it there only.
     private(set) var latestSurfaceCall: [String: String] = [:]
+    /// The same for web cards: an older version points to the newer one below.
+    private(set) var latestWebCardCall: [String: String] = [:]
 
     init(id: Int) { self.id = id }
 
@@ -367,12 +398,14 @@ final class ConversationState {
             items = frame.items
             results = [:]
             latestSurfaceCall = [:]
+            latestWebCardCall = [:]
         } else {
             items.append(contentsOf: frame.items)
         }
         for item in frame.items where item.kind == .toolResult {
             if let callId = item.callId { results[callId] = item }
             if let surface = item.surface, let callId = item.callId { latestSurfaceCall[surface.id] = callId }
+            if let card = item.webCard, let callId = item.callId { latestWebCardCall[card.id] = callId }
         }
         if !frame.live.busy {
             busySince = nil

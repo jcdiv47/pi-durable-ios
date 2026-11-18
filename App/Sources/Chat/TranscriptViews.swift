@@ -240,6 +240,7 @@ private func originSymbol(_ origin: String) -> String {
     if origin.hasPrefix("Scheduled") || origin.hasPrefix("Run now") { return "clock.arrow.circlepath" }
     if origin.hasPrefix("Notification") { return "bell" }
     if origin.hasPrefix("Share") { return "square.and.arrow.up" }
+    if origin.hasPrefix("Card") { return "rectangle.on.rectangle" }
     return "waveform"
 }
 
@@ -316,7 +317,15 @@ struct WorkRow: View {
     }
 
     @ViewBuilder private func card(_ call: ToolCallItem, _ result: DisplayItem) -> some View {
-        if let surface = result.surface {
+        if let webCard = result.webCard {
+            if state.latestWebCardCall[webCard.id].map({ $0 == call.id }) ?? true {
+                WebCardView(card: webCard, store: store)
+            } else {
+                Label("\(webCard.title), version \(webCard.version); newer below", systemImage: "rectangle.on.rectangle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } else if let surface = result.surface {
             if store.states[surface.conversationId]?.latestSurfaceCall[surface.id].map({ $0 == call.id }) ?? true {
                 SurfaceStrip(surface: surface, store: store)
             } else {

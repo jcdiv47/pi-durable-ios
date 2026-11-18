@@ -20,7 +20,15 @@ export type DisplayAttachment =
  * the user ran with "/" (its body went into the message; the transcript shows its name). `voice`: the Talk to Pi session
  * that handed this request to Pi (its text is the voice model's wording, not the user's).
  */
-export type InputData = { origin?: string; text?: string; attachments?: DisplayAttachment[]; skill?: string; voice?: string };
+/** `card`: the web card (`show_ui`) the input came from; `text` is then what the bubble shows, not what the model got. */
+export type InputData = {
+	origin?: string;
+	text?: string;
+	attachments?: DisplayAttachment[];
+	skill?: string;
+	voice?: string;
+	card?: { id: string; title: string };
+};
 
 /** A shared PDF or web page can be long; the model gets this much of each. */
 const MAX_TEXT = 100_000;

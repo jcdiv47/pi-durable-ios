@@ -15,7 +15,12 @@ JavaScriptCore runtime.
   chat's design tokens (`Design/PiDesign`: palette, radii, elevation, motion) and shared components (`Design/PiComponents`:
   `ShimmerText`, `ToolStatus`, `ToolChips` while a run works, `ContextCards` for skills and pages a run read, `DiffView`,
   `PiTable` and `RecordsTable` for JSON tool output, `PiMeter`); Settings › Widgets › Chat Components shows them all.
-  Use the tokens, not ad-hoc colors and radii, in new chat views. Approvals lead with what a tool does in words (`ToolTitles`, `ApprovalDetails`), the tool's
+  Use the tokens, not ad-hoc colors and radii, in new chat views.
+  Web cards (`WebUI/WebCardView`): `show_ui` and `update_ui` (`js/src/app/webui.ts`) let the agent show HTML in the chat,
+  drawn in a sandboxed `WKWebView` with Pi's web components (`App/WebUI/pi-ui.js`, `<pi-chart>`, `<pi-table>`,
+  `<pi-form>`…) and the design tokens as CSS variables (`PiDesign.css`). Cards live in the `ui.webcards` conversation
+  document; an older version points to the newer one below. A card's `pi.submit` and `pi.prompt` come back as the user's
+  message through `Chat.cardInput` (origin "Card: <title>", request ID from the card, its version and the value). Approvals lead with what a tool does in words (`ToolTitles`, `ApprovalDetails`), the tool's
   name second; the list groups conversations by date (`ConversationSections`), as Notes does, and its search field finds titles and
   what was said (`ConversationSearch`, over `PiRuntime.searchConversations`: the search itself is JS's, `search.ts` and
   `Chat.search`, so a search tool for the agent can call the same one; user, assistant and spoken text, never thinking
@@ -197,6 +202,10 @@ intended rendering change, re-record with `PI_RECORD_SNAPSHOTS=1 swift test` and
   Compute needs a managed entitlement the free team lacks.
 - Photo search never sends pixels, captions or locations to the model: `photos_search` returns asset IDs, dates and
   scores, and the chat draws the photos on the device. The index lives in Application Support, not the App Group.
+- Web cards never reach the network: keep the CSP, the content rule list, the one-load navigation policy, the
+  non-persistent data store and the WebRTC removal in `WebCardSandbox` and pi-ui.js. A card acts for the user
+  (`pi.submit`, `pi.prompt`, `pi.openURL`) only right after a tap on it (`TouchGate`, one action per tap). The scripted
+  model's `webauto` cue shows a card that tries all of it; every line must read blocked or gone, and no message appears.
 - MCP servers are added only by the user, in Settings; no tool may add, change or remove one. A server's host gets
   its token (`mcp-<id>`) only through `ProviderKeys.setMCPHosts`, from Swift. Only the user signs in to an OAuth server,
   from Settings; a connection without tokens fails without starting a sign-in. The `mcp` extension is installed from

@@ -8,6 +8,7 @@ import { attachmentSummary, type DisplayAttachment, type InputData } from "./att
 import { isNoReply, noReplyText } from "./schedule.ts";
 import { contextTokens } from "./usage.ts";
 import { type DisplayVoice, VoiceEntry, type VoiceLine } from "./voice.ts";
+import type { DisplayWebCard } from "./webui.ts";
 
 export type DisplayToolCall = { id: string; name: string; arguments: string };
 
@@ -25,6 +26,8 @@ export type DisplayItem =
 			attachments?: DisplayAttachment[];
 			skill?: string;
 			voice?: DisplayVoice;
+			/** The web card this came from: the bubble shows what the user picked, the model got the value. */
+			card?: { id: string; title: string };
 	  }
 	| {
 			id: number;
@@ -48,6 +51,8 @@ export type DisplayItem =
 			isError: boolean;
 			timestamp?: number;
 			surface?: DisplaySurface;
+			/** A web card (`show_ui`, `update_ui`) at this version; the chat draws it under the call. */
+			webCard?: DisplayWebCard;
 			/** The parsed output of a tool the chat draws a native card for (`cardTools`). */
 			data?: unknown;
 	  }
@@ -173,6 +178,7 @@ export function displayItem(entry: EntryRecord, whole = false): DisplayItem | un
 				isError,
 				timestamp: message?.timestamp as number | undefined,
 				surface: (message?.details as { surface?: DisplaySurface } | undefined)?.surface,
+				webCard: (message?.details as { webCard?: DisplayWebCard } | undefined)?.webCard,
 				data: cardData(toolName, isError, text),
 			};
 		}
@@ -181,11 +187,14 @@ export function displayItem(entry: EntryRecord, whole = false): DisplayItem | un
 			return {
 				id: entry.id,
 				kind: "user",
-				text: said(data?.attachments === undefined && data?.skill === undefined ? textOf(message?.content) : (data.text ?? "")),
+				text: said(
+					data?.attachments === undefined && data?.skill === undefined && data?.card === undefined ? textOf(message?.content) : (data.text ?? ""),
+				),
 				timestamp: message?.timestamp as number | undefined,
 				origin: data?.origin,
 				attachments: data?.attachments,
 				skill: data?.skill,
+				card: data?.card,
 				...(data?.voice === undefined ? {} : { voice: { session: data.voice } }),
 			};
 		}

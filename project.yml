@@ -52,6 +52,11 @@ targets:
       - path: App/Resources/quickjs.wasm
         optional: true
         buildPhase: resources
+      # Web cards' components and styles (WebCardView injects them into each card's sandboxed web view).
+      - path: App/WebUI/pi-ui.js
+        buildPhase: resources
+      - path: App/WebUI/pi-ui.css
+        buildPhase: resources
       # Photo search's MobileCLIP encoders and CLIP tokenizer, from scripts/fetch-mobileclip.sh (not checked in: too
       # big, and under Apple's sample code license). Without them the app downloads them
       # in Settings › Photo Search.

@@ -1,4 +1,5 @@
 import AuthenticationServices
+import CryptoKit
 import Foundation
 import Observation
 import os
@@ -502,6 +503,47 @@ final class ChatStore {
         } catch {
             report("send", error)
         }
+    }
+
+    /// A web card's submission (`pi.submit`) as the user's message in its conversation. The request ID comes from the
+    /// card, its version and the value, so a double tap or a page that sends twice is one message.
+    func cardInput(_ card: WebCardRef, value: JSONValue, label: String?) async {
+        let payload = (try? Self.sortedEncoder.encode(value)).map { String(decoding: $0, as: UTF8.self) } ?? "null"
+        await cardInput(CardInputArguments(
+            conversationId: card.conversationId, cardId: card.id, requestId: Self.cardRequestId(card, "submit", payload), kind: "submit",
+            value: value, text: nil, label: label
+        ))
+    }
+
+    /// A web card's `pi.prompt` or `<pi-button prompt>`: the text as the user's message.
+    func cardInput(_ card: WebCardRef, prompt text: String) async {
+        await cardInput(CardInputArguments(
+            conversationId: card.conversationId, cardId: card.id, requestId: Self.cardRequestId(card, "prompt", text), kind: "prompt",
+            value: nil, text: text, label: nil
+        ))
+    }
+
+    private func cardInput(_ input: CardInputArguments) async {
+        guard let harness else { return }
+        watch(input.conversationId)
+        do {
+            try await harness.perform("PiRuntime.cardInput", [try harness.jsonArgument(input)])
+            activities.start(conversationId: input.conversationId, title: meta(input.conversationId)?.title ?? "Pi")
+        } catch {
+            report("card input", error)
+        }
+    }
+
+    private static let sortedEncoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return encoder
+    }()
+
+    static func cardRequestId(_ card: WebCardRef, _ kind: String, _ payload: String) -> String {
+        let digest = SHA256.hash(data: Data("\(kind)\u{1F}\(payload)".utf8))
+        let hex = digest.prefix(8).map { String(format: "%02x", $0) }.joined()
+        return "card:\(card.conversationId):\(card.id):\(card.version):\(hex)"
     }
 
     func abort(_ id: Int) async {

@@ -17,7 +17,7 @@ import { AppleTools, appleToolInfo } from "./app/apple.ts";
 import { Approvals, type Decision, defaultPolicies, type ToolPolicy } from "./app/approvals.ts";
 import type { InputAttachment } from "./app/attachments.ts";
 import { CodeModeTools, codeModeToolInfo } from "./app/codemode.ts";
-import { Chat, intelligenceSettings, type OutsideInput, type WidgetAction } from "./app/chat.ts";
+import { type CardInput, Chat, intelligenceSettings, type OutsideInput, type WidgetAction } from "./app/chat.ts";
 import type { SearchOptions } from "./app/search.ts";
 import type { VoiceLineInput } from "./app/voice.ts";
 import { InstructionsExtension, instructionsSettings } from "./app/instructions.ts";
@@ -28,6 +28,7 @@ import { answerText, ScheduleTools, scheduleToolInfo } from "./app/schedule.ts";
 import { SkillHost, type SkillInfo } from "./app/skills.ts";
 import { type SshHostConfig, sshSettings, SshTools, sshToolInfo, sshTrusted } from "./app/ssh.ts";
 import { SurfaceTools, surfaceToolInfo } from "./app/surfaces.ts";
+import { WebUITools, webUIToolInfo } from "./app/webui.ts";
 import { fetchTrusted, type SearchProviderId, WebTools, webSettings, webToolInfo } from "./app/web.ts";
 import { createKillTestFaux, KillTestTools } from "./killtest.ts";
 import { fetchStats } from "./host/fetch.ts";
@@ -109,6 +110,7 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 	const approvalGate = approvals.extension();
 	registry.install(AppleTools);
 	registry.install(SurfaceTools);
+	registry.install(WebUITools);
 	registry.install(WebTools);
 	sshSettings.hosts = [...(options.sshHosts ?? [])];
 	registry.install(SshTools);
@@ -148,7 +150,7 @@ async function open(options: OpenOptions): Promise<{ openMs: number; rootId: num
 	root = await harness.root(context, {
 		agent: { model: { provider: options.provider, modelId: options.modelId }, extensions: [KillTestTools(0)] },
 	});
-	chat = new Chat(harness, approvals, [AppleTools, SurfaceTools, WebTools, SshTools, mcp.extension, scheduleTools, InstructionsExtension, skills.extension, CodeModeTools, approvalGate], emit, (model, level) =>
+	chat = new Chat(harness, approvals, [AppleTools, SurfaceTools, WebUITools, WebTools, SshTools, mcp.extension, scheduleTools, InstructionsExtension, skills.extension, CodeModeTools, approvalGate], emit, (model, level) =>
 		setup.clampThinking(model, level),
 	);
 	await chat.upgrade();
@@ -363,6 +365,7 @@ const app = {
 	spending: (from: number, to: number) => requireChat().spending(from, to),
 	send: (id: number, text: string, requestId: string, attachments?: InputAttachment[], skill?: string) =>
 		requireChat().send(id, text, requestId, attachments, skill ?? undefined),
+	cardInput: (input: CardInput) => requireChat().cardInput(input),
 	abort: (id: number) => requireChat().abort(id),
 	withdraw: (id: number, submissionId: number) => requireChat().withdraw(id, submissionId),
 	steer: (id: number, submissionId: number) => requireChat().steer(id, submissionId),
@@ -383,7 +386,7 @@ const app = {
 	answerApproval: async (id: number, decision: Decision) => requireChat().answerApproval(id, decision),
 	setPolicies: async (policies: Record<string, ToolPolicy>) => requireChat().setPolicies(policies),
 	tools: async () =>
-		[...appleToolInfo, ...webToolInfo, ...sshToolInfo, ...surfaceToolInfo, ...scheduleToolInfo, ...codeModeToolInfo, ...mcp.toolInfo()].map((tool) => ({
+		[...appleToolInfo, ...webToolInfo, ...sshToolInfo, ...surfaceToolInfo, ...webUIToolInfo, ...scheduleToolInfo, ...codeModeToolInfo, ...mcp.toolInfo()].map((tool) => ({
 			...tool,
 			policy: approvals.policy(tool.name),
 		})),
