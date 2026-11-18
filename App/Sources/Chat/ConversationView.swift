@@ -214,6 +214,8 @@ struct ConversationView: View {
                     TimelineView(.periodic(from: .now, by: 1)) { context in
                         Text("Working · \(WorkRow.elapsed(context.date.timeIntervalSince(since)))").monospacedDigit()
                     }
+                } else if meta?.started == false, state.model != nil {
+                    modelMenu
                 } else {
                     Text(modelLine)
                 }
@@ -225,11 +227,52 @@ struct ConversationView: View {
         // The bar lays a principal item out at its ideal width after a cancelled back swipe, and a long title's
         // ideal width runs past the screen. Capped to the room between the back buttons, the title truncates instead.
         .frame(maxWidth: width > 0 ? max(width - 136, 120) : nil)
-        .accessibilityElement(children: .combine)
+        // The model menu of a new conversation stays its own element, so VoiceOver can open it.
+        .accessibilityElement(children: meta?.started == false ? .contain : .combine)
         .accessibilityIdentifier("conversation.header")
     }
 
-    /// The model the conversation started with, and its effort unless thinking is off. Both are set in Settings, for new conversations.
+    /// Until something is sent, the model line picks this conversation's model and effort; Settings' defaults stay.
+    private var modelMenu: some View {
+        let levels = store.model(state.model)?.thinkingLevels ?? []
+        return Menu {
+            Picker("Model", selection: Binding(
+                get: { state.model ?? store.defaultModel },
+                set: { model in
+                    // The effort carries over, clamped to what the new model supports.
+                    let supported = store.model(model)?.thinkingLevels ?? []
+                    let current = levels.count > 1 ? state.thinkingLevel : store.defaultThinking
+                    let level = ThinkingLevel.clamp(current, to: supported)
+                    Task { await store.setModel(conversationId, model, thinking: level) }
+                }
+            )) {
+                ForEach(store.models) { model in
+                    Text("\(model.name) · \(model.providerName)").tag(model.ref)
+                }
+            }
+            .pickerStyle(.inline)
+            if levels.count > 1, let model = state.model {
+                Picker("Effort", selection: Binding(
+                    get: { ThinkingLevel.clamp(state.thinkingLevel, to: levels) },
+                    set: { level in Task { await store.setModel(conversationId, model, thinking: level) } }
+                )) {
+                    ForEach(levels, id: \.self) { level in
+                        Label(ThinkingLevel.name(level), systemImage: ThinkingLevel.symbol(level)).tag(level)
+                    }
+                }
+                .pickerStyle(.menu)
+            }
+        } label: {
+            HStack(spacing: 2) {
+                Text(modelLine)
+                Image(systemName: "chevron.down").imageScale(.small)
+            }
+        }
+        .accessibilityIdentifier("conversation.modelMenu")
+    }
+
+    /// The model the conversation started with, and its effort unless thinking is off. New conversations start with
+    /// Settings' defaults, and the header's menu changes them until something is sent.
     private var modelLine: String {
         // Nothing until the transcript has loaded, rather than a moment of "No model".
         guard state.model != nil else { return state.loaded ? store.modelName(nil) : " " }

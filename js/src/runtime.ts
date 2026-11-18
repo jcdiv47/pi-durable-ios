@@ -355,6 +355,8 @@ const app = {
 	conversations: () => requireChat().conversations(),
 	createConversation: (provider: string, modelId: string, thinkingLevel?: ModelThinkingLevel) =>
 		requireChat().create({ provider, modelId }, undefined, thinkingLevel),
+	setConversationModel: (id: number, provider: string, modelId: string, thinkingLevel: ModelThinkingLevel) =>
+		requireChat().setModel(id, { provider, modelId }, thinkingLevel),
 	watchConversation: (id: number) => requireChat().watch(id),
 	unwatchConversation: async (id: number) => requireChat().unwatch(id),
 	transcript: (id: number) => requireChat().transcript(id),

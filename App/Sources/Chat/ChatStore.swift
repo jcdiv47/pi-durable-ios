@@ -106,14 +106,21 @@ final class ChatStore {
         didSet { settings.set(try? JSONEncoder().encode(dial), forKey: Self.dialKey) }
     }
 
-    /// The model new conversations start with; a conversation keeps the one it started with.
+    /// The model new conversations start with; a conversation keeps the one it started with. The unused conversation
+    /// (the one the compose button opens) follows a change, since it starts only when something is sent in it.
     var defaultModel: ModelRef {
-        didSet { settings.set(defaultModel.key, forKey: "defaultModel") }
+        didSet {
+            settings.set(defaultModel.key, forKey: "defaultModel")
+            if defaultModel != oldValue { applyDefaultsToUnused() }
+        }
     }
 
     /// The effort new conversations from the chat start with, clamped to the model in JS; a conversation keeps its own.
     var defaultThinking: String {
-        didSet { settings.set(defaultThinking, forKey: "defaultThinking") }
+        didSet {
+            settings.set(defaultThinking, forKey: "defaultThinking")
+            if defaultThinking != oldValue { applyDefaultsToUnused() }
+        }
     }
 
     /// Reminders' state by ID, read when a card shows them or set when one is ticked: a card's rows are its tool
@@ -481,6 +488,24 @@ final class ChatStore {
             report("new conversation", error)
             return nil
         }
+    }
+
+    /// Changes the model and effort of a conversation nothing was sent in yet (the header's menu in a new one). The
+    /// defaults in Settings stay as they are; JS refuses a conversation that started.
+    func setModel(_ id: Int, _ model: ModelRef, thinking: String) async {
+        guard let harness, meta(id)?.started == false else { return }
+        do {
+            try await harness.perform("PiRuntime.setConversationModel", [id, model.provider, model.modelId, thinking])
+        } catch {
+            report("set model", error)
+        }
+    }
+
+    /// A new default from Settings reaches the unused conversation, so the compose button opens one with it.
+    private func applyDefaultsToUnused() {
+        guard let id = unusedConversation?.id else { return }
+        let model = defaultModel, thinking = defaultThinking
+        Task { await setModel(id, model, thinking: thinking) }
     }
 
     /// `skill`: one picked from the "/" menu; JS reads its body now and sends it first.
