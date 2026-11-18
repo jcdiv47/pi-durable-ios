@@ -308,7 +308,6 @@ struct ModelSettingsView: View {
                 }
             }
         }
-        .refreshable { await checkForModels() }
         .navigationTitle("Default Model")
         .navigationBarTitleDisplayMode(.inline)
     }

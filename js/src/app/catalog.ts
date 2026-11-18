@@ -50,13 +50,12 @@ function merge(builtin: readonly AnyModel[], remote: readonly AnyModel[]): AnyMo
 }
 
 /**
- * The pi.dev models this build can use: chat models whose API and endpoint one of the provider's own models has.
+ * The pi.dev models this build can use: chat models with the API and endpoint of one of the provider's own models.
  * The provider can send only the APIs its built-in models use, and its key reaches only its own hosts.
  */
 function usable(provider: Provider, models: readonly unknown[]): AnyModel[] {
 	const builtin = provider.getModels();
-	const apis = new Set(builtin.map((model) => model.api));
-	const baseUrls = new Set(builtin.map((model) => model.baseUrl));
+	const endpoints = new Set(builtin.map((model) => `${model.api}\0${model.baseUrl}`));
 	return models.filter((model): model is AnyModel => {
 		if (typeof model !== "object" || model === null) return false;
 		const entry = model as Partial<Model<Api>> & { type?: string };
@@ -64,9 +63,8 @@ function usable(provider: Provider, models: readonly unknown[]): AnyModel[] {
 			typeof entry.id === "string" &&
 			(entry.type === undefined || entry.type === "chat") &&
 			typeof entry.api === "string" &&
-			apis.has(entry.api as never) &&
 			typeof entry.baseUrl === "string" &&
-			baseUrls.has(entry.baseUrl) &&
+			endpoints.has(`${entry.api}\0${entry.baseUrl}`) &&
 			Array.isArray(entry.input) &&
 			typeof entry.contextWindow === "number"
 		);
@@ -107,7 +105,8 @@ export function withRemoteCatalog(provider: Provider): Provider {
 				return;
 			}
 			if (response.status === 404 || response.status === 501) {
-				await context.publish({ persist: { models: [], checkedAt, lastModified: 0 } });
+				// No list for this provider: keep the saved one, which a conversation may still use.
+				await context.publish({ persist: { ...(stored ?? { models: [], lastModified: 0 }), checkedAt } });
 				return;
 			}
 			if (!response.ok) {

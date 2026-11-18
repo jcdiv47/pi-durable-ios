@@ -214,7 +214,7 @@ function parseCatalogs(json: string | undefined): CatalogFile {
  * `force`. Resolves to the providers that failed, with why; Swift reads the picker again on `modelCatalogs` events.
  */
 async function refreshCatalogs(force: boolean): Promise<Record<string, string>> {
-	if (!native.networkOnline()) return {};
+	if (!native.networkOnline()) return force ? { "pi.dev": "The iPhone is offline" } : {};
 	const result = await setup.models.refresh({ allowNetwork: true, force });
 	return Object.fromEntries([...result.errors].map(([provider, error]) => [provider, error.message]));
 }

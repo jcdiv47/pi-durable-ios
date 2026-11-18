@@ -57,7 +57,7 @@ struct ModelCatalogTests {
         return harness
     }
 
-    @Test("A newer list adds the models the app can send, is saved, and comes back offline at the next launch", .timeLimit(.minutes(1)))
+    @Test("A newer list adds the models the app can send, is saved, and comes back at the next launch without a request", .timeLimit(.minutes(1)))
     func refresh() async throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
