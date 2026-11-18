@@ -1,3 +1,4 @@
+import PiUI
 import SwiftUI
 
 // The chat's shared pieces, drawn with `PiDesign`'s tokens: a shimmering status label, a tool call's status, tool chips,

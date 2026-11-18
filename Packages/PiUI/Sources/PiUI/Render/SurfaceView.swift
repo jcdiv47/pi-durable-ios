@@ -42,14 +42,13 @@ public struct SurfaceView: View {
     }
 }
 
-/// The surface's background: the widget passes it to `containerBackground`; previews and cards draw it.
+/// The surface's background: the widget passes it to `containerBackground`; previews draw it. Pi's raised surface: white
+/// in light, a cool near-black in dark.
 public struct SurfaceBackground: View {
-    @Environment(\.colorScheme) private var colorScheme
-
     public init() {}
 
     public var body: some View {
-        colorScheme == .dark ? Color(white: 0.11) : Color.white
+        PiDesign.Palette.raised
     }
 }
 
