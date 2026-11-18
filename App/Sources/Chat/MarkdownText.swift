@@ -1,3 +1,4 @@
+import PiUI
 import SwiftUI
 
 /// Assistant text as Markdown blocks: Foundation parses it (CommonMark with GitHub tables), SwiftUI lays out each block.

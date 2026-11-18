@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Named colors a spec may use. Tinted rendering (Lock Screen, tinted Home Screen) ignores them and draws
+/// Named colors a spec may use. Green, orange and red are Pi's status colors (`PiDesign.Palette`), so a card's
+/// "positive" reads like the chat's. Tinted rendering (Lock Screen, tinted Home Screen) ignores them and draws
 /// accented parts in the system's tint instead.
 public enum Palette {
     public static let names = ["accent", "blue", "green", "orange", "red", "pink", "purple", "teal", "yellow", "indigo", "mint", "cyan", "brown", "gray", "primary", "secondary"]
@@ -8,9 +9,9 @@ public enum Palette {
     public static func color(_ name: String?, default fallback: Color = .accentColor) -> Color {
         switch name {
         case "blue": .blue
-        case "green": .green
-        case "orange": .orange
-        case "red": .red
+        case "green": PiDesign.Palette.success
+        case "orange": PiDesign.Palette.warning
+        case "red": PiDesign.Palette.danger
         case "pink": .pink
         case "purple": .purple
         case "teal": .teal
@@ -29,10 +30,10 @@ public enum Palette {
 
     static func tone(_ name: String?) -> Color {
         switch name {
-        case "positive": .green
-        case "warning": .orange
-        case "critical": .red
-        case "info": .blue
+        case "positive": PiDesign.Palette.success
+        case "warning": PiDesign.Palette.warning
+        case "critical": PiDesign.Palette.danger
+        case "info": PiDesign.Palette.accent
         default: .gray
         }
     }

@@ -536,6 +536,17 @@ struct SurfaceStrip: View {
 
     var body: some View {
         let spec = surface.parsed
+        if spec.families == [.card] {
+            // A card alone fills the column, like the chat's result cards.
+            FramedSurface(spec: spec, family: .card, appearance: colorScheme == .dark ? .dark : .light, data: store.surfaceData, fill: true)
+                .task { await store.refreshSurfaceData() }
+                .accessibilityIdentifier("surface.\(surface.id)")
+        } else {
+            strip(spec)
+        }
+    }
+
+    private func strip(_ spec: SurfaceSpec) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(alignment: .top, spacing: 10) {
                 ForEach(spec.families) { family in

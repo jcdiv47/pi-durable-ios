@@ -11,12 +11,15 @@ public struct FramedSurface: View {
     let family: SurfaceFamily
     let appearance: SurfaceAppearance
     let data: SurfaceData
+    /// A card takes the width it is offered (the chat's column) instead of the 340 points previews use.
+    let fill: Bool
 
-    public init(spec: SurfaceSpec, family: SurfaceFamily, appearance: SurfaceAppearance, data: SurfaceData) {
+    public init(spec: SurfaceSpec, family: SurfaceFamily, appearance: SurfaceAppearance, data: SurfaceData, fill: Bool = false) {
         self.spec = spec
         self.family = family
         self.appearance = appearance
         self.data = data
+        self.fill = fill
     }
 
     /// The Lock Screen always draws accessories tinted, over the wallpaper.
@@ -32,25 +35,25 @@ public struct FramedSurface: View {
                     .padding(10)
                     .background(LinearGradient(colors: [Color(red: 0.16, green: 0.2, blue: 0.36), Color(red: 0.36, green: 0.22, blue: 0.4)], startPoint: .topLeading, endPoint: .bottomTrailing))
             } else if family == .card {
+                // A card sits in the chat like the chat's own result cards: Pi's surface, a hairline, a soft shadow.
                 surface
                     .padding(family.contentPadding)
-                    .frame(width: size.width)
+                    .frame(width: fill ? nil : size.width)
+                    .frame(maxWidth: fill ? .infinity : nil, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
-                    .background(background, in: .rect(cornerRadius: 18))
+                    .piSurface(.card, radius: PiDesign.Radius.card, fill: tinted ? Color(white: 0.18) : nil)
             } else {
+                // A widget as the Home Screen draws it, with a hairline so a white widget holds its edge on a white page.
                 surface
                     .padding(family.contentPadding)
                     .frame(width: size.width, height: size.height)
-                    .background(background, in: .rect(cornerRadius: 24))
+                    .piSurface(.flat, radius: PiDesign.Radius.widget, fill: tinted ? Color(white: 0.18) : PiDesign.Palette.raised)
             }
         }
         .environment(\.colorScheme, appearance == .light && !tinted ? .light : .dark)
         .environment(\.surfaceIsStill, true)
     }
 
-    private var background: AnyShapeStyle {
-        tinted ? AnyShapeStyle(Color(white: 0.18)) : AnyShapeStyle(appearance == .dark ? Color(white: 0.11) : Color.white)
-    }
 }
 
 @MainActor

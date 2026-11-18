@@ -1,3 +1,4 @@
+import PiUI
 import SwiftUI
 
 /// Settings › Widgets › Chat Components: the tokens and the pieces the conversation is drawn with, on sample data, in
@@ -99,6 +100,10 @@ struct ChatComponentsGallery: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                section("Pi's card") {
+                    // A card Pi designs (PiUI), drawn with the same tokens as the result card above.
+                    FramedSurface(spec: Self.piCard, family: .card, appearance: dark ? .dark : .light, data: ComponentSamples.data, fill: true)
+                }
                 section("Context meter") {
                     VStack(alignment: .leading, spacing: 10) {
                         PiMeter(value: meter).frame(width: 120)
@@ -169,6 +174,12 @@ struct ChatComponentsGallery: View {
     private static let records = """
     [{"host":"nas","load":0.42,"disk":"71%","up":true},{"host":"pi-hole","load":0.08,"disk":"23%","up":true},{"host":"backup","load":null,"disk":"—","up":false}]
     """
+
+    /// Header, stats, a checklist, a badge and buttons from the catalog's sample slots, as one chat card.
+    private static let piCard: SurfaceSpec = {
+        let slots = ["Header", "StatGrid", "Checklist", "Badge", "ActionRow"].compactMap(ComponentSamples.slot)
+        return SurfaceSpec(["schema": 1, "title": "Sample", "surface": "card", "families": ["card"], "slots": .array(slots)])
+    }()
 
     private static let markdown = """
     | Model | Context | Price |
