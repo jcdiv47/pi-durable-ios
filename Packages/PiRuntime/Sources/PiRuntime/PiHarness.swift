@@ -26,6 +26,9 @@ public final class PiHarness: Sendable {
         public var appleModels: [AppleIntelligence.Model]?
         /// Settings › Apple Intelligence › Titles.
         public var intelligenceTitles: Bool?
+        /// pi.dev's newer model lists as JSON text, as the last `modelCatalogs` event gave them (`CatalogFile` in
+        /// `js/src/app/catalog.ts`).
+        public var modelCatalogs: String?
         public var toolMs: Int?
 
         public init(
@@ -42,6 +45,7 @@ public final class PiHarness: Sendable {
             skills: [SkillLibrary.Skill]? = nil,
             appleModels: [AppleIntelligence.Model]? = nil,
             intelligenceTitles: Bool? = nil,
+            modelCatalogs: String? = nil,
             toolMs: Int? = nil
         ) {
             self.dbPath = dbPath
@@ -57,6 +61,7 @@ public final class PiHarness: Sendable {
             self.skills = skills
             self.appleModels = appleModels
             self.intelligenceTitles = intelligenceTitles
+            self.modelCatalogs = modelCatalogs
             self.toolMs = toolMs
         }
     }

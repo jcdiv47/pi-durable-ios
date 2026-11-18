@@ -500,3 +500,24 @@ func prettyJSON(_ text: String) -> String {
     else { return text }
     return String(decoding: data, as: UTF8.self)
 }
+
+/// pi.dev's newer model lists (`js/src/app/catalog.ts`), kept for the next launch: Application Support
+/// `model-catalogs.json`, JSON text Swift never reads into. A cache: not backed up; pi.dev has it again.
+enum ModelCatalogFile {
+    static var url: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("model-catalogs.json")
+    }
+
+    static func load() -> String? {
+        (try? Data(contentsOf: url)).map { String(decoding: $0, as: UTF8.self) }
+    }
+
+    static func save(_ json: String) throws {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(json.utf8).write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        var url = url
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? url.setResourceValues(values)
+    }
+}

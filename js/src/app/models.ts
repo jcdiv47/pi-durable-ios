@@ -9,6 +9,7 @@ import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 import { deepseekProvider } from "@earendil-works/pi-ai/providers/deepseek";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { openrouterProvider } from "@earendil-works/pi-ai/providers/openrouter";
+import { CatalogStore, withRemoteCatalog } from "./catalog.ts";
 import { createScriptedModel } from "./scripted.ts";
 
 /** Header value Swift's fetch replaces with the Keychain key; must match `ProviderKeys.placeholder(for:)`. */
@@ -109,9 +110,12 @@ export class ModelSetup {
 	/** Providers whose keys Swift holds; only these resolve to a placeholder key. */
 	keyed = new Set<string>();
 	readonly models: MutableModels;
+	/** pi.dev's newer model lists (catalog.ts), as Swift saved them. */
+	readonly catalogs = new CatalogStore();
 
 	constructor() {
 		this.models = createModels({
+			modelsStore: this.catalogs,
 			authContext: {
 				env: async (name) => {
 					const provider = name === "CUSTOM_API_KEY" ? "custom" : keyEnvironment[name];
@@ -121,10 +125,10 @@ export class ModelSetup {
 			},
 			identity: { attribution: { name: "pi-durable-ios", url: "https://github.com/earendil-works/pi" } },
 		});
-		this.models.setProvider(anthropicProvider());
-		this.models.setProvider(deepseekProvider());
-		this.models.setProvider(openaiProvider());
-		this.models.setProvider(openrouterProvider());
+		this.models.setProvider(withRemoteCatalog(anthropicProvider()));
+		this.models.setProvider(withRemoteCatalog(deepseekProvider()));
+		this.models.setProvider(withRemoteCatalog(openaiProvider()));
+		this.models.setProvider(withRemoteCatalog(openrouterProvider()));
 		this.models.setProvider(createScriptedModel().provider);
 		this.models.setProvider(appleProvider([appleFallback]));
 	}
