@@ -154,7 +154,7 @@ struct TranscriptItemView: View {
                         Text(item.text ?? "")
                             .padding(.horizontal, 14)
                             .padding(.vertical, 9)
-                            .background(item.origin == nil ? Color.accentColor : Color.indigo, in: .rect(cornerRadius: 18))
+                            .background(item.origin == nil ? Color.accentColor : Color.indigo, in: .rect(cornerRadius: PiDesign.Radius.bubble, style: .continuous))
                             .foregroundStyle(.white)
                             .textSelection(.enabled)
                     }
@@ -258,22 +258,23 @@ struct WorkRow: View {
         // Only an unfinished row reads the live state, so finished rows are not redrawn with every streamed frame.
         let running = results.count < calls.count && state.live.busy
         let waiting = Set(store.approvals.filter { $0.conversationId == state.id }.map(\.callId))
+        let failed = results.contains(where: \.isFailure)
+        let sources = ContextSource.sources(calls, results: state.results)
         VStack(alignment: .leading, spacing: 10) {
             Button {
                 holdPosition()
-                withAnimation(.snappy(duration: 0.25)) { expanded.toggle() }
+                withAnimation(PiDesign.Motion.disclose) { expanded.toggle() }
             } label: {
                 HStack(spacing: 8) {
                     if running {
                         ProgressView().controlSize(.mini)
                     } else {
-                        let failed = results.contains(where: \.isFailure)
                         Image(systemName: failed ? "exclamationmark.triangle" : results.contains(where: \.isDeclined) ? "hand.raised" : "apple.terminal")
-                            .foregroundStyle(failed ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                            .foregroundStyle(failed ? AnyShapeStyle(PiDesign.Palette.warning) : AnyShapeStyle(.secondary))
                     }
                     if running, let start = steps.first?.date {
                         TimelineView(.periodic(from: .now, by: 1)) { context in
-                            Text(summary(calls: calls, results: results, running: true, seconds: context.date.timeIntervalSince(start)))
+                            ShimmerText(text: summary(calls: calls, results: results, running: true, seconds: context.date.timeIntervalSince(start)))
                         }
                     } else {
                         Text(summary(calls: calls, results: results, running: running, seconds: duration(results)))
@@ -283,14 +284,22 @@ struct WorkRow: View {
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                         .foregroundStyle(.tertiary)
                 }
-                .font(.subheadline)
+                .font(PiDesign.Typeface.label)
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(.quaternary.opacity(0.5), in: .capsule)
+                .piChip(tint: failed && !running ? PiDesign.Palette.warning : nil)
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("work.row")
+            // While it runs, each step as a chip, so the work can be followed without opening the row.
+            if running, !expanded {
+                ToolChips(chips: calls.map { call in
+                    (call.id, call.name, ToolStatus(result: state.results[call.id], waiting: waiting.contains(call.id), live: state.liveTool(call.id)))
+                })
+                .animation(PiDesign.Motion.state, value: calls.count)
+            }
+            if !sources.isEmpty {
+                ContextCards(sources: sources)
+            }
             ForEach(calls.filter { expanded || waiting.contains($0.id) }, id: \.id) { call in
                 ToolCallCard(
                     call: call,
@@ -376,11 +385,14 @@ struct LiveStatusRow: View {
         let status = RunActivities.status(state.live, approval: approval, waitingForNetwork: store.waitingForNetwork)
         HStack(spacing: 10) {
             Image(systemName: approval != nil ? "hand.raised.fill" : status.symbol)
-                .foregroundStyle(approval != nil ? AnyShapeStyle(.orange) : AnyShapeStyle(.tint))
+                .foregroundStyle(approval != nil ? AnyShapeStyle(PiDesign.Palette.warning) : AnyShapeStyle(.tint))
                 .symbolEffect(.pulse, isActive: approval == nil && !reduceMotion)
                 .frame(width: 22)
-            Text(approval != nil ? "Waiting for you" : status.status.replacingOccurrences(of: "…", with: ""))
-                .lineLimit(1)
+            if approval != nil {
+                Text("Waiting for you").lineLimit(1)
+            } else {
+                ShimmerText(text: status.status.replacingOccurrences(of: "…", with: "")).lineLimit(1)
+            }
             Spacer()
             if let since = state.busySince {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -388,10 +400,10 @@ struct LiveStatusRow: View {
                 }
             }
         }
-        .font(.subheadline)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(approval != nil ? AnyShapeStyle(.orange.opacity(0.15)) : AnyShapeStyle(.quaternary.opacity(0.5)), in: .capsule)
+        .font(PiDesign.Typeface.label)
+        .padding(.horizontal, 2)
+        .padding(.vertical, 3)
+        .piChip(tint: approval != nil ? PiDesign.Palette.warning : nil)
         .accessibilityIdentifier("live.status")
     }
 }
@@ -408,25 +420,29 @@ struct AssistantView: View {
             if !thinking.isEmpty {
                 Button {
                     holdPosition()
-                    withAnimation(.snappy(duration: 0.25)) { showThinking.toggle() }
+                    withAnimation(PiDesign.Motion.disclose) { showThinking.toggle() }
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "brain")
-                        Text(streaming && text.isEmpty ? "Thinking" : "Thought")
+                        ShimmerText(text: streaming && text.isEmpty ? "Thinking" : "Thought", active: streaming && text.isEmpty)
                         Image(systemName: "chevron.right")
                             .font(.caption2.weight(.semibold))
                             .rotationEffect(.degrees(showThinking ? 90 : 0))
                             .foregroundStyle(.tertiary)
                     }
-                    .font(.subheadline)
+                    .font(PiDesign.Typeface.label)
                     .foregroundStyle(.secondary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(.quaternary.opacity(0.5), in: .capsule)
+                    .piChip()
                 }
                 .buttonStyle(.plain)
                 if showThinking {
-                    Text(thinking).font(.footnote).foregroundStyle(.secondary).textSelection(.enabled)
+                    // The reasoning as a quote: a rule down its side, so it reads as Pi's notes, not its answer.
+                    HStack(alignment: .top, spacing: 10) {
+                        Capsule().fill(PiDesign.Palette.hairlineStrong).frame(width: 2)
+                        Text(thinking).font(.footnote).foregroundStyle(.secondary).textSelection(.enabled)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 6)
                 }
             }
             if !text.isEmpty {
@@ -445,32 +461,26 @@ struct ToolCallCard: View {
     @State private var expanded = false
     @Environment(\.holdTranscriptPosition) private var holdPosition
 
-    private var status: (String, Color, String) {
-        if let result {
-            if result.isDeclined { return ("hand.raised.fill", .secondary, "Declined") }
-            return result.isError == true ? ("xmark.octagon.fill", .red, "Failed") : ("checkmark.circle.fill", .green, "Done")
-        }
-        if approval != nil { return ("hand.raised.fill", .orange, "Waiting for approval") }
-        if let live, live.status == "running" { return ("gearshape.2", .blue, "Running") }
-        return ("clock", .secondary, "Pending")
-    }
+    private var status: ToolStatus { ToolStatus(result: result, waiting: approval != nil, live: live) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let status = status
+        VStack(alignment: .leading, spacing: 8) {
             Button {
                 holdPosition()
-                withAnimation(.snappy(duration: 0.25)) { expanded.toggle() }
+                withAnimation(PiDesign.Motion.disclose) { expanded.toggle() }
             } label: {
                 HStack(spacing: 8) {
-                    Image(systemName: status.0).foregroundStyle(status.1)
+                    ToolStatusIcon(status: status)
                     Text(call.name).font(.subheadline.monospaced().weight(.medium)).lineLimit(1).minimumScaleFactor(0.7)
                     Spacer()
-                    if result == nil, approval == nil, live?.status == "running" { ProgressView().controlSize(.mini) }
-                    Text(status.2).font(.caption).foregroundStyle(.secondary)
+                    Text(status.label).font(.caption).foregroundStyle(status == .failed ? AnyShapeStyle(status.tint) : AnyShapeStyle(.secondary))
                     Image(systemName: "chevron.right").font(.caption).rotationEffect(.degrees(expanded ? 90 : 0)).foregroundStyle(.tertiary)
                 }
+                .contentShape(.rect)
             }
             .buttonStyle(.plain)
+            .animation(PiDesign.Motion.state, value: status)
             if let approval {
                 // A Code Mode script's call asks on the codemode row: name the script's tool and what it would do.
                 Text("\(ToolTitles.action(for: approval.tool))?")
@@ -488,28 +498,32 @@ struct ToolCallCard: View {
                 GlassEffectContainer {
                     HStack {
                         Button("Deny", role: .destructive) { Task { await store.answer(approval, allow: false) } }.buttonStyle(.glass)
-                        Button("Allow") { Task { await store.answer(approval, allow: true) } }.buttonStyle(.glassProminent).tint(.green)
+                        Button("Allow") { Task { await store.answer(approval, allow: true) } }.buttonStyle(.glassProminent).tint(PiDesign.Palette.success)
                     }
                 }
                 .controlSize(.small)
             }
             if expanded {
-                Text(call.name == "codemode" ? scriptCode(call.arguments) : prettyJSON(call.arguments)).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+                Text(call.name == "codemode" ? scriptCode(call.arguments) : prettyJSON(call.arguments))
+                    .font(PiDesign.Typeface.codeSmall)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(PiDesign.Space.s)
+                    .background(PiDesign.Palette.sunken, in: .rect(cornerRadius: PiDesign.Radius.chip, style: .continuous))
                 if result?.isDeclined == true {
-                    Divider()
                     Text("You declined this, so Pi didn't run it.").font(.caption).foregroundStyle(.secondary)
                 } else if let output = result?.text ?? live?.output, !output.isEmpty {
-                    Divider()
-                    Text(output)
-                        .font(.caption.monospaced())
-                        .foregroundStyle(result?.isError == true ? .red : .primary)
-                        .textSelection(.enabled)
-                        .lineLimit(40)
+                    ToolOutputView(output: output, isError: result?.isError == true)
                 }
             }
         }
-        .padding(10)
-        .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 12))
+        .padding(PiDesign.Space.m)
+        .piSurface(
+            expanded ? .raised : .flat,
+            radius: PiDesign.Radius.control,
+            fill: approval != nil ? PiDesign.Palette.warning.opacity(0.08) : nil
+        )
         .accessibilityIdentifier("tool.\(call.name)")
     }
 }

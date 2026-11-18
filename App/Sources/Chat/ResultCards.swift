@@ -129,9 +129,9 @@ struct ResultCardShell<Content: View>: View {
             header
             content(false)
         }
-        .padding(16)
+        .padding(PiDesign.Space.l)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: 22))
+        .piSurface(.card, radius: PiDesign.Radius.card + 4)
         .sheet(isPresented: $expanded) {
             NavigationStack {
                 ScrollView {
@@ -153,9 +153,7 @@ struct ResultCardShell<Content: View>: View {
         HStack(alignment: .top, spacing: 8) {
             VStack(alignment: .leading, spacing: 3) {
                 Label(source.uppercased(), systemImage: symbol)
-                    .font(.caption.weight(.bold))
-                    .tracking(1)
-                    .foregroundStyle(tint)
+                    .piKicker(tint)
                 Text(title).font(.title3.weight(.semibold))
                 if let subtitle {
                     Text(subtitle).font(.subheadline).foregroundStyle(.secondary)
@@ -445,7 +443,7 @@ struct LocationCard: View {
                     Marker(value.place?.name ?? "Here", coordinate: value.coordinate)
                 }
                 .frame(height: expanded ? 360 : 170)
-                .clipShape(.rect(cornerRadius: 14))
+                .clipShape(.rect(cornerRadius: PiDesign.Radius.control + 2, style: .continuous))
                 if let address = value.place?.address {
                     Label(address, systemImage: "mappin.and.ellipse").font(.subheadline)
                 }
