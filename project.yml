@@ -84,6 +84,9 @@ targets:
     info:
       path: App/Info.plist
       properties:
+        # Resolve versions from the project settings instead of XcodeGen's plist defaults.
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleDisplayName: Pi
         UILaunchScreen: {}
         # All four, as iOS asks; PiAppDelegate keeps the app in portrait.
@@ -148,6 +151,8 @@ targets:
     info:
       path: Widgets/Info.plist
       properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleDisplayName: Pi Widgets
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
@@ -177,6 +182,8 @@ targets:
     info:
       path: Share/Info.plist
       properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleDisplayName: Pi
         NSExtension:
           NSExtensionPointIdentifier: com.apple.share-services
