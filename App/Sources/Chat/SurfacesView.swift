@@ -38,8 +38,9 @@ struct SurfacesView: View {
             Section {
                 NavigationLink(value: Route.gallery) { SettingsRow("Component Gallery", systemImage: "square.grid.3x3.fill", tint: .blue) }
                 NavigationLink(value: Route.tuning) { SettingsRow("Design Tuning", systemImage: "slider.horizontal.3", tint: .gray) }
+                NavigationLink(value: Route.chatComponents) { SettingsRow("Chat Components", systemImage: "bubble.left.and.text.bubble.right.fill", tint: .indigo) }
             } footer: {
-                Text("Every component Pi can use, in each size, and what the log of Pi's designs says about the levels below.")
+                Text("Every component Pi can use, in each size, and what the log of Pi's designs says about the levels below. Chat Components shows the pieces the conversation itself is drawn with.")
             }
 
             Section {

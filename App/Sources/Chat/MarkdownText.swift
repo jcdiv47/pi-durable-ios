@@ -174,23 +174,7 @@ private struct MarkdownBlockView: View {
                 }
             }
         case let .table(alignments, rows):
-            ScrollView(.horizontal, showsIndicators: false) {
-                Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
-                    ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
-                        GridRow {
-                            ForEach(Array(row.enumerated()), id: \.offset) { column, cell in
-                                Text(cell)
-                                    .fontWeight(index == 0 ? .semibold : nil)
-                                    .gridColumnAlignment(column < alignments.count ? alignments[column].alignment : .leading)
-                            }
-                        }
-                        if index == 0 { Divider() }
-                    }
-                }
-                .font(.subheadline)
-                .padding(12)
-            }
-            .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 12))
+            PiTable(header: rows.first ?? [], rows: Array(rows.dropFirst()), alignments: alignments.map(\.alignment))
         case .rule:
             Divider().padding(.vertical, 4)
         }
@@ -203,9 +187,17 @@ private struct CodeBlockView: View {
     @State private var copied = false
 
     var body: some View {
+        if language == "diff" || language == "patch" || (language == nil && DiffView.looksLikeDiff(code)) {
+            DiffView(code)
+        } else {
+            block(language: language)
+        }
+    }
+
+    private func block(language: String?) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text(language ?? "code").font(.caption.monospaced()).foregroundStyle(.secondary)
+                Text(language ?? "code").font(PiDesign.Typeface.codeSmall).foregroundStyle(.secondary)
                 Spacer()
                 Button {
                     UIPasteboard.general.string = code
@@ -222,11 +214,14 @@ private struct CodeBlockView: View {
                 .accessibilityLabel("Copy code")
             }
             .padding(.horizontal, 12)
-            .padding(.top, 8)
+            .padding(.vertical, 7)
+            .background(PiDesign.Palette.sunken)
+            Rectangle().fill(PiDesign.Palette.hairline).frame(height: 1)
             ScrollView(.horizontal, showsIndicators: false) {
-                Text(code).font(.callout.monospaced()).padding(12)
+                Text(code).font(PiDesign.Typeface.code).padding(12).textSelection(.enabled)
             }
         }
-        .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 12))
+        .clipShape(.rect(cornerRadius: PiDesign.Radius.control, style: .continuous))
+        .piSurface(.flat, radius: PiDesign.Radius.control)
     }
 }

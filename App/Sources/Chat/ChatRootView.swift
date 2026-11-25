@@ -12,6 +12,8 @@ enum Route: Hashable {
     case gallery
     case component(String)
     case tuning
+    /// The chat's own components (`ChatComponentsGallery`), drawn with `PiDesign`.
+    case chatComponents
     /// Settings › Alarms & Timers, also where a timer's Live Activity opens.
     case alarms
     /// A link, when links open in Pi (`BrowserView`).
@@ -58,6 +60,7 @@ struct ChatRootView: View {
                     case .gallery: GalleryView()
                     case let .component(name): ComponentDetailView(store: store, name: name)
                     case .tuning: TuningView(store: store)
+                    case .chatComponents: ChatComponentsGallery()
                     case .alarms: AlarmsView()
                     case let .browser(url): BrowserView(url: url)
                     case let .voice(continuing): VoiceView(store: store, path: $path, continuing: continuing)
@@ -568,7 +571,7 @@ struct ApprovalSheet: View {
                         Label("Allow", systemImage: "checkmark").frame(maxWidth: .infinity, minHeight: 32)
                     }
                     .buttonStyle(.glassProminent)
-                    .tint(.green)
+                    .tint(PiDesign.Palette.success)
                     .accessibilityIdentifier("approval.allow")
                 }
                 .disabled(answering)
