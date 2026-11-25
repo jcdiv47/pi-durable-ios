@@ -5,7 +5,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BUNDLE_ID=dev.jcdiv47.pidurable
+BUNDLE_ID=dev.jcdiv47.pidurable.app
 OUT="$ROOT/scripts/.out"
 DERIVED="$ROOT/build/DerivedData"
 CONFIGURATION="${PI_CONFIGURATION:-Debug}"

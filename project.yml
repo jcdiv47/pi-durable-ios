@@ -9,7 +9,7 @@ options:
 
 settings:
   base:
-    DEVELOPMENT_TEAM: P8FR4R7GEN # free Personal Team
+    DEVELOPMENT_TEAM: 98BH74J5NQ
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "6.0"
     TARGETED_DEVICE_FAMILY: "1"
@@ -75,7 +75,7 @@ targets:
           bun build.ts
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.jcdiv47.pidurable
+        PRODUCT_BUNDLE_IDENTIFIER: dev.jcdiv47.pidurable.app
         PRODUCT_NAME: PiDurable
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_USER_SCRIPT_SANDBOXING: NO # "Bundle JS" writes into the source tree
@@ -128,10 +128,10 @@ targets:
     entitlements:
       path: App/PiApp.entitlements
       properties:
-        com.apple.security.application-groups: [group.dev.jcdiv47.pidurable]
+        com.apple.security.application-groups: [group.dev.jcdiv47.pidurable.app]
         com.apple.developer.healthkit: true
         com.apple.developer.healthkit.access: []
-        keychain-access-groups: [$(AppIdentifierPrefix)dev.jcdiv47.pidurable.shared]
+        keychain-access-groups: [$(AppIdentifierPrefix)dev.jcdiv47.pidurable.app.shared]
 
   PiWidgets:
     type: app-extension
@@ -143,7 +143,7 @@ targets:
       - sdk: SwiftUI.framework
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.jcdiv47.pidurable.widgets
+        PRODUCT_BUNDLE_IDENTIFIER: dev.jcdiv47.pidurable.app.widgets
         PRODUCT_NAME: PiWidgets
     info:
       path: Widgets/Info.plist
@@ -158,7 +158,7 @@ targets:
     entitlements:
       path: Widgets/PiWidgets.entitlements
       properties:
-        com.apple.security.application-groups: [group.dev.jcdiv47.pidurable]
+        com.apple.security.application-groups: [group.dev.jcdiv47.pidurable.app]
         com.apple.developer.healthkit: true
         com.apple.developer.healthkit.access: []
 
@@ -172,7 +172,7 @@ targets:
       - sdk: PDFKit.framework
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.jcdiv47.pidurable.share
+        PRODUCT_BUNDLE_IDENTIFIER: dev.jcdiv47.pidurable.app.share
         PRODUCT_NAME: PiShare
     info:
       path: Share/Info.plist
@@ -191,7 +191,7 @@ targets:
     entitlements:
       path: Share/PiShare.entitlements
       properties:
-        com.apple.security.application-groups: [group.dev.jcdiv47.pidurable]
+        com.apple.security.application-groups: [group.dev.jcdiv47.pidurable.app]
 
 schemes:
   PiApp:
