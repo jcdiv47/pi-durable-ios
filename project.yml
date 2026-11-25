@@ -16,7 +16,7 @@ settings:
     SUPPORTS_MACCATALYST: NO
     SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
     MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "1"
+    CURRENT_PROJECT_VERSION: "2"
 
 packages:
   PiRuntime:
