@@ -88,6 +88,9 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleDisplayName: Pi
+        # Only standard encryption (HTTPS through the OS, and Citadel's SSH), which App Store Connect asks no
+        # documents for, so builds skip the export compliance questions.
+        ITSAppUsesNonExemptEncryption: false
         UILaunchScreen: {}
         # All four, as iOS asks; PiAppDelegate keeps the app in portrait.
         UISupportedInterfaceOrientations:
