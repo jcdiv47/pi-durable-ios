@@ -72,7 +72,7 @@ struct MetricTileView: View {
 
     private func valueText(_ value: String, _ unit: String?, size: CGFloat) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 3) {
-            Text(value).font(.system(size: size, weight: .bold, design: .rounded)).minimumScaleFactor(0.5).lineLimit(1)
+            Text(value).font(.system(size: size, weight: .bold, design: .rounded)).monospacedDigit().minimumScaleFactor(0.5).lineLimit(1)
             if let unit { Text(unit).font(.system(size: size * 0.4, weight: .semibold, design: .rounded)).foregroundStyle(.secondary) }
         }
         .contentTransition(.numericText())
@@ -82,8 +82,8 @@ struct MetricTileView: View {
         let delta = r.text("delta")
         if let direction = r.literal("trend") ?? (delta != nil ? "flat" : nil) {
             let (symbol, color): (String, Color) = switch direction {
-            case "up": ("arrow.up.right", .green)
-            case "down": ("arrow.down.right", .red)
+            case "up": ("arrow.up.right", PiDesign.Palette.success)
+            case "down": ("arrow.down.right", PiDesign.Palette.danger)
             default: ("arrow.right", .secondary)
             }
             HStack(spacing: 2) {
@@ -107,7 +107,7 @@ struct RingView: View {
         let progress = min(max((value ?? 0) / goal, 0), 1)
         let label = r.text("label")
         let symbol = r.literal("symbol")
-        let tint = surface.tint(r.literal("tint"), default: .green)
+        let tint = surface.tint(r.literal("tint"), default: PiDesign.Palette.success)
         let valueText = value.map(SurfaceData.formatNumber) ?? placeholder
         switch surface.family {
         case .accessoryCircular:
@@ -534,7 +534,7 @@ struct StatGridView: View {
                             }
                             .font(compact ? .caption2 : .caption.weight(.medium))
                             HStack(alignment: .firstTextBaseline, spacing: 2) {
-                                Text(entry.value).font(.system(compact ? .subheadline : .title3, design: .rounded, weight: .bold)).lineLimit(1).minimumScaleFactor(0.6)
+                                Text(entry.value).font(.system(compact ? .subheadline : .title3, design: .rounded, weight: .bold)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.6)
                                 if let unit = entry.unit { Text(unit).font(.caption2).foregroundStyle(.secondary) }
                             }
                         }

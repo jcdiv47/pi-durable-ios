@@ -131,7 +131,7 @@ struct ResultCardShell<Content: View>: View {
         }
         .padding(PiDesign.Space.l)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .piSurface(.card, radius: PiDesign.Radius.card + 4)
+        .piSurface(.card, radius: PiDesign.Radius.card)
         .sheet(isPresented: $expanded) {
             NavigationStack {
                 ScrollView {
